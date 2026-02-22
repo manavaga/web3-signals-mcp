@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Railway injects PORT automatically (default 8000)
+# Default port — Railway may override via env var
+# Note: if Postgres addon sets PORT=5432, our __main__.py handles this
 ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
