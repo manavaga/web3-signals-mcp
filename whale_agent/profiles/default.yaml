@@ -1,0 +1,225 @@
+# =============================================================================
+# Whale Agent Profile — 4-Layer Whale Intelligence
+# =============================================================================
+# Tracks credible whale wallet activity across BTC, ETH, and EVM tokens.
+# All free APIs. Change any value here — agent logic adapts automatically.
+# =============================================================================
+
+name: whale_default
+http_timeout_sec: 20
+
+# ---------------------------------------------------------------------------
+# Assets to track
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Credibility filters — applied to individual whale moves
+# ---------------------------------------------------------------------------
+credibility:
+  min_wallet_size_usd: 1_000_000      # minimum transfer size to count
+  min_smart_money_score: 7.0           # Arkham score (if available)
+  require_label: true                  # must have known entity label
+
+# ---------------------------------------------------------------------------
+# Collection settings
+# ---------------------------------------------------------------------------
+lookback_hours: 24                     # how far back to look for whale moves
+
+# ==========================================================================
+# LAYER 1: Twitter whale accounts (via Apify — FREE, no cookies needed)
+# ==========================================================================
+twitter_whales:
+  enabled: true
+  provider: apify
+  actor_id: "kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest"
+  run_timeout_sec: 60
+  tweets_per_search: 30
+  # Apify API key set via env: APIFY_API_KEY
+
+  search_queries:
+    - "from:whale_alert"
+    - "from:lookonchain"
+
+  direction_keywords:
+    to_exchange:
+      - "to binance"
+      - "to coinbase"
+      - "to kraken"
+      - "to okx"
+      - "to bybit"
+      - "to bitfinex"
+      - "to bitstamp"
+      - "to gemini"
+      - "to kucoin"
+      - "deposited to"
+    from_exchange:
+      - "from binance"
+      - "from coinbase"
+      - "from kraken"
+      - "from okx"
+      - "from bybit"
+      - "from bitfinex"
+      - "from bitstamp"
+      - "from gemini"
+      - "from kucoin"
+      - "withdrew from"
+      - "withdrawn from"
+    accumulate:
+      - "bought"
+      - "accumulated"
+      - "buying"
+      - "accumulating"
+    sell:
+      - "sold"
+      - "selling"
+      - "dumped"
+      - "dumping"
+
+  min_usd_mentioned: 1_000_000
+
+# ==========================================================================
+# LAYER 2: On-chain verification
+# ==========================================================================
+
+# --- Etherscan V2 (ETH + ERC-20 tokens) ---
+etherscan:
+  enabled: true
+  base_url: "https://api.etherscan.io/v2/api"
+  chain_id: 1                          # 1=ETH mainnet
+  # API key set via env: ETHERSCAN_API_KEY
+
+  # Known exchange hot wallets to monitor (ETH addresses)
+  # Outflow from these = users withdrawing (accumulation signal)
+  # Inflow to these = users depositing (sell signal)
+  exchange_wallets:
+    binance:
+      - "0x28C6c06298d514Db089934071355E5743bf21d60"    # Binance hot wallet
+      - "0x21a31Ee1afC51d94C2eFcCAa2092aD1028285549"    # Binance 15
+    coinbase:
+      - "0xA9D1e08C7793af67e9d92fe308d5697FB81d3E43"    # Coinbase Commerce
+    kraken:
+      - "0x2910543Af39abA0Cd09dBb2D50200b3E800A63D2"    # Kraken hot
+
+  # ERC-20 token contracts for our tracked assets
+  token_contracts:
+    LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+    UNI: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+    MATIC: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0"
+    AVAX: "0x85f138bfEE4ef8e540890CFb48F620571d67Eda3"    # Wrapped AVAX on ETH
+    ARB: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1"
+
+  # Minimum transfer value to track
+  min_eth_value: 100                   # ETH transfers above 100 ETH
+  min_token_value_usd: 500_000         # ERC-20 transfers above $500K
+  max_txs_per_wallet: 20               # latest N txs to check per wallet
+
+# --- Blockchain.com (BTC) ---
+blockchain_com:
+  enabled: true
+  base_url: "https://blockchain.info"
+
+  # Known BTC exchange wallets
+  exchange_wallets:
+    binance:
+      - "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"    # Binance cold wallet
+    coinbase:
+      - "bc1q4c8n5t00jmj8temxdgcc3t32nkg2wjwz24lywv"    # Coinbase cold
+    bitfinex:
+      - "bc1qgdjqv0av3q56jvd82tkdjpy7gdp9ut8tlqmgrpmv24sq90ecnvqqjwvw97"  # Bitfinex
+
+  min_btc_value: 10                    # BTC transfers above 10 BTC
+  max_txs_per_wallet: 10
+
+# ==========================================================================
+# LAYER 3: Exchange flow (net inflow/outflow via wallet balance tracking)
+# ==========================================================================
+exchange_flow:
+  enabled: true
+
+  # We track balance changes in known exchange wallets over time
+  # Balance decrease = outflow (accumulation by users)
+  # Balance increase = inflow (users depositing to sell)
+
+  # Thresholds for significance
+  eth_significant_change: 1000         # ETH balance change > 1000 = significant
+  btc_significant_change: 100          # BTC balance change > 100 = significant
+
+  # Which exchanges to track for flow (uses wallets from etherscan + blockchain_com above)
+  track_exchanges:
+    - binance
+    - coinbase
+    - kraken
+    - bitfinex
+
+# ==========================================================================
+# LAYER 4: Known whale wallet tracking
+# ==========================================================================
+whale_wallets:
+  enabled: true
+
+  # Specific known whale/fund/DAO ETH wallets to monitor
+  # Balance changes in these = smart money movement
+  # Addresses verified on Etherscan labeled accounts (Feb 2026)
+  eth_wallets:
+    "Jump Trading":
+      address: "0xF584F8728B874a6a5c7A8d4d387C9aae9172D621"      # 5,200+ ETH
+    "Galaxy Digital":
+      address: "0x15abb66ba754f05cbc0165a64a11cded1543de48"      # 14,000+ ETH
+    "Abraxas Capital":
+      address: "0xb99a2c4c1c4f1fc27150681b740396f6ce1cbcf5"      # LST/restaking whale
+    "Cumberland":
+      address: "0xad6eaa735d9df3d7696fd03984379dae02ed8862"      # 1,100+ ETH (DRW Trading)
+    "FalconX":
+      address: "0x1157a2076b9bb22a85cc2c162f20fab3898f4101"      # 2,100+ ETH (OTC desk)
+
+  # BTC whale wallets — MicroStrategy/Tesla addresses not publicly available
+  # BTC whale activity tracked via Layer 1 (Twitter) + Layer 2 (exchange wallet txs)
+  btc_wallets: {}
+
+  # Minimum balance change to flag
+  min_eth_change: 50                   # flag if wallet balance changes by >50 ETH
+  min_btc_change: 5                    # flag if wallet balance changes by >5 BTC
+
+# ---------------------------------------------------------------------------
+# Action classification — how we map wallet movements to buy/sell
+# ---------------------------------------------------------------------------
+action_rules:
+  to_exchange: sell                    # moving TO exchange = likely selling
+  from_exchange: accumulate            # moving FROM exchange = likely accumulating
+  unknown: transfer                    # can't determine = neutral transfer
+
+# ---------------------------------------------------------------------------
+# Legacy sources (kept for future use, disabled)
+# ---------------------------------------------------------------------------
+whale_alert:
+  enabled: false                       # whalealert.io is dead / domain for sale
+  base_url: "https://api.whale-alert.io/v1"
+  min_value_usd: 500_000
+  max_results: 100
+
+arkham:
+  enabled: false                       # needs API key, disabled until configured
+  base_url: "https://api.arkhamintelligence.com"
+  entity_type: smart_money
+  max_results: 50

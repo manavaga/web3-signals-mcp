@@ -1,0 +1,301 @@
+name: signal_fusion_default
+
+# ---------------------------------------------------------------------------
+# Assets — must match across all agents
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Agent names — must match agent_name used in storage
+# ---------------------------------------------------------------------------
+agent_names:
+  whale: "whale_agent"
+  narrative: "narrative_agent"
+  technical: "technical_agent"
+  market: "market_agent"
+  derivatives: "derivatives_agent"
+
+# ---------------------------------------------------------------------------
+# Composite score weights (must sum to 1.0)
+# ---------------------------------------------------------------------------
+weights:
+  whale: 0.30
+  technical: 0.25
+  derivatives: 0.20
+  narrative: 0.15
+  market: 0.10
+
+# ---------------------------------------------------------------------------
+# Score labels — evaluated top-down, first match wins
+# ---------------------------------------------------------------------------
+labels:
+  - name: "STRONG BUY"
+    min_score: 70
+    direction: "buy"
+  - name: "MODERATE BUY"
+    min_score: 55
+    direction: "buy"
+  - name: "NEUTRAL"
+    min_score: 45
+    direction: "neutral"
+  - name: "MODERATE SELL"
+    min_score: 30
+    direction: "sell"
+  - name: "STRONG SELL"
+    min_score: 0
+    direction: "sell"
+
+# ---------------------------------------------------------------------------
+# Per-agent scoring rules
+# Each agent maps its raw data to a 0-100 score per asset
+# ---------------------------------------------------------------------------
+
+scoring:
+  # -----------------------------------------------------------------------
+  # WHALE scoring (per asset)
+  # -----------------------------------------------------------------------
+  whale:
+    # Base score if no activity for this asset
+    base_score: 50
+
+    # Points added per whale move classified as "accumulate"
+    accumulate_points: 10
+
+    # Points subtracted per whale move classified as "sell"
+    sell_points: -10
+
+    # Points added per whale move classified as "transfer"
+    transfer_points: 2
+
+    # Bonus if exchange flow is net_outflow (accumulation across exchanges)
+    exchange_outflow_bonus: 10
+
+    # Penalty if exchange flow is net_inflow (selling across exchanges)
+    exchange_inflow_penalty: -10
+
+    # Bonus per whale wallet showing "accumulating" signal
+    whale_wallet_accumulating_bonus: 8
+
+    # Penalty per whale wallet showing "reducing" signal
+    whale_wallet_reducing_penalty: -8
+
+    # Clamp range
+    min_score: 0
+    max_score: 100
+
+  # -----------------------------------------------------------------------
+  # TECHNICAL scoring (per asset)
+  # -----------------------------------------------------------------------
+  technical:
+    # RSI contribution (0-40 points)
+    rsi:
+      # RSI 30-70 maps linearly to 0-40 points
+      # Below 30 = oversold = contrarian bullish (30 pts)
+      # Above 70 = overbought = caution (10 pts)
+      oversold_below: 30
+      overbought_above: 70
+      oversold_score: 30       # contrarian — good buying opportunity
+      overbought_score: 10     # risky to enter
+      neutral_min_score: 15    # RSI exactly at 30
+      neutral_max_score: 40    # RSI exactly at 70
+
+    # MACD contribution (0-20 points)
+    macd:
+      bullish_cross_points: 20   # MACD > signal line
+      bearish_cross_points: 0    # MACD < signal line
+
+    # Moving average contribution (0-20 points)
+    ma:
+      above_ma7_points: 10       # price > 7-day MA
+      above_ma30_points: 10      # price > 30-day MA
+      below_ma7_points: 0
+      below_ma30_points: 0
+
+    # Trend confirmation (0-20 points)
+    trend:
+      bullish_points: 20         # trend classified as "bullish"
+      bearish_points: 0
+      neutral_points: 10
+
+  # -----------------------------------------------------------------------
+  # DERIVATIVES scoring (per asset)
+  # -----------------------------------------------------------------------
+  derivatives:
+    # Long/short ratio contribution (0-40 points)
+    long_short:
+      # Sweet spot: 55-65% longs = healthy bullish
+      sweet_spot_min: 0.55
+      sweet_spot_max: 0.65
+      sweet_spot_score: 40
+      # Above 70% = overcrowded longs = bearish signal
+      overcrowded_above: 0.70
+      overcrowded_score: 10
+      # Below 45% = heavy shorts = contrarian bullish
+      contrarian_below: 0.45
+      contrarian_score: 35
+      # Everything else = moderate
+      default_score: 25
+
+    # Funding rate contribution (0-30 points)
+    funding:
+      # Low funding = cheap to hold = bullish
+      low_threshold: 0.0002
+      low_score: 30
+      # Moderate funding
+      moderate_threshold: 0.0005
+      moderate_score: 15
+      # High funding = expensive = bearish
+      high_score: 5
+      # Negative funding = shorts paying = very bullish
+      negative_score: 35
+
+    # Open interest change contribution (0-30 points)
+    open_interest:
+      rising_score: 25           # OI increasing = conviction
+      falling_score: 10          # OI decreasing = uncertainty
+      stable_score: 15
+      # Change threshold to classify rising/falling
+      change_threshold_pct: 5    # >5% change from recent
+
+  # -----------------------------------------------------------------------
+  # NARRATIVE scoring (per asset)
+  # -----------------------------------------------------------------------
+  narrative:
+    # Base from raw narrative score (0.0-1.0 mapped to 0-60)
+    score_multiplier: 60
+
+    # Bonus if asset is in CoinGecko trending
+    trending_bonus: 20
+
+    # Sentiment boost/penalty (positive minus negative mentions)
+    sentiment_positive_bonus: 10
+    sentiment_negative_penalty: -10
+
+    # Cap at 100
+    max_score: 100
+
+  # -----------------------------------------------------------------------
+  # MARKET scoring (per asset)
+  # -----------------------------------------------------------------------
+  market:
+    # Price change contribution (0-40 points)
+    price_change:
+      # 24h price change mapped to score
+      strong_positive_above: 5.0     # >5% = very bullish
+      strong_positive_score: 40
+      positive_above: 0.0            # 0-5% = moderate bullish
+      positive_score: 30
+      mild_negative_above: -5.0      # -5% to 0% = mild bearish
+      mild_negative_score: 20
+      strong_negative_score: 10      # <-5% = bearish
+
+    # Volume spike contribution (0-30 points)
+    volume:
+      spike_multiplier_above: 2.0    # >2x avg = spike
+      spike_score: 30
+      elevated_multiplier_above: 1.5 # >1.5x avg
+      elevated_score: 20
+      normal_score: 10
+
+    # Fear & Greed (global — same for all assets) (0-30 points)
+    # Contrarian: extreme fear = buying opportunity
+    fear_greed:
+      extreme_fear_below: 25
+      extreme_fear_score: 30         # best time to buy
+      fear_below: 45
+      fear_score: 25
+      neutral_below: 55
+      neutral_score: 15
+      greed_below: 75
+      greed_score: 10
+      extreme_greed_score: 5         # worst time to buy
+
+# ---------------------------------------------------------------------------
+# Momentum detection — compare current vs previous fusion run
+# ---------------------------------------------------------------------------
+momentum:
+  # Minimum score change to flag as improving/degrading
+  threshold: 5
+
+  # Labels
+  improving_label: "improving"
+  degrading_label: "degrading"
+  stable_label: "stable"
+
+# ---------------------------------------------------------------------------
+# Portfolio summary
+# ---------------------------------------------------------------------------
+portfolio:
+  # How many top buys/sells to show
+  top_n: 3
+
+  # Minimum composite score to label as "high conviction"
+  high_conviction_threshold: 70
+
+  # Risk level rules (based on derivatives + market data)
+  risk_levels:
+    - name: "low"
+      max_avg_funding: 0.0002
+      min_fear_greed: 45
+    - name: "elevated"
+      max_avg_funding: 0.0005
+      min_fear_greed: 20
+    - name: "high"
+      max_avg_funding: 1.0       # catch-all
+      min_fear_greed: 0
+
+  # Market regime from Fear & Greed
+  regime_thresholds:
+    extreme_fear: 25
+    fear: 45
+    neutral: 55
+    greed: 75
+
+# ---------------------------------------------------------------------------
+# LLM insights (Claude Haiku)
+# ---------------------------------------------------------------------------
+llm_insights:
+  enabled: true
+
+  # Model to use
+  model: "claude-haiku-4-5-20251001"
+
+  # Max tokens per insight call
+  max_tokens: 1024
+
+  # System prompt for the LLM
+  system_prompt: >
+    You are a crypto market analyst. Given structured signal data, provide
+    concise actionable insights. Focus on cross-dimensional patterns
+    (e.g. whale accumulation during fear = opportunity). Compare with
+    previous data when available to identify trend shifts. Be direct,
+    no disclaimers. Max 3 sentences per asset, 5 sentences for portfolio.
+
+  # What to include in LLM context
+  include_previous_run: true
+
+  # Generate per-asset insights
+  per_asset: true
+
+  # Generate portfolio-level summary
+  portfolio_summary: true

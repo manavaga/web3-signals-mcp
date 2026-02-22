@@ -1,0 +1,132 @@
+# =============================================================================
+# Technical Agent Profile
+# =============================================================================
+# Calculates TA indicators (RSI, MACD, MA) for top crypto assets.
+# All data from Binance spot + CoinGecko (free, no keys).
+# Change any value here — agent logic adapts automatically.
+# =============================================================================
+
+name: technical_default
+http_timeout_sec: 20
+
+# ---------------------------------------------------------------------------
+# Assets to track
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Binance symbol mapping (spot market)
+# ---------------------------------------------------------------------------
+binance_symbol_map:
+  BTC: BTCUSDT
+  ETH: ETHUSDT
+  SOL: SOLUSDT
+  BNB: BNBUSDT
+  XRP: XRPUSDT
+  ADA: ADAUSDT
+  AVAX: AVAXUSDT
+  DOT: DOTUSDT
+  MATIC: MATICUSDT
+  LINK: LINKUSDT
+  UNI: UNIUSDT
+  ATOM: ATOMUSDT
+  LTC: LTCUSDT
+  FIL: FILUSDT
+  NEAR: NEARUSDT
+  APT: APTUSDT
+  ARB: ARBUSDT
+  OP: OPUSDT
+  INJ: INJUSDT
+  SUI: SUIUSDT
+
+# ---------------------------------------------------------------------------
+# Signal thresholds — defines what "bullish" means
+# ---------------------------------------------------------------------------
+thresholds:
+  # RSI (0–100)
+  rsi_period: 14
+  rsi_bullish: 50                     # RSI above this = bullish
+  rsi_overbought: 70                  # RSI above this = overbought warning
+  rsi_oversold: 30                    # RSI below this = oversold
+
+  # Moving averages — price must be above MA for trend to be "bullish"
+  ma_7d_period: 7                     # 7-day MA for momentum
+  ma_30d_period: 30                   # 30-day MA for macro trend
+
+  # MACD (12, 26, 9 standard)
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+
+# ---------------------------------------------------------------------------
+# Trend rules — when is the technical condition "PASS"?
+# ---------------------------------------------------------------------------
+trend_rules:
+  # 30D trend bullish = price above 30D MA AND RSI > 50
+  # 7D trend bullish = price above 7D MA AND MACD line > signal line
+  # 1D = optional, doesn't need to be bullish
+  require_30d_bullish: true
+  require_7d_bullish: true
+  require_1d_bullish: false
+
+# ---------------------------------------------------------------------------
+# Data source: Binance (free, no API key)
+# ---------------------------------------------------------------------------
+binance:
+  base_url: "https://api.binance.com/api/v3"
+  klines_endpoint: "/klines"
+  interval: "1d"                      # daily candles
+  candle_limit: 50                    # how many days of candles to fetch (need 30 for MA)
+
+# ---------------------------------------------------------------------------
+# Data source: CoinGecko (free, no key — backup price source)
+# ---------------------------------------------------------------------------
+coingecko:
+  enabled: true
+  base_url: "https://api.coingecko.com/api/v3"
+  vs_currency: usd
+
+# ---------------------------------------------------------------------------
+# CoinGecko ID mapping (for backup price fetch)
+# ---------------------------------------------------------------------------
+coingecko_id_map:
+  BTC: bitcoin
+  ETH: ethereum
+  SOL: solana
+  BNB: binancecoin
+  XRP: ripple
+  ADA: cardano
+  AVAX: avalanche-2
+  DOT: polkadot
+  MATIC: matic-network
+  LINK: chainlink
+  UNI: uniswap
+  ATOM: cosmos
+  LTC: litecoin
+  FIL: filecoin
+  NEAR: near
+  APT: aptos
+  ARB: arbitrum
+  OP: optimism
+  INJ: injective-protocol
+  SUI: sui

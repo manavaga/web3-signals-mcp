@@ -1,0 +1,86 @@
+# =============================================================================
+# Derivatives Agent Profile
+# =============================================================================
+# Tracks long/short ratios, funding rates, and open interest.
+# All data from Binance Futures API (free, no key required).
+# Change any value here — agent logic adapts automatically.
+# =============================================================================
+
+name: derivatives_default
+http_timeout_sec: 15
+
+# ---------------------------------------------------------------------------
+# Assets to track
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Binance Futures symbol mapping
+# Some assets have different names on Binance futures (e.g. MATIC → POL)
+# ---------------------------------------------------------------------------
+binance_futures_map:
+  BTC: BTCUSDT
+  ETH: ETHUSDT
+  SOL: SOLUSDT
+  BNB: BNBUSDT
+  XRP: XRPUSDT
+  ADA: ADAUSDT
+  AVAX: AVAXUSDT
+  DOT: DOTUSDT
+  MATIC: POLUSDT          # MATIC renamed to POL on Binance
+  LINK: LINKUSDT
+  UNI: UNIUSDT
+  ATOM: ATOMUSDT
+  LTC: LTCUSDT
+  FIL: FILUSDT
+  NEAR: NEARUSDT
+  APT: APTUSDT
+  ARB: ARBUSDT
+  OP: OPUSDT
+  INJ: INJUSDT
+  SUI: SUIUSDT
+
+# ---------------------------------------------------------------------------
+# Signal thresholds — defines what "healthy" means
+# ---------------------------------------------------------------------------
+thresholds:
+  # Long/Short ratio (as decimal 0.0–1.0 where 0.65 = 65% longs)
+  long_short_min: 0.55               # below this = bearish dominance
+  long_short_max: 0.65               # above this = overcrowded longs
+  # Sweet spot: 0.55–0.65 = healthy bullish lean
+
+  # Funding rate (per 8h period)
+  funding_rate_max: 0.0005           # above this = too expensive to hold longs
+  # 0 to 0.0005 = normal | above = high | below 0 = negative (shorts paying)
+
+# ---------------------------------------------------------------------------
+# Data source: Binance Futures (free, no API key)
+# ---------------------------------------------------------------------------
+binance:
+  base_url: "https://fapi.binance.com"
+  endpoints:
+    long_short: "/futures/data/globalLongShortAccountRatio"
+    funding_rate: "/fapi/v1/premiumIndex"
+    open_interest: "/fapi/v1/openInterest"
+  long_short_period: "1h"             # 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d
+  long_short_limit: 1                 # how many periods to fetch (1 = latest only)

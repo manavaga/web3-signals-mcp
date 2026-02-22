@@ -1,0 +1,187 @@
+# =============================================================================
+# Narrative Agent Profile
+# =============================================================================
+# Scores narrative momentum from Reddit, Twitter, and crypto news.
+# Three data sources, each independently enabled/disabled.
+# Change any value here — agent logic adapts automatically.
+# =============================================================================
+
+name: narrative_default
+http_timeout_sec: 20
+
+# ---------------------------------------------------------------------------
+# Assets to track
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Signal thresholds — defines the "sweet spot" for narrative momentum
+# ---------------------------------------------------------------------------
+thresholds:
+  narrative_score_min: 0.40           # below this = "too early" (no momentum)
+  narrative_score_max: 0.70           # above this = "peak crowded" (priced in)
+  # Sweet spot: 0.40–0.70 of 30D peak = "early pickup" → signal fires
+  peak_window_days: 30                # rolling window for peak comparison
+
+# ---------------------------------------------------------------------------
+# Data source 1: Reddit (via PRAW)
+# ---------------------------------------------------------------------------
+reddit:
+  enabled: true
+  # Credentials set via env: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+  user_agent: "web3-signal-bot:v1.0 (by /u/Impossible-Ad564)"
+
+  # Subreddits to monitor for specific asset communities
+  subreddits:
+    - CryptoCurrency
+    - CryptoMarkets
+    - Bitcoin
+    - ethereum
+    - solana
+    - altcoin
+    - defi
+
+  # Keywords to search across ALL of Reddit (r/all)
+  search_keywords:
+    - cryptocurrency
+    - crypto
+    - defi
+    - web3
+    - bitcoin
+    - ethereum
+    - solana
+    - altcoin
+    - blockchain
+    - token
+    - staking
+    - yield farming
+    - airdrop
+    - whale alert
+    - bull run
+    - bear market
+
+  posts_per_search: 250               # max posts per keyword search
+  time_filter: day                    # day, week, month, year, all
+  sort: new                           # relevance, hot, top, new, comments
+
+  # Engagement weighting — posts with more upvotes count more
+  weight_by_score: true               # if true, mentions weighted by upvote score
+  min_score: 5                        # ignore posts below this score (filters spam)
+
+# ---------------------------------------------------------------------------
+# Data source 2: Twitter/X (via Apify)
+# ---------------------------------------------------------------------------
+twitter:
+  enabled: true
+  provider: apify
+  actor_id: "kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest"
+  # Apify API key set via env: APIFY_API_KEY
+  # No Twitter cookies needed — this actor works without them.
+
+  # Run timeout in seconds (Apify run-sync timeout)
+  run_timeout_sec: 60
+
+  # Tweets to fetch per search query
+  tweets_per_search: 20
+
+  # Search queries — use Twitter search operators for best results
+  # 'from:' targets specific high-signal accounts
+  # General keyword queries catch broader crypto discussion
+  search_queries:
+    # --- High-signal whale/alpha accounts ---
+    - "from:whale_alert OR from:lookonchain OR from:AltcoinGordon"
+    - "from:CryptoCapo_ OR from:Pentosh1 OR from:GCRClassic"
+    - "from:DegenSpartan OR from:inversebrah OR from:coaborage"
+
+    # --- General crypto keyword searches ---
+    - "bitcoin bullish OR bearish"
+    - "ethereum bullish OR bearish"
+    - "solana bullish OR bearish"
+    - "crypto whale OR accumulation"
+    - "altcoin season OR altseason"
+    - "defi yield OR airdrop"
+
+  # Engagement filter — ignore tweets below this like count (0 = keep all)
+  min_likes: 0
+
+  # Weight by engagement — tweets with more likes count more for mentions
+  weight_by_likes: true
+  # Engagement tiers for weighting
+  weight_tiers:
+    - min_likes: 0
+      weight: 1
+    - min_likes: 10
+      weight: 3
+    - min_likes: 100
+      weight: 10
+    - min_likes: 1000
+      weight: 25
+
+# ---------------------------------------------------------------------------
+# Data source 3: CryptoCompare News (free, no key)
+# ---------------------------------------------------------------------------
+news:
+  enabled: true
+  provider: cryptocompare
+  base_url: "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
+  lookback_hours: 24                  # only count articles from last N hours
+
+# ---------------------------------------------------------------------------
+# Data source 4: CoinGecko Trending (free, no key)
+# ---------------------------------------------------------------------------
+coingecko_trending:
+  enabled: true
+  base_url: "https://api.coingecko.com/api/v3/search/trending"
+  trending_boost: 20                  # bonus mention count if asset is trending
+
+# ---------------------------------------------------------------------------
+# Asset keyword mapping — how we detect which asset a post is about
+# ---------------------------------------------------------------------------
+asset_keywords:
+  BTC: [bitcoin, btc, satoshi, digital gold]
+  ETH: [ethereum, eth, vitalik, dencun]
+  SOL: [solana, sol, solana etf, solana network]
+  BNB: [bnb, binance coin, bsc, binance smart chain]
+  XRP: [xrp, ripple, garlinghouse]
+  ADA: [cardano, ada, hoskinson]
+  AVAX: [avalanche, avax]
+  DOT: [polkadot, dot, parachain]
+  MATIC: [polygon, matic, pol]
+  LINK: [chainlink, link, oracle]
+  UNI: [uniswap, uni]
+  ATOM: [cosmos, atom, ibc]
+  LTC: [litecoin, ltc, digital silver]
+  FIL: [filecoin, fil, decentralized storage]
+  NEAR: [near protocol, near]
+  APT: [aptos, apt]
+  ARB: [arbitrum, arb, layer 2]
+  OP: [optimism, superchain]
+  INJ: [injective, inj]
+  SUI: [sui, sui network]
+
+# ---------------------------------------------------------------------------
+# Sentiment keywords — rough keyword-based sentiment scoring
+# ---------------------------------------------------------------------------
+sentiment:
+  positive: [bull, surge, rally, breakout, ath, gain, pump, rise, growth, strong, buy, accumulate, moon]
+  negative: [bear, crash, dump, drop, sell, fear, rekt, collapse, weak, correction, decline, panic]

@@ -1,0 +1,18 @@
+# Web server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# YAML config loading
+pyyaml==6.0.2
+
+# Reddit API (narrative agent)
+praw==7.8.1
+
+# Postgres driver (used when DATABASE_URL is set, ignored otherwise)
+psycopg2-binary==2.9.10
+
+# MCP server (AI agent discoverability for Claude/Cursor)
+mcp>=1.26.0
+
+# x402 payment gate (uncomment when ready to monetize)
+# x402[fastapi,evm]==2.2.0

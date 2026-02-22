@@ -1,0 +1,172 @@
+# =============================================================================
+# Market Agent Profile
+# =============================================================================
+# Tracks broad market health + per-asset price/volume for our 20 assets.
+# All free APIs, no keys required.
+# Change any value here — agent logic adapts automatically.
+# =============================================================================
+
+name: market_default
+http_timeout_sec: 20
+
+# ---------------------------------------------------------------------------
+# Our 20 tracked assets (same list across all agents)
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# CoinGecko ID mapping (for per-asset price/volume fetch)
+# ---------------------------------------------------------------------------
+coingecko_id_map:
+  BTC: bitcoin
+  ETH: ethereum
+  SOL: solana
+  BNB: binancecoin
+  XRP: ripple
+  ADA: cardano
+  AVAX: avalanche-2
+  DOT: polkadot
+  MATIC: matic-network
+  LINK: chainlink
+  UNI: uniswap
+  ATOM: cosmos
+  LTC: litecoin
+  FIL: filecoin
+  NEAR: near
+  APT: aptos
+  ARB: arbitrum
+  OP: optimism
+  INJ: injective-protocol
+  SUI: sui
+
+# ---------------------------------------------------------------------------
+# Binance symbol map (for 7D volume history — volume spike detection)
+# ---------------------------------------------------------------------------
+binance_symbol_map:
+  BTC: BTCUSDT
+  ETH: ETHUSDT
+  SOL: SOLUSDT
+  BNB: BNBUSDT
+  XRP: XRPUSDT
+  ADA: ADAUSDT
+  AVAX: AVAXUSDT
+  DOT: DOTUSDT
+  MATIC: MATICUSDT
+  LINK: LINKUSDT
+  UNI: UNIUSDT
+  ATOM: ATOMUSDT
+  LTC: LTCUSDT
+  FIL: FILUSDT
+  NEAR: NEARUSDT
+  APT: APTUSDT
+  ARB: ARBUSDT
+  OP: OPUSDT
+  INJ: INJUSDT
+  SUI: SUIUSDT
+
+# ---------------------------------------------------------------------------
+# Source: CoinGecko — per-asset prices + broad market
+# ---------------------------------------------------------------------------
+coingecko:
+  enabled: true
+  base_url: "https://api.coingecko.com/api/v3"
+  vs_currency: usd
+
+  # Per-asset fetch via /simple/price (single call, all 20 assets)
+  include_market_cap: true
+  include_24hr_vol: true
+  include_24hr_change: true
+
+  # Broad market: top gainers/losers from top N coins
+  breadth:
+    enabled: true
+    market_sample: 100                   # fetch top N by market cap
+    top_gainers_count: 10                # show top N gainers
+    top_losers_count: 10                 # show top N losers
+
+  # Trending tokens
+  trending:
+    enabled: true
+    count: 7                             # how many trending to show
+
+  # Category/sector performance
+  categories:
+    enabled: true
+    sample_size: 15                      # top N categories by market cap
+    top_gainers_count: 5
+    top_losers_count: 5
+
+  # Global market data (total market cap, BTC dominance)
+  global:
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Source: Binance — volume spike detection (7D klines, free, no key)
+# ---------------------------------------------------------------------------
+binance:
+  enabled: true
+  base_url: "https://api.binance.com/api/v3"
+  klines_endpoint: "/klines"
+  interval: "1d"
+  lookback_days: 8                       # fetch 8 days: 7 for avg + today
+
+  # Volume spike thresholds
+  volume_spike:
+    # 24h volume / 7D avg volume ratio
+    spike_threshold: 2.0                 # >= 2x = volume spike
+    high_threshold: 1.5                  # >= 1.5x = elevated volume
+    # Anything below high_threshold = normal
+
+# ---------------------------------------------------------------------------
+# Source: DexScreener — on-chain DEX pair tracking
+# ---------------------------------------------------------------------------
+dexscreener:
+  enabled: true
+  base_url: "https://api.dexscreener.com/latest/dex"
+  queries:
+    - WETH
+    - WBTC
+    - ETH
+    - BTC
+    - SOL
+    - USDC
+    - USDT
+    - ARB
+    - BASE
+    - BNB
+  top_pairs_count: 15
+
+# ---------------------------------------------------------------------------
+# Source: Fear & Greed Index (alternative.me)
+# ---------------------------------------------------------------------------
+fear_greed:
+  enabled: true
+  url: "https://api.alternative.me/fng/?limit=1&format=json"
+
+  # Classification thresholds (index 0-100)
+  # These define the labels — change them to adjust sensitivity
+  extreme_fear_max: 25
+  fear_max: 45
+  neutral_max: 55
+  greed_max: 75
+  # Above greed_max = extreme_greed
