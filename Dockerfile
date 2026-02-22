@@ -30,4 +30,4 @@ HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
 
 # Run the FastAPI server (includes background orchestrator)
 # Uses Python to read PORT env var (avoids shell expansion issues on Railway)
-CMD ["python", "-m", "api.server"]
+CMD ["python", "-m", "api"]
