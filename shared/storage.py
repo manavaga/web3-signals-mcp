@@ -130,6 +130,60 @@ class Storage:
     def load_all_latest(self, agent_names: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
         return {name: self.load_latest(name) for name in agent_names}
 
+    def load_history(self, agent_name: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Load historical rows with pagination. Returns list of {id, timestamp, data}."""
+        table = self._table_name(agent_name)
+
+        if self.backend == "postgres":
+            try:
+                with _pg_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT id, timestamp, data_json FROM {table} "
+                            f"ORDER BY timestamp DESC, id DESC LIMIT %s OFFSET %s",
+                            (limit, offset),
+                        )
+                        rows = cur.fetchall()
+                return [
+                    {"id": r[0], "timestamp": r[1], "data": json.loads(r[2])}
+                    for r in rows
+                ]
+            except Exception:
+                return []
+        else:
+            if not self._sqlite_table_exists(table):
+                return []
+            with sqlite3.connect(self.db_path) as conn:
+                rows = conn.execute(
+                    f"SELECT id, timestamp, data_json FROM {table} "
+                    f"ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            return [
+                {"id": r[0], "timestamp": r[1], "data": json.loads(r[2])}
+                for r in rows
+            ]
+
+    def count_rows(self, agent_name: str) -> int:
+        """Count total rows for an agent table."""
+        table = self._table_name(agent_name)
+
+        if self.backend == "postgres":
+            try:
+                with _pg_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT COUNT(*) FROM {table}")
+                        row = cur.fetchone()
+                return row[0] if row else 0
+            except Exception:
+                return 0
+        else:
+            if not self._sqlite_table_exists(table):
+                return 0
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            return row[0] if row else 0
+
     # ------------------------------------------------------------------ #
     #  Key-value store (whale flow snapshots, fusion history, etc.)
     # ------------------------------------------------------------------ #

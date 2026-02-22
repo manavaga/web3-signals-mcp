@@ -19,11 +19,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse, HTMLResponse
 
 from shared.storage import Storage
 from signal_fusion.engine import SignalFusion
+from api.dashboard import DASHBOARD_HTML
 
 # ---------------------------------------------------------------------------
 # Globals — set on startup
@@ -497,6 +498,49 @@ async def agent_card():
         ],
         "update_frequency": "Every 15 minutes",
         "pricing": "Free (x402 micropayments coming soon)",
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard — Production UI
+# ---------------------------------------------------------------------------
+@app.get("/dashboard", tags=["ui"], include_in_schema=False)
+async def dashboard():
+    return HTMLResponse(DASHBOARD_HTML)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/history — Paginated history of fusion runs (each 15-min cycle)
+# ---------------------------------------------------------------------------
+@app.get("/api/history", tags=["signals"])
+async def get_signal_history(
+    agent: str = Query("signal_fusion", description="Agent name to get history for"),
+    limit: int = Query(50, ge=1, le=200, description="Number of rows to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+):
+    """
+    Returns paginated historical rows for any agent.
+    Each row = one 15-minute orchestrator cycle.
+    """
+    if not _store:
+        raise HTTPException(status_code=503, detail="Storage not initialized")
+
+    valid_agents = [
+        "signal_fusion", "technical_agent", "derivatives_agent",
+        "market_agent", "narrative_agent", "whale_agent",
+    ]
+    if agent not in valid_agents:
+        raise HTTPException(status_code=400, detail=f"Invalid agent. Valid: {valid_agents}")
+
+    rows = _store.load_history(agent, limit=limit, offset=offset)
+    total = _store.count_rows(agent)
+
+    return {
+        "agent": agent,
+        "total_rows": total,
+        "limit": limit,
+        "offset": offset,
+        "rows": rows,
     }
 
 
