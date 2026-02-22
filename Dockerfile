@@ -25,7 +25,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Health check — hit the /health endpoint
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD python -c "from urllib.request import urlopen; urlopen('http://localhost:${PORT}/health')" || exit 1
+    CMD python -c "import os; from urllib.request import urlopen; urlopen(f'http://localhost:{os.getenv(\"PORT\",8000)}/health')" || exit 1
 
 # Run the FastAPI server (includes background orchestrator)
-CMD uvicorn api.server:app --host 0.0.0.0 --port ${PORT}
+# Uses Python to read PORT env var (avoids shell expansion issues on Railway)
+CMD ["python", "-m", "api.server"]
