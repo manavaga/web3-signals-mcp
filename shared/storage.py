@@ -16,7 +16,7 @@ def _get_backend() -> str:
 def _pg_conn():
     """Return a psycopg2 connection using DATABASE_URL."""
     import psycopg2  # only imported when Postgres is used
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+    return psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=10)
 
 
 class Storage:

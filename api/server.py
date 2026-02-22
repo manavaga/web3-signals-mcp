@@ -501,6 +501,49 @@ async def agent_card():
 
 
 # ---------------------------------------------------------------------------
+# GET /debug/db — Diagnose database connectivity (temporary)
+# ---------------------------------------------------------------------------
+@app.get("/debug/db", tags=["debug"], include_in_schema=False)
+async def debug_db():
+    import socket
+    results = {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
+
+    # DNS resolution tests
+    dns_tests = {}
+    for host in ["postgres", "postgres.railway.internal", "Postgres", "Postgres.railway.internal"]:
+        try:
+            ip = socket.gethostbyname(host)
+            dns_tests[host] = ip
+        except Exception as e:
+            dns_tests[host] = f"FAILED: {e}"
+    results["dns_resolution"] = dns_tests
+
+    # Actual DB connection test
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url:
+        results["database_url_host"] = db_url.split("@")[1].split("/")[0] if "@" in db_url else "parse_error"
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url, connect_timeout=5)
+            cur = conn.cursor()
+            cur.execute("SELECT version()")
+            ver = cur.fetchone()[0]
+            conn.close()
+            results["connection"] = "SUCCESS"
+            results["pg_version"] = ver
+        except Exception as e:
+            results["connection"] = f"FAILED: {e}"
+    else:
+        results["connection"] = "No DATABASE_URL — using SQLite"
+
+    # Check all env vars containing RAILWAY or PG
+    railway_vars = {k: v for k, v in os.environ.items() if "RAILWAY" in k or "PG" in k or "DATABASE" in k}
+    results["railway_env_vars"] = railway_vars
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
