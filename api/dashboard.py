@@ -412,25 +412,48 @@ let sortDir = -1; // descending
 const API_BASE = '';
 
 async function fetchAll() {
+  const content = document.getElementById('content');
+
+  // Show loading state with timeout feedback
+  let loadTimer = setTimeout(() => {
+    content.innerHTML = '<div class="loading"><div class="spinner"></div><span style="color:var(--text-dim)">Agents are computing signals... this can take up to 60s on first load.</span></div>';
+  }, 5000);
+
   try {
-    const [sigRes, healthRes] = await Promise.all([
-      fetch(API_BASE + '/signal'),
-      fetch(API_BASE + '/health')
-    ]);
-    signalData = await sigRes.json();
+    // Fetch health first (always fast), then signal (may be slow on first load)
+    const healthRes = await fetch(API_BASE + '/health');
     healthData = await healthRes.json();
+    renderAgents();
+
+    const sigRes = await fetch(API_BASE + '/signal');
+    clearTimeout(loadTimer);
+
+    if (!sigRes.ok) {
+      throw new Error(`Signal API returned ${sigRes.status}`);
+    }
+
+    signalData = await sigRes.json();
 
     document.getElementById('statusDot').className = 'status-dot';
     document.getElementById('lastUpdate').textContent =
-      'Updated: ' + new Date(signalData.timestamp).toLocaleTimeString();
+      'Updated: ' + new Date(signalData.timestamp || Date.now()).toLocaleTimeString();
 
     renderPortfolio();
-    renderAgents();
     renderInsight();
-    renderSignals();
+    if (currentView === 'history') {
+      loadHistory();
+    } else {
+      renderSignals();
+    }
   } catch (e) {
+    clearTimeout(loadTimer);
     document.getElementById('statusDot').className = 'status-dot offline';
     document.getElementById('lastUpdate').textContent = 'Connection error';
+    content.innerHTML = `<div class="loading">
+      <span style="color:var(--red);font-size:16px;">Failed to load signals</span>
+      <span style="color:var(--text-dim);font-size:13px;">${e.message || 'Network error'}</span>
+      <button class="refresh-btn" onclick="fetchAll()" style="margin-top:12px;">Try Again</button>
+    </div>`;
     console.error('Fetch failed:', e);
   }
 }

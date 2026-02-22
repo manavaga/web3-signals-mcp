@@ -98,6 +98,17 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
             except Exception as exc:
                 print(f"  {name}: CRASH — {exc}")
 
+        # Run signal fusion and save to storage (pre-computes so /signal is instant)
+        try:
+            fusion = SignalFusion()
+            fusion_result = fusion.fuse()
+            store.save("signal_fusion", fusion_result)
+            f_status = fusion_result.get("status", "unknown")
+            f_ms = fusion_result.get("meta", {}).get("duration_ms", 0)
+            print(f"  signal_fusion: {f_status} ({f_ms}ms)")
+        except Exception as exc:
+            print(f"  signal_fusion: CRASH — {exc}")
+
         # Record performance snapshot for accuracy tracking
         try:
             _record_performance_snapshot(store)
@@ -207,10 +218,12 @@ async def root():
         "version": "0.1.0",
         "description": "AI-powered crypto signal intelligence for 20 assets",
         "endpoints": {
+            "/dashboard": "Live signal intelligence dashboard (open in browser)",
             "/health": "Agent status and uptime",
             "/signal": "Full fusion — portfolio + 20 signals + LLM insights",
             "/signal/{asset}": "Single asset signal (e.g. /signal/BTC)",
             "/performance": "Signal accuracy tracking",
+            "/api/history": "Paginated history of all agent runs",
             "/docs": "OpenAPI documentation",
         },
         "assets": [
@@ -271,19 +284,29 @@ async def health():
 async def get_signal():
     global _cached_result, _cache_timestamp
 
-    # Check cache
+    # 1. Check in-memory cache (instant)
     if _cached_result and _cache_timestamp:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(_cache_timestamp)).total_seconds()
         if age < CACHE_TTL_SEC:
             return _cached_result
 
-    # Run fusion on latest agent data
+    # 2. Try loading pre-computed fusion from storage (fast, ~10ms)
+    #    The orchestrator runs fusion every 15 min and saves it to Postgres.
+    if _store:
+        stored = _store.load_latest("signal_fusion")
+        if stored:
+            _cached_result = stored
+            _cache_timestamp = datetime.now(timezone.utc).isoformat()
+            return stored
+
+    # 3. Fallback: compute live (slow — only runs on very first request before
+    #    orchestrator has completed its first cycle)
     if not _fusion:
         raise HTTPException(status_code=503, detail="Fusion engine not initialized")
 
     result = _fusion.fuse()
 
-    # Cache the result
+    # Cache and save the live result
     _cached_result = result
     _cache_timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -542,49 +565,6 @@ async def get_signal_history(
         "offset": offset,
         "rows": rows,
     }
-
-
-# ---------------------------------------------------------------------------
-# GET /debug/db — Diagnose database connectivity (temporary)
-# ---------------------------------------------------------------------------
-@app.get("/debug/db", tags=["debug"], include_in_schema=False)
-async def debug_db():
-    import socket
-    results = {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
-
-    # DNS resolution tests
-    dns_tests = {}
-    for host in ["postgres", "postgres.railway.internal", "Postgres", "Postgres.railway.internal"]:
-        try:
-            ip = socket.gethostbyname(host)
-            dns_tests[host] = ip
-        except Exception as e:
-            dns_tests[host] = f"FAILED: {e}"
-    results["dns_resolution"] = dns_tests
-
-    # Actual DB connection test
-    db_url = os.getenv("DATABASE_URL", "")
-    if db_url:
-        results["database_url_host"] = db_url.split("@")[1].split("/")[0] if "@" in db_url else "parse_error"
-        try:
-            import psycopg2
-            conn = psycopg2.connect(db_url, connect_timeout=5)
-            cur = conn.cursor()
-            cur.execute("SELECT version()")
-            ver = cur.fetchone()[0]
-            conn.close()
-            results["connection"] = "SUCCESS"
-            results["pg_version"] = ver
-        except Exception as e:
-            results["connection"] = f"FAILED: {e}"
-    else:
-        results["connection"] = "No DATABASE_URL — using SQLite"
-
-    # Check all env vars containing RAILWAY or PG
-    railway_vars = {k: v for k, v in os.environ.items() if "RAILWAY" in k or "PG" in k or "DATABASE" in k}
-    results["railway_env_vars"] = railway_vars
-
-    return results
 
 
 # ---------------------------------------------------------------------------
