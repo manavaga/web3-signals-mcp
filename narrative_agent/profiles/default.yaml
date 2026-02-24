@@ -1,8 +1,9 @@
 # =============================================================================
-# Narrative Agent Profile
+# Narrative Agent Profile — v2 (6-source rebuild)
 # =============================================================================
-# Scores narrative momentum from Reddit, Twitter, and crypto news.
-# Three data sources, each independently enabled/disabled.
+# Scores narrative momentum from Reddit, Twitter, Farcaster, CryptoPanic,
+# Google News, and CoinGecko Trending.
+# Authority weighting, influencer tracking, LLM sentiment pipeline.
 # Change any value here — agent logic adapts automatically.
 # =============================================================================
 
@@ -35,23 +36,25 @@ assets:
   - SUI
 
 # ---------------------------------------------------------------------------
-# Signal thresholds — defines the "sweet spot" for narrative momentum
+# Signal thresholds
 # ---------------------------------------------------------------------------
 thresholds:
-  narrative_score_min: 0.40           # below this = "too early" (no momentum)
-  narrative_score_max: 0.70           # above this = "peak crowded" (priced in)
-  # Sweet spot: 0.40–0.70 of 30D peak = "early pickup" → signal fires
-  peak_window_days: 30                # rolling window for peak comparison
+  narrative_score_min: 0.40
+  narrative_score_max: 0.70
+  peak_window_days: 30
 
 # ---------------------------------------------------------------------------
-# Data source 1: Reddit (via PRAW)
+# Influencer file path (relative to engine.py or absolute)
+# ---------------------------------------------------------------------------
+influencer_file: ""   # empty = auto-detect data/influencers.yaml
+
+# ---------------------------------------------------------------------------
+# Source 1: Reddit (via PRAW) — with authority weighting
 # ---------------------------------------------------------------------------
 reddit:
   enabled: true
-  # Credentials set via env: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
   user_agent: "web3-signal-bot:v1.0 (by /u/Impossible-Ad564)"
 
-  # Subreddits to monitor for specific asset communities
   subreddits:
     - CryptoCurrency
     - CryptoMarkets
@@ -60,8 +63,10 @@ reddit:
     - solana
     - altcoin
     - defi
+    - ethdev
+    - CryptoTechnology
+    - cosmosnetwork
 
-  # Keywords to search across ALL of Reddit (r/all)
   search_keywords:
     - cryptocurrency
     - crypto
@@ -80,40 +85,46 @@ reddit:
     - bull run
     - bear market
 
-  posts_per_search: 250               # max posts per keyword search
-  time_filter: day                    # day, week, month, year, all
-  sort: new                           # relevance, hot, top, new, comments
+  posts_per_search: 250
+  time_filter: day
+  sort: new
+  min_score: 5
+  weight_by_score: false   # replaced by authority weighting
 
-  # Engagement weighting — posts with more upvotes count more
-  weight_by_score: true               # if true, mentions weighted by upvote score
-  min_score: 5                        # ignore posts below this score (filters spam)
+  # Authority weighting — weights posts by author credibility
+  authority:
+    enabled: true
+    min_account_age_days: 30        # ignore accounts younger than 30 days
+    karma_tiers:
+      - min_karma: 0
+        weight: 1.0
+      - min_karma: 1000
+        weight: 1.5
+      - min_karma: 10000
+        weight: 2.0
+      - min_karma: 50000
+        weight: 3.0
+      - min_karma: 100000
+        weight: 4.0
+    mod_bonus: 1.5                  # multiplier if author is a moderator
+    verified_bonus: 1.2             # multiplier if email verified
 
 # ---------------------------------------------------------------------------
-# Data source 2: Twitter/X (via Apify)
+# Source 2: Twitter/X (via twikit — free, no API key)
 # ---------------------------------------------------------------------------
 twitter:
-  enabled: true
-  provider: apify
-  actor_id: "kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest"
-  # Apify API key set via env: APIFY_API_KEY
-  # No Twitter cookies needed — this actor works without them.
+  enabled: false    # twikit blocked by Cloudflare from server IPs — enable with Twitter API v2 or proxy
+  provider: twikit
+  # Credentials via env: TWITTER_USERNAME, TWITTER_EMAIL, TWITTER_PASSWORD
+  cookie_path: "/tmp/twikit_cookies.json"
+  tweets_per_query: 20
 
-  # Run timeout in seconds (Apify run-sync timeout)
-  run_timeout_sec: 60
-
-  # Tweets to fetch per search query
-  tweets_per_search: 20
-
-  # Search queries — use Twitter search operators for best results
-  # 'from:' targets specific high-signal accounts
-  # General keyword queries catch broader crypto discussion
   search_queries:
-    # --- High-signal whale/alpha accounts ---
+    # High-signal accounts
     - "from:whale_alert OR from:lookonchain OR from:AltcoinGordon"
     - "from:CryptoCapo_ OR from:Pentosh1 OR from:GCRClassic"
     - "from:DegenSpartan OR from:inversebrah OR from:coaborage"
-
-    # --- General crypto keyword searches ---
+    # General crypto
     - "bitcoin bullish OR bearish"
     - "ethereum bullish OR bearish"
     - "solana bullish OR bearish"
@@ -121,38 +132,78 @@ twitter:
     - "altcoin season OR altseason"
     - "defi yield OR airdrop"
 
-  # Engagement filter — ignore tweets below this like count (0 = keep all)
-  min_likes: 0
+# ---------------------------------------------------------------------------
+# Source 3: Farcaster (via Neynar — 200K credits/month free)
+# ---------------------------------------------------------------------------
+farcaster:
+  enabled: false    # Neynar free tier doesn't include cast search — enable when on paid plan
+  base_url: "https://api.neynar.com/v2/farcaster/cast/search"
+  # API key via env: NEYNAR_API_KEY
+  results_per_query: 25
 
-  # Weight by engagement — tweets with more likes count more for mentions
-  weight_by_likes: true
-  # Engagement tiers for weighting
-  weight_tiers:
-    - min_likes: 0
-      weight: 1
-    - min_likes: 10
-      weight: 3
-    - min_likes: 100
-      weight: 10
-    - min_likes: 1000
-      weight: 25
+  search_queries:
+    - bitcoin
+    - ethereum
+    - solana
+    - defi
+    - web3 crypto
+    - onchain
+    - airdrop
+    - layer2
 
 # ---------------------------------------------------------------------------
-# Data source 3: CryptoCompare News (free, no key)
+# Source 4: CryptoPanic (free API key, community-voted sentiment)
 # ---------------------------------------------------------------------------
-news:
+cryptopanic:
+  enabled: false    # Cloudflare blocks API calls from servers — needs workaround
+  base_url: "https://cryptopanic.com/api/v1/posts/"
+  # API key via env: CRYPTOPANIC_API_KEY
+  filter: hot                        # rising, hot, bullish, bearish, important
+
+  # Map our asset symbols to CryptoPanic currency codes (if different)
+  currency_map:
+    MATIC: "MATIC"
+    DOT: "DOT"
+    # Most symbols match directly
+
+# ---------------------------------------------------------------------------
+# Source 5: Google News RSS (free, unlimited, no API key)
+# ---------------------------------------------------------------------------
+google_news:
   enabled: true
-  provider: cryptocompare
-  base_url: "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
-  lookback_hours: 24                  # only count articles from last N hours
+  base_url: "https://news.google.com/rss/search"
+  max_items_per_asset: 20
+
+  # Human-readable search names for better Google results
+  asset_search_names:
+    BTC: "Bitcoin"
+    ETH: "Ethereum"
+    SOL: "Solana"
+    BNB: "BNB Binance"
+    XRP: "XRP Ripple"
+    ADA: "Cardano"
+    AVAX: "Avalanche AVAX"
+    DOT: "Polkadot"
+    MATIC: "Polygon MATIC"
+    LINK: "Chainlink"
+    UNI: "Uniswap"
+    ATOM: "Cosmos ATOM"
+    LTC: "Litecoin"
+    FIL: "Filecoin"
+    NEAR: "NEAR Protocol"
+    APT: "Aptos"
+    ARB: "Arbitrum"
+    OP: "Optimism crypto"
+    INJ: "Injective"
+    SUI: "Sui crypto"
 
 # ---------------------------------------------------------------------------
-# Data source 4: CoinGecko Trending (free, no key)
+# Source 6: CoinGecko Trending (free, no key)
 # ---------------------------------------------------------------------------
 coingecko_trending:
   enabled: true
   base_url: "https://api.coingecko.com/api/v3/search/trending"
-  trending_boost: 20                  # bonus mention count if asset is trending
+  trending_boost: 20
 
 # ---------------------------------------------------------------------------
 # Asset keyword mapping — how we detect which asset a post is about
@@ -180,8 +231,22 @@ asset_keywords:
   SUI: [sui, sui network]
 
 # ---------------------------------------------------------------------------
-# Sentiment keywords — rough keyword-based sentiment scoring
+# Keyword-based sentiment (fast, every cycle)
 # ---------------------------------------------------------------------------
 sentiment:
-  positive: [bull, surge, rally, breakout, ath, gain, pump, rise, growth, strong, buy, accumulate, moon]
-  negative: [bear, crash, dump, drop, sell, fear, rekt, collapse, weak, correction, decline, panic]
+  positive: [bull, surge, rally, breakout, ath, gain, pump, rise, growth, strong, buy, accumulate, moon, adoption, upgrade, partnership, launch]
+  negative: [bear, crash, dump, drop, sell, fear, rekt, collapse, weak, correction, decline, panic, hack, exploit, rug, scam]
+
+# ---------------------------------------------------------------------------
+# LLM Sentiment Pipeline (12-hour batch cycle)
+# ---------------------------------------------------------------------------
+llm_sentiment:
+  enabled: true
+  model: "claude-haiku-4-5-20251001"
+  max_tokens: 2048
+  max_age_hours: 24                  # discard LLM results older than 24h
+  system_prompt: >
+    You are a crypto market sentiment analyst. Analyze headlines for each
+    cryptocurrency and provide structured sentiment analysis. Focus on
+    identifying dominant narratives, sentiment direction, and confidence.
+    Consider what builders, investors, and traders are saying separately.

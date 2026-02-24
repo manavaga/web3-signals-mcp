@@ -75,28 +75,25 @@ scoring:
   # WHALE scoring (per asset)
   # -----------------------------------------------------------------------
   whale:
-    # Base score if no activity for this asset
-    base_score: 50
+    # --- Ratio-based scoring (0-60 points) ---
+    # Uses accumulate/(accumulate+sell) ratio instead of raw counts.
+    # Scales correctly whether 10 or 300 transactions exist.
+    # ratio = accumulate / (accumulate + sell)
+    #   ratio 1.0 (100% accumulate)  → 60 points
+    #   ratio 0.5 (balanced)          → 30 points
+    #   ratio 0.0 (100% sell)         → 0 points
+    scoring_mode: ratio              # "ratio" (new) or "per_move" (legacy)
+    base_score: 50                   # base if no directional moves at all
+    ratio_max_points: 60             # max points from accumulate/sell ratio
+    ratio_center: 0.5               # ratio at which score = half of max
+    min_directional_moves: 2         # need at least 2 acc+sell moves to use ratio
 
-    # Points added per whale move classified as "accumulate"
-    accumulate_points: 10
+    # --- Exchange flow bonus/penalty (0-20 points) ---
+    exchange_outflow_bonus: 10       # net outflow = accumulation across exchanges
+    exchange_inflow_penalty: -10     # net inflow = selling across exchanges
 
-    # Points subtracted per whale move classified as "sell"
-    sell_points: -10
-
-    # Points added per whale move classified as "transfer"
-    transfer_points: 2
-
-    # Bonus if exchange flow is net_outflow (accumulation across exchanges)
-    exchange_outflow_bonus: 10
-
-    # Penalty if exchange flow is net_inflow (selling across exchanges)
-    exchange_inflow_penalty: -10
-
-    # Bonus per whale wallet showing "accumulating" signal
+    # --- Whale wallet signals (0-20 points) ---
     whale_wallet_accumulating_bonus: 8
-
-    # Penalty per whale wallet showing "reducing" signal
     whale_wallet_reducing_penalty: -8
 
     # Clamp range
@@ -178,20 +175,39 @@ scoring:
       change_threshold_pct: 5    # >5% change from recent
 
   # -----------------------------------------------------------------------
-  # NARRATIVE scoring (per asset)
+  # NARRATIVE scoring (per asset) — 6-component scoring
+  # -----------------------------------------------------------------------
+  # Components (total max = 100):
+  #   1. Volume (0-30):  normalised_score * volume_multiplier
+  #   2. LLM sentiment (0-25):  from 12h LLM batch
+  #   3. Community sentiment (0-15):  CryptoPanic votes
+  #   4. Trending bonus (0-10):  CoinGecko trending
+  #   5. Influencer bonus (0-10):  known influencers mentioning asset
+  #   6. Multi-source bonus (0-10):  >= N sources have data
   # -----------------------------------------------------------------------
   narrative:
-    # Base from raw narrative score (0.0-1.0 mapped to 0-60)
-    score_multiplier: 60
+    # Component 1: Volume — normalised mentions vs rolling peak (0-30)
+    volume_multiplier: 30
 
-    # Bonus if asset is in CoinGecko trending
-    trending_bonus: 20
+    # Component 2: LLM sentiment (0-25) — from 12h batch analysis
+    llm_max_points: 25
+    llm_min_confidence: 0.3          # ignore LLM results below this confidence
 
-    # Sentiment boost/penalty (positive minus negative mentions)
-    sentiment_positive_bonus: 10
-    sentiment_negative_penalty: -10
+    # Component 3: Community sentiment (0-15) — CryptoPanic votes
+    community_max_points: 15
 
-    # Cap at 100
+    # Component 4: Trending bonus (0-10)
+    trending_bonus: 10
+
+    # Component 5: Influencer bonus (0-10)
+    influencer_bonus: 10
+    influencer_threshold: 2          # need >= N influencers mentioning asset
+
+    # Component 6: Multi-source confirmation (0-10)
+    multi_source_bonus: 10
+    multi_source_threshold: 3        # need >= N sources with data
+
+    # Cap
     max_score: 100
 
   # -----------------------------------------------------------------------
@@ -229,6 +245,42 @@ scoring:
       greed_below: 75
       greed_score: 10
       extreme_greed_score: 5         # worst time to buy
+
+# ---------------------------------------------------------------------------
+# Dynamic reweighting — adjust whale weight based on data availability
+# ---------------------------------------------------------------------------
+# When whale data is missing for an asset, the 30% whale weight gets
+# redistributed proportionally to the other 4 dimensions.
+# This prevents fake 50.0 neutral scores from dragging composite scores.
+#
+# Tiers:
+#   full   — real whale moves (accumulate/sell detected) → full whale weight
+#   sparse — only transfers or exchange flow, no directional moves → half weight
+#   none   — no whale data at all → zero weight, fully redistributed
+# ---------------------------------------------------------------------------
+reweighting:
+  enabled: true
+
+  # Multiplier applied to whale weight for each tier
+  tier_multipliers:
+    full: 1.0          # full weight (e.g. 0.30 × 1.0 = 0.30)
+    sparse: 0.5        # half weight (e.g. 0.30 × 0.5 = 0.15)
+    none: 0.0          # zero weight (redistributed to other dimensions)
+
+  # Keywords in whale detail string that indicate "no data" → tier "none"
+  no_data_keywords:
+    - "no data"
+    - "no whale activity"
+    - "no scorer"
+
+  # Keywords that indicate real directional data → tier "full"
+  # If any of these appear in whale detail, it's tier "full"
+  full_data_keywords:
+    - "accumulate"
+    - "sell"
+
+  # Everything else → tier "sparse"
+  # (e.g. only "exchange outflow", "transfer", etc.)
 
 # ---------------------------------------------------------------------------
 # Momentum detection — compare current vs previous fusion run

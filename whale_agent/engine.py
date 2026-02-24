@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,12 +17,15 @@ from shared.storage import Storage
 
 class WhaleAgent(BaseAgent):
     """
-    4-Layer whale intelligence engine. Everything from YAML.
+    Multi-layer whale intelligence engine. Everything from YAML.
 
-    Layer 1: Twitter whale accounts (Apify) — @whale_alert, @lookonchain tweets
+    Layer 1: Whale Alert REST API (Primary) — all 20 assets, paginated
     Layer 2: On-chain verification — Etherscan V2 (ETH/ERC-20), Blockchain.com (BTC)
     Layer 3: Exchange flow — balance changes in known exchange wallets
-    Layer 4: Known whale wallet tracking — Jump, Wintermute, Galaxy, MicroStrategy, etc.
+    Layer 4: Known whale wallet tracking — Jump, Wintermute, Galaxy, etc.
+
+    Future: Whale Alert WebSocket socials feed (Layer 1b, disabled)
+    Legacy: Twitter whale accounts (Apify), Arkham (disabled by default)
     """
 
     def __init__(self, profile_path: str | None = None, db_path: str = "signals.db") -> None:
@@ -33,6 +37,7 @@ class WhaleAgent(BaseAgent):
 
         self.etherscan_key = os.getenv("ETHERSCAN_API_KEY", "").strip()
         self.apify_key = os.getenv("APIFY_API_KEY", "").strip()
+        self.whale_alert_key = os.getenv("WHALE_ALERT_API_KEY", "").strip()
 
         super().__init__(
             agent_name="whale_agent",
@@ -63,12 +68,40 @@ class WhaleAgent(BaseAgent):
         all_moves: List[Dict[str, Any]] = []
 
         # ============================================================
-        # LAYER 1: Twitter whale accounts
+        # LAYER 1: Whale Alert REST API (Primary)
+        # ============================================================
+        if is_source_enabled(self.profile, "whale_alert"):
+            if self.whale_alert_key:
+                try:
+                    moves = self._layer_whale_alert_api()
+                    all_moves.extend(moves)
+                    data["sources_used"].append("whale_alert_api")
+                except Exception as exc:
+                    errors.append(f"whale_alert_api: {exc}")
+            else:
+                errors.append("whale_alert_api: WHALE_ALERT_API_KEY not set")
+
+        # ============================================================
+        # LAYER 1b: Whale Alert Socials (Future — disabled)
+        # ============================================================
+        if is_source_enabled(self.profile, "whale_alert_socials"):
+            # Placeholder for WebSocket socials feed (v2)
+            # Would poll a buffer of parsed social alerts
+            # For now this section is a no-op; enabled: false in profile
+            try:
+                moves = self._layer_whale_alert_socials()
+                all_moves.extend(moves)
+                data["sources_used"].append("whale_alert_socials")
+            except Exception as exc:
+                errors.append(f"whale_alert_socials: {exc}")
+
+        # ============================================================
+        # LAYER 2: Twitter whale accounts (Supplementary)
         # ============================================================
         if is_source_enabled(self.profile, "twitter_whales"):
             if self.apify_key:
                 try:
-                    moves = self._layer1_twitter_whales()
+                    moves = self._layer_twitter_whales()
                     all_moves.extend(moves)
                     data["sources_used"].append("twitter_whales")
                 except Exception as exc:
@@ -77,12 +110,12 @@ class WhaleAgent(BaseAgent):
                 errors.append("twitter_whales: APIFY_API_KEY not set")
 
         # ============================================================
-        # LAYER 2: On-chain verification
+        # LAYER 3: On-chain verification
         # ============================================================
         if is_source_enabled(self.profile, "etherscan"):
             if self.etherscan_key:
                 try:
-                    moves = self._layer2_etherscan()
+                    moves = self._layer_etherscan()
                     all_moves.extend(moves)
                     data["sources_used"].append("etherscan")
                 except Exception as exc:
@@ -92,30 +125,30 @@ class WhaleAgent(BaseAgent):
 
         if is_source_enabled(self.profile, "blockchain_com"):
             try:
-                moves = self._layer2_blockchain_com()
+                moves = self._layer_blockchain_com()
                 all_moves.extend(moves)
                 data["sources_used"].append("blockchain_com")
             except Exception as exc:
                 errors.append(f"blockchain_com: {exc}")
 
         # ============================================================
-        # LAYER 3: Exchange flow (balance tracking)
+        # LAYER 4: Exchange flow (balance tracking)
         # ============================================================
         flow_cfg = self.profile.get("exchange_flow", {})
         if flow_cfg.get("enabled", False):
             try:
-                data["exchange_flow"] = self._layer3_exchange_flow()
+                data["exchange_flow"] = self._layer_exchange_flow()
                 data["sources_used"].append("exchange_flow")
             except Exception as exc:
                 errors.append(f"exchange_flow: {exc}")
 
         # ============================================================
-        # LAYER 4: Known whale wallet tracking
+        # LAYER 5: Known whale wallet tracking
         # ============================================================
         wallet_cfg = self.profile.get("whale_wallets", {})
         if wallet_cfg.get("enabled", False):
             try:
-                data["whale_wallets"] = self._layer4_whale_wallets()
+                data["whale_wallets"] = self._layer_whale_wallets()
                 data["sources_used"].append("whale_wallets")
             except Exception as exc:
                 errors.append(f"whale_wallets: {exc}")
@@ -123,14 +156,6 @@ class WhaleAgent(BaseAgent):
         # ============================================================
         # Legacy sources (disabled by default)
         # ============================================================
-        if is_source_enabled(self.profile, "whale_alert"):
-            whale_alert_key = os.getenv("WHALE_ALERT_API_KEY", "").strip()
-            if whale_alert_key:
-                try:
-                    all_moves.extend(self._legacy_whale_alert(whale_alert_key))
-                except Exception as exc:
-                    errors.append(f"whale_alert: {exc}")
-
         if is_source_enabled(self.profile, "arkham"):
             arkham_key = os.getenv("ARKHAM_API_KEY", "").strip()
             if arkham_key:
@@ -161,10 +186,159 @@ class WhaleAgent(BaseAgent):
         return data, errors
 
     # ================================================================ #
-    # LAYER 1: Twitter whale accounts (Apify)
+    # LAYER 1: Whale Alert REST API (Primary)
     # ================================================================ #
 
-    def _layer1_twitter_whales(self) -> List[Dict[str, Any]]:
+    def _layer_whale_alert_api(self) -> List[Dict[str, Any]]:
+        """
+        Query the Whale Alert REST API with pagination.
+        Classifies each transaction based on owner_type of from/to addresses.
+        Returns whale moves for all 20 tracked assets.
+        """
+        cfg = self.profile.get("whale_alert", {})
+        base_url = cfg.get("base_url", "https://api.whale-alert.io/v1")
+        min_value = int(cfg.get("min_value_usd", 100_000))
+        max_per_page = int(cfg.get("max_results_per_page", 100))
+        max_pages = int(cfg.get("max_pages", 10))
+        action_rules = self.profile.get("action_rules", {})
+
+        # Lookback: use whale_alert-specific or global, default 1h for REST polling
+        lookback_sec = int(cfg.get("lookback_sec", 3600))
+        if lookback_sec <= 0:
+            lookback_sec = int(self.profile.get("lookback_hours", 1)) * 3600
+        start_ts = int((datetime.now(timezone.utc) - timedelta(seconds=lookback_sec)).timestamp())
+
+        # Build asset lookup (case-insensitive)
+        asset_set_lower = {sym.lower() for sym in self.assets}
+        asset_map = {sym.lower(): sym for sym in self.assets}
+
+        moves: List[Dict[str, Any]] = []
+        seen_hashes: set = set()
+        cursor: Optional[str] = None
+
+        # Rate limit settings from YAML
+        rate_cfg = cfg.get("rate_limit", {})
+        max_retries = int(rate_cfg.get("max_retries", 3))
+        base_delay = float(rate_cfg.get("base_delay_sec", 2.0))
+        page_delay = float(rate_cfg.get("page_delay_sec", 1.0))
+
+        for page in range(max_pages):
+            params: Dict[str, Any] = {
+                "api_key": self.whale_alert_key,
+                "min_value": min_value,
+                "start": start_ts,
+                "limit": max_per_page,
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            # Retry with exponential backoff on rate limit (429)
+            raw = None
+            for attempt in range(max_retries):
+                try:
+                    raw = self._get_json(f"{base_url}/transactions", params)
+                    break
+                except Exception as exc:
+                    if "429" in str(exc) and attempt < max_retries - 1:
+                        wait = base_delay * (2 ** attempt)
+                        time.sleep(wait)
+                    else:
+                        raise
+
+            if raw is None:
+                break
+
+            transactions = raw.get("transactions", [])
+            if not transactions:
+                break
+
+            for tx in transactions:
+                tx_hash = str(tx.get("hash", ""))
+                if tx_hash and tx_hash in seen_hashes:
+                    continue
+                if tx_hash:
+                    seen_hashes.add(tx_hash)
+
+                # Match symbol to our asset list (case-insensitive)
+                symbol_raw = str(tx.get("symbol", "")).lower()
+                if symbol_raw not in asset_set_lower:
+                    continue
+                asset = asset_map[symbol_raw]
+
+                # Classify based on owner_type
+                from_info = tx.get("from", {}) or {}
+                to_info = tx.get("to", {}) or {}
+                from_owner_type = str(from_info.get("owner_type", "unknown")).lower()
+                to_owner_type = str(to_info.get("owner_type", "unknown")).lower()
+
+                if from_owner_type == "exchange" and to_owner_type != "exchange":
+                    # Whale withdrawing from exchange = accumulation (bullish)
+                    action = action_rules.get("from_exchange", "accumulate")
+                elif from_owner_type != "exchange" and to_owner_type == "exchange":
+                    # Whale depositing to exchange = sell pressure (bearish)
+                    action = action_rules.get("to_exchange", "sell")
+                else:
+                    # exchange->exchange or unknown->unknown = transfer (neutral)
+                    action = action_rules.get("unknown", "transfer")
+
+                from_label = str(from_info.get("owner", "unknown")) if from_info.get("owner") else "unknown"
+                to_label = str(to_info.get("owner", "unknown")) if to_info.get("owner") else "unknown"
+                amount_usd = float(tx.get("amount_usd", 0))
+
+                moves.append({
+                    "source": "whale_alert_api",
+                    "layer": 1,
+                    "asset": asset,
+                    "amount_usd": amount_usd,
+                    "action": action,
+                    "from_label": from_label,
+                    "to_label": to_label,
+                    "tx_hash": tx_hash,
+                    "timestamp": str(tx.get("timestamp", "")),
+                    "wallet_size_usd": amount_usd,
+                    "label": from_label if from_label != "unknown" else to_label,
+                    "smart_money_score": None,
+                    "blockchain": str(tx.get("blockchain", "")),
+                    "amount_native": float(tx.get("amount", 0)),
+                    "from_owner_type": from_owner_type,
+                    "to_owner_type": to_owner_type,
+                })
+
+            # Pagination: check for cursor
+            cursor = raw.get("cursor")
+            if not cursor:
+                break
+
+            # Rate-limit friendly: sleep between pages
+            if page < max_pages - 1:
+                time.sleep(page_delay)
+
+        return moves
+
+    # ================================================================ #
+    # LAYER 1b: Whale Alert Socials (Future — placeholder)
+    # ================================================================ #
+
+    def _layer_whale_alert_socials(self) -> List[Dict[str, Any]]:
+        """
+        Future: Whale Alert WebSocket socials feed.
+        Requires persistent connection — not suitable for 15-min polling.
+        This is a structural placeholder for v2.
+
+        When implemented, this would:
+        - Maintain a buffer of recent social alerts from the WS feed
+        - Parse `text` for asset mentions and direction keywords
+        - Return whale moves with source="whale_alert_socials"
+        """
+        # No-op: this layer is disabled in the default profile
+        # Structure preserved for future WebSocket integration
+        return []
+
+    # ================================================================ #
+    # LAYER 2: Twitter whale accounts (Apify — Supplementary)
+    # ================================================================ #
+
+    def _layer_twitter_whales(self) -> List[Dict[str, Any]]:
         cfg = self.profile["twitter_whales"]
         actor_id = cfg.get("actor_id", "kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest")
         run_timeout = int(cfg.get("run_timeout_sec", 60))
@@ -224,7 +398,7 @@ class WhaleAgent(BaseAgent):
 
                     moves.append({
                         "source": f"twitter:{source_account}",
-                        "layer": 1,
+                        "layer": 2,
                         "asset": matched_asset,
                         "amount_usd": usd_amount,
                         "action": action,
@@ -244,10 +418,10 @@ class WhaleAgent(BaseAgent):
         return moves
 
     # ================================================================ #
-    # LAYER 2a: Etherscan V2 — ETH + ERC-20 large transfers
+    # LAYER 3a: Etherscan V2 — ETH + ERC-20 large transfers
     # ================================================================ #
 
-    def _layer2_etherscan(self) -> List[Dict[str, Any]]:
+    def _layer_etherscan(self) -> List[Dict[str, Any]]:
         cfg = self.profile["etherscan"]
         base = cfg.get("base_url", "https://api.etherscan.io/v2/api")
         chain_id = int(cfg.get("chain_id", 1))
@@ -295,7 +469,7 @@ class WhaleAgent(BaseAgent):
 
                         moves.append({
                             "source": "etherscan",
-                            "layer": 2,
+                            "layer": 3,
                             "asset": "ETH",
                             "amount_usd": 0.0,  # will be enriched by market agent
                             "amount_native": round(value_eth, 4),
@@ -349,7 +523,7 @@ class WhaleAgent(BaseAgent):
 
                         moves.append({
                             "source": "etherscan",
-                            "layer": 2,
+                            "layer": 3,
                             "asset": token_sym,
                             "amount_usd": 0.0,
                             "amount_native": round(value, 4),
@@ -369,10 +543,10 @@ class WhaleAgent(BaseAgent):
         return moves
 
     # ================================================================ #
-    # LAYER 2b: Blockchain.com — BTC large transfers
+    # LAYER 3b: Blockchain.com — BTC large transfers
     # ================================================================ #
 
-    def _layer2_blockchain_com(self) -> List[Dict[str, Any]]:
+    def _layer_blockchain_com(self) -> List[Dict[str, Any]]:
         cfg = self.profile["blockchain_com"]
         base = cfg.get("base_url", "https://blockchain.info")
         min_btc = float(cfg.get("min_btc_value", 10))
@@ -408,7 +582,7 @@ class WhaleAgent(BaseAgent):
 
                         moves.append({
                             "source": "blockchain_com",
-                            "layer": 2,
+                            "layer": 3,
                             "asset": "BTC",
                             "amount_usd": 0.0,
                             "amount_native": round(result_btc, 8),
@@ -428,10 +602,10 @@ class WhaleAgent(BaseAgent):
         return moves
 
     # ================================================================ #
-    # LAYER 3: Exchange flow — balance snapshots over time
+    # LAYER 4: Exchange flow — balance snapshots over time
     # ================================================================ #
 
-    def _layer3_exchange_flow(self) -> Dict[str, Any]:
+    def _layer_exchange_flow(self) -> Dict[str, Any]:
         flow_cfg = self.profile.get("exchange_flow", {})
         track_exchanges = flow_cfg.get("track_exchanges", [])
         eth_threshold = float(flow_cfg.get("eth_significant_change", 1000))
@@ -507,10 +681,10 @@ class WhaleAgent(BaseAgent):
         return flows
 
     # ================================================================ #
-    # LAYER 4: Known whale wallet balance tracking
+    # LAYER 5: Known whale wallet balance tracking
     # ================================================================ #
 
-    def _layer4_whale_wallets(self) -> Dict[str, Any]:
+    def _layer_whale_wallets(self) -> Dict[str, Any]:
         wallet_cfg = self.profile.get("whale_wallets", {})
         min_eth_change = float(wallet_cfg.get("min_eth_change", 50))
         min_btc_change = float(wallet_cfg.get("min_btc_change", 5))
@@ -594,29 +768,6 @@ class WhaleAgent(BaseAgent):
     # Legacy sources (disabled by default)
     # ================================================================ #
 
-    def _legacy_whale_alert(self, api_key: str) -> List[Dict[str, Any]]:
-        cfg = self.profile["whale_alert"]
-        lookback_sec = min(int(self.profile.get("lookback_hours", 24)) * 3600, 3600)
-        since = int((datetime.now(timezone.utc) - timedelta(seconds=lookback_sec)).timestamp())
-        params = {"start": since, "min_value": int(cfg.get("min_value_usd", 500_000)), "limit": int(cfg.get("max_results", 100)), "api_key": api_key}
-        raw = self._get_json(f"{cfg['base_url']}/transactions", params)
-        action_rules = self.profile.get("action_rules", {})
-        moves = []
-        for tx in raw.get("transactions", []):
-            symbol = str(tx.get("symbol", "")).upper()
-            if symbol not in self.assets:
-                continue
-            to_owner = str(tx.get("to", {}).get("owner_type", "")).lower()
-            from_owner = str(tx.get("from", {}).get("owner_type", "")).lower()
-            if "exchange" in to_owner and "exchange" not in from_owner:
-                action = action_rules.get("to_exchange", "sell")
-            elif "exchange" in from_owner and "exchange" not in to_owner:
-                action = action_rules.get("from_exchange", "accumulate")
-            else:
-                action = action_rules.get("unknown", "transfer")
-            moves.append({"source": "whale_alert", "layer": 0, "asset": symbol, "amount_usd": float(tx.get("amount_usd", 0)), "action": action, "from_label": str(tx.get("from", {}).get("owner", "unknown")), "to_label": str(tx.get("to", {}).get("owner", "unknown")), "tx_hash": str(tx.get("hash", "")), "timestamp": str(tx.get("timestamp", "")), "wallet_size_usd": float(tx.get("amount_usd", 0)), "label": str(tx.get("from", {}).get("owner", "unknown")), "smart_money_score": None})
-        return moves
-
     def _legacy_arkham(self, api_key: str) -> List[Dict[str, Any]]:
         cfg = self.profile["arkham"]
         lookback = int(self.profile.get("lookback_hours", 24))
@@ -642,12 +793,20 @@ class WhaleAgent(BaseAgent):
 
         source = str(move.get("source", ""))
 
+        # Whale Alert API: always credible (verified on-chain transactions)
+        if source == "whale_alert_api":
+            return True
+
         # Twitter-sourced: already filtered by min_usd_mentioned
         if source.startswith("twitter:"):
             return True
 
         # On-chain sourced: from tracked exchange wallets = credible by definition
         if source in ("etherscan", "blockchain_com"):
+            return True
+
+        # Whale Alert Socials: credible when implemented (verified feed)
+        if source == "whale_alert_socials":
             return True
 
         # API sources: apply size + label filter
@@ -684,6 +843,11 @@ class WhaleAgent(BaseAgent):
             if isinstance(info, dict) and info.get("signal") != "neutral":
                 whale_signals.append(f"{name}: {info['signal']}")
 
+        # Whale Alert API stats
+        wa_moves = [m for m in credible if m.get("source") == "whale_alert_api"]
+        wa_accumulate = sum(1 for m in wa_moves if m.get("action") == "accumulate")
+        wa_sell = sum(1 for m in wa_moves if m.get("action") == "sell")
+
         return {
             "total_moves": len(all_moves),
             "credible_moves": len(credible),
@@ -691,6 +855,12 @@ class WhaleAgent(BaseAgent):
             "net_exchange_direction": net_direction,
             "whale_wallet_signals": whale_signals,
             "lookback_hours": int(self.profile.get("lookback_hours", 24)),
+            "whale_alert_api_stats": {
+                "total": len(wa_moves),
+                "accumulate": wa_accumulate,
+                "sell": wa_sell,
+                "transfer": len(wa_moves) - wa_accumulate - wa_sell,
+            },
         }
 
     # ================================================================ #

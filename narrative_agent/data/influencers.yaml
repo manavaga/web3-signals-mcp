@@ -1,0 +1,441 @@
+# =============================================================================
+# Crypto/Web3 Influencer List
+# =============================================================================
+# Used by the narrative agent to weight mentions from known influencers.
+#
+# Fields:
+#   handle    — Twitter handle (without @) or Farcaster username
+#   platform  — "twitter" or "farcaster"
+#   tier      — 1 (mega), 2 (major), 3 (notable)
+#   weight    — scoring multiplier (1.0 - 5.0)
+#   category  — analyst, builder, trader, media, whale_tracker, vc, protocol
+# =============================================================================
+
+influencers:
+  # =========================================================================
+  # TIER 1 — Mega influencers (500K+ followers, market-moving)
+  # =========================================================================
+
+  # --- Whale trackers ---
+  - handle: whale_alert
+    platform: twitter
+    tier: 1
+    weight: 5.0
+    category: whale_tracker
+
+  - handle: lookonchain
+    platform: twitter
+    tier: 1
+    weight: 5.0
+    category: whale_tracker
+
+  # --- Analysts / Traders ---
+  - handle: CryptoCapo_
+    platform: twitter
+    tier: 1
+    weight: 4.0
+    category: analyst
+
+  - handle: Pentosh1
+    platform: twitter
+    tier: 1
+    weight: 4.0
+    category: analyst
+
+  - handle: trader1sz
+    platform: twitter
+    tier: 1
+    weight: 4.0
+    category: trader
+
+  - handle: CryptoCred
+    platform: twitter
+    tier: 1
+    weight: 4.0
+    category: analyst
+
+  - handle: RaoulGMI
+    platform: twitter
+    tier: 1
+    weight: 4.5
+    category: analyst
+
+  - handle: APompliano
+    platform: twitter
+    tier: 1
+    weight: 3.5
+    category: media
+
+  - handle: SatoshiClub
+    platform: twitter
+    tier: 1
+    weight: 3.0
+    category: media
+
+  # --- Builders / Protocol leaders ---
+  - handle: VitalikButerin
+    platform: twitter
+    tier: 1
+    weight: 5.0
+    category: builder
+
+  - handle: caborage
+    platform: twitter
+    tier: 1
+    weight: 4.0
+    category: builder
+
+  - handle: balaboredoape
+    platform: twitter
+    tier: 1
+    weight: 3.5
+    category: analyst
+
+  # =========================================================================
+  # TIER 2 — Major influencers (100K-500K followers)
+  # =========================================================================
+
+  - handle: AltcoinGordon
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: analyst
+
+  - handle: GCRClassic
+    platform: twitter
+    tier: 2
+    weight: 3.5
+    category: trader
+
+  - handle: DegenSpartan
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: trader
+
+  - handle: inversebrah
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: trader
+
+  - handle: ZssBecker
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: analyst
+
+  - handle: CryptoGodJohn
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: trader
+
+  - handle: milesdeutscher
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: analyst
+
+  - handle: cryptopainter_x
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: analyst
+
+  - handle: CryptoBirb
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: analyst
+
+  - handle: raborage
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: trader
+
+  - handle: CryptoWendyO
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: media
+
+  - handle: Crypto_Banter
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: media
+
+  - handle: iamjosephyoung
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: media
+
+  - handle: WuBlockchain
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: media
+
+  - handle: MustStopMurad
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: analyst
+
+  - handle: Bluntz_Capital
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: trader
+
+  - handle: ColdBloodShill
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: trader
+
+  - handle: HsakaTrades
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: trader
+
+  - handle: SmartContracter
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: trader
+
+  - handle: nebaborage
+    platform: twitter
+    tier: 2
+    weight: 2.5
+    category: trader
+
+  # --- VCs / Institutional ---
+  - handle: cdixon
+    platform: twitter
+    tier: 2
+    weight: 4.0
+    category: vc
+
+  - handle: haaborage
+    platform: twitter
+    tier: 2
+    weight: 3.5
+    category: vc
+
+  - handle: ArthurHayes
+    platform: twitter
+    tier: 2
+    weight: 4.0
+    category: trader
+
+  - handle: CoinbaseAssets
+    platform: twitter
+    tier: 2
+    weight: 3.0
+    category: protocol
+
+  # =========================================================================
+  # TIER 3 — Notable (10K-100K followers, high signal quality)
+  # =========================================================================
+
+  - handle: DeFi_Dad
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: builder
+
+  - handle: AutismCapital
+    platform: twitter
+    tier: 3
+    weight: 2.5
+    category: analyst
+
+  - handle: punk6529
+    platform: twitter
+    tier: 3
+    weight: 3.0
+    category: analyst
+
+  - handle: WClementeIII
+    platform: twitter
+    tier: 3
+    weight: 2.5
+    category: analyst
+
+  - handle: ChainLinkGod
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: analyst
+
+  - handle: cobie
+    platform: twitter
+    tier: 3
+    weight: 3.5
+    category: trader
+
+  - handle: ZachXBT
+    platform: twitter
+    tier: 3
+    weight: 3.5
+    category: analyst
+
+  - handle: DefiIgnas
+    platform: twitter
+    tier: 3
+    weight: 2.5
+    category: analyst
+
+  - handle: 0xMert_
+    platform: twitter
+    tier: 3
+    weight: 2.5
+    category: builder
+
+  - handle: staborage
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: analyst
+
+  - handle: theaborage
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: analyst
+
+  - handle: DaanCrypto
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: analyst
+
+  - handle: Route2FI
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: analyst
+
+  - handle: crypthoem
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: trader
+
+  - handle: TaikiMaeda2
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: trader
+
+  - handle: Rewkang
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: trader
+
+  - handle: AndreCronjeTech
+    platform: twitter
+    tier: 3
+    weight: 3.0
+    category: builder
+
+  - handle: haaborage2
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: builder
+
+  - handle: SolanaStatus
+    platform: twitter
+    tier: 3
+    weight: 2.5
+    category: protocol
+
+  - handle: arbitrum
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: protocol
+
+  - handle: optimaborage
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: protocol
+
+  - handle: Uniswap
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: protocol
+
+  - handle: AaveAave
+    platform: twitter
+    tier: 3
+    weight: 2.0
+    category: protocol
+
+  # =========================================================================
+  # FARCASTER influencers
+  # =========================================================================
+
+  - handle: vitalik.eth
+    platform: farcaster
+    tier: 1
+    weight: 5.0
+    category: builder
+
+  - handle: dwr.eth
+    platform: farcaster
+    tier: 1
+    weight: 4.0
+    category: builder
+
+  - handle: jessepollak
+    platform: farcaster
+    tier: 1
+    weight: 4.0
+    category: builder
+
+  - handle: balajis.eth
+    platform: farcaster
+    tier: 1
+    weight: 3.5
+    category: analyst
+
+  - handle: lrettig
+    platform: farcaster
+    tier: 2
+    weight: 2.5
+    category: builder
+
+  - handle: 0xdesigner
+    platform: farcaster
+    tier: 2
+    weight: 2.5
+    category: builder
+
+  - handle: noaborage
+    platform: farcaster
+    tier: 3
+    weight: 2.0
+    category: builder
+
+  - handle: linda
+    platform: farcaster
+    tier: 3
+    weight: 2.0
+    category: vc
+
+  - handle: seneca
+    platform: farcaster
+    tier: 3
+    weight: 2.0
+    category: builder

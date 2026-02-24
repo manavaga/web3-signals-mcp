@@ -355,10 +355,229 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .modal { padding: 20px; }
   }
 
+  /* Performance view */
+  .perf-header {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 24px;
+    margin-bottom: 28px;
+  }
+  .perf-score-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    text-align: center;
+  }
+  .perf-score-card .perf-big {
+    font-size: 64px; font-weight: 800; line-height: 1;
+  }
+  .perf-score-card .perf-label {
+    font-size: 13px; color: var(--text-dim); margin-top: 8px;
+  }
+  .perf-score-card .perf-sub {
+    font-size: 12px; color: var(--text-dim); margin-top: 12px; line-height: 1.6;
+  }
+  .perf-timeframes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    align-content: center;
+  }
+  .perf-tf-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .perf-tf-card .tf-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-dim); margin-bottom: 8px;
+  }
+  .perf-tf-card .tf-value {
+    font-size: 32px; font-weight: 700;
+  }
+  .perf-tf-card .tf-detail {
+    font-size: 11px; color: var(--text-dim); margin-top: 6px;
+  }
+
+  .perf-section-title {
+    font-size: 14px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--text-dim); margin-bottom: 14px;
+    margin-top: 8px;
+  }
+
+  .perf-asset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+  .perf-asset-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .perf-asset-card .pa-name { font-weight: 700; font-size: 14px; }
+  .perf-asset-card .pa-acc { font-size: 20px; font-weight: 700; }
+
+  .perf-signals-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--surface); border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .perf-signals-table th {
+    text-align: left; padding: 12px 16px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim);
+    background: var(--surface2); border-bottom: 1px solid var(--border);
+  }
+  .perf-signals-table td {
+    padding: 10px 16px; font-size: 13px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .perf-signals-table tr:last-child td { border-bottom: none; }
+
+  .dir-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+  }
+  .dir-badge.bullish { background: var(--green-bg); color: var(--green); }
+  .dir-badge.bearish { background: var(--red-bg); color: var(--red); }
+  .dir-badge.neutral { background: var(--yellow-bg); color: var(--yellow); }
+
+  .perf-collecting {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 48px;
+    text-align: center;
+  }
+  .perf-collecting .pc-icon { font-size: 48px; margin-bottom: 16px; }
+  .perf-collecting .pc-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .perf-collecting .pc-sub { color: var(--text-dim); font-size: 14px; line-height: 1.6; }
+  .perf-collecting .pc-count { font-size: 32px; font-weight: 800; color: var(--cyan); margin: 16px 0 4px; }
+  .perf-collecting .pc-count-label { font-size: 12px; color: var(--text-dim); }
+
+  .perf-methodology {
+    background: var(--surface2);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    margin-top: 8px;
+  }
+  .perf-methodology strong { color: var(--text); }
+
+  /* Analytics view */
+  .analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .analytics-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .analytics-card .ac-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-dim); margin-bottom: 6px;
+  }
+  .analytics-card .ac-value {
+    font-size: 32px; font-weight: 700;
+  }
+  .analytics-card .ac-sub {
+    font-size: 12px; color: var(--text-dim); margin-top: 4px;
+  }
+
+  .ua-breakdown {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .ua-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ua-chip .ua-name { font-weight: 600; font-size: 14px; text-transform: capitalize; }
+  .ua-chip .ua-count { font-size: 20px; font-weight: 700; color: var(--cyan); }
+  .ua-chip.ai-agent { border-color: var(--green); }
+  .ua-chip.ai-agent .ua-count { color: var(--green); }
+
+  .daily-chart {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .daily-bars {
+    display: flex; align-items: flex-end; gap: 4px;
+    height: 120px; padding-top: 10px;
+  }
+  .daily-bar-wrap {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; height: 100%;
+    justify-content: flex-end;
+  }
+  .daily-bar {
+    width: 100%; max-width: 40px; background: var(--cyan);
+    border-radius: 4px 4px 0 0; min-height: 2px;
+    transition: height 0.3s;
+  }
+  .daily-bar-label {
+    font-size: 10px; color: var(--text-dim); margin-top: 6px;
+    writing-mode: vertical-rl; text-orientation: mixed;
+  }
+  .daily-bar-count {
+    font-size: 10px; color: var(--text-dim); margin-bottom: 4px;
+  }
+
+  .endpoint-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--surface); border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .endpoint-table th {
+    text-align: left; padding: 12px 16px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim);
+    background: var(--surface2); border-bottom: 1px solid var(--border);
+  }
+  .endpoint-table td {
+    padding: 10px 16px; font-size: 13px; border-bottom: 1px solid var(--border);
+  }
+  .endpoint-table tr:last-child td { border-bottom: none; }
+
+  .ep-bar-bg {
+    height: 8px; background: var(--surface2); border-radius: 4px;
+    overflow: hidden; margin-top: 4px;
+  }
+  .ep-bar { height: 100%; background: var(--cyan); border-radius: 4px; }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .perf-header { grid-template-columns: 1fr; }
+    .perf-timeframes { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -388,6 +607,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="tabs">
     <button class="tab active" data-view="grid" onclick="switchView('grid', this)">Cards</button>
     <button class="tab" data-view="table" onclick="switchView('table', this)">Table</button>
+    <button class="tab" data-view="performance" onclick="switchView('performance', this)">Performance</button>
+    <button class="tab" data-view="analytics" onclick="switchView('analytics', this)">Analytics</button>
     <button class="tab" data-view="history" onclick="switchView('history', this)">History</button>
   </div>
 
@@ -405,6 +626,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <script>
 let signalData = null;
 let healthData = null;
+let perfData = null;
+let analyticsData = null;
 let currentView = 'grid';
 let sortField = 'score';
 let sortDir = -1; // descending
@@ -438,10 +661,26 @@ async function fetchAll() {
     document.getElementById('lastUpdate').textContent =
       'Updated: ' + new Date(signalData.timestamp || Date.now()).toLocaleTimeString();
 
+    // Fetch performance data (non-blocking)
+    try {
+      const perfRes = await fetch(API_BASE + '/performance/reputation');
+      perfData = await perfRes.json();
+    } catch(e) { perfData = null; }
+
+    // Fetch analytics data (non-blocking)
+    try {
+      const analyticsRes = await fetch(API_BASE + '/analytics?days=7');
+      analyticsData = await analyticsRes.json();
+    } catch(e) { analyticsData = null; }
+
     renderPortfolio();
     renderInsight();
     if (currentView === 'history') {
       loadHistory();
+    } else if (currentView === 'performance') {
+      renderPerformance();
+    } else if (currentView === 'analytics') {
+      renderAnalytics();
     } else {
       renderSignals();
     }
@@ -498,6 +737,7 @@ function renderPortfolio() {
       <div class="value">${agents}<span style="color:var(--text-dim);font-size:16px">/5</span></div>
       <div class="sub">${5 - agents} agents offline</div>
     </div>
+    ${renderReputationCard()}
   `;
 }
 
@@ -664,9 +904,13 @@ function setSort(field) {
 function switchView(view, btn) {
   currentView = view;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  btn.classList.add('active');
+  if (btn) btn.classList.add('active');
   if (view === 'history') {
     loadHistory();
+  } else if (view === 'performance') {
+    renderPerformance();
+  } else if (view === 'analytics') {
+    renderAnalytics();
   } else {
     renderSignals();
   }
@@ -919,6 +1163,374 @@ function closeModal(e) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
 });
+
+// ===== PERFORMANCE VIEW =====
+function renderReputationCard() {
+  if (!perfData) return '';
+  if (perfData.status === 'collecting_data') {
+    const snaps = perfData.snapshots_collected || 0;
+    return `
+      <div class="portfolio-card" style="cursor:pointer" onclick="switchView('performance', document.querySelector('[data-view=performance]'))">
+        <div class="label">Reputation</div>
+        <div class="value" style="color:var(--cyan)">${snaps}</div>
+        <div class="sub">snapshots collected</div>
+      </div>`;
+  }
+  const rep = perfData.reputation_score || 0;
+  const repColor = rep >= 65 ? 'var(--green)' : rep >= 50 ? 'var(--yellow)' : 'var(--red)';
+  return `
+    <div class="portfolio-card" style="cursor:pointer" onclick="switchView('performance', document.querySelector('[data-view=performance]'))">
+      <div class="label">Reputation Score</div>
+      <div class="value" style="color:${repColor}">${rep}</div>
+      <div class="sub">${perfData.accuracy_30d || 0}% accuracy (30d)</div>
+    </div>`;
+}
+
+function repColor(val) {
+  if (val >= 65) return 'var(--green)';
+  if (val >= 50) return 'var(--yellow)';
+  return 'var(--red)';
+}
+
+function renderPerformance() {
+  const content = document.getElementById('content');
+
+  if (!perfData) {
+    content.innerHTML = '<div class="loading"><div class="spinner"></div><span style="color:var(--text-dim)">Loading performance data...</span></div>';
+    return;
+  }
+
+  // Collecting data state (no accuracy yet)
+  if (perfData.status === 'collecting_data') {
+    const snaps = perfData.snapshots_collected || 0;
+    // Show current signals with directions + reasoning
+    let signalRows = '';
+    if (signalData) {
+      const signals = signalData.data?.signals || {};
+      const sorted = Object.entries(signals).sort((a,b) => (b[1].composite_score||0) - (a[1].composite_score||0));
+      signalRows = sorted.map(([asset, s]) => {
+        const score = s.composite_score || 0;
+        let dir = 'neutral';
+        if (score > 60) dir = 'bullish';
+        else if (score < 40) dir = 'bearish';
+        const dims = s.dimensions || {};
+        // Build reasoning from dimension details
+        const reasons = [];
+        for (const [dName, dData] of Object.entries(dims)) {
+          const detail = dData?.detail;
+          if (detail && detail !== 'no data' && detail !== 'no scorer') {
+            reasons.push('<strong>' + dName.charAt(0).toUpperCase() + dName.slice(1) + ':</strong> ' + detail);
+          }
+        }
+        return `<tr>
+          <td><strong>${asset}</strong></td>
+          <td style="font-weight:700;color:${score > 60 ? 'var(--green)' : score < 40 ? 'var(--red)' : 'var(--yellow)'}">${score.toFixed(1)}</td>
+          <td><span class="dir-badge ${dir}">${dir.toUpperCase()}</span></td>
+          <td style="font-size:12px;line-height:1.6;color:var(--text-dim)">${reasons.join('<br>') || 'No details'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    content.innerHTML = `
+      <div class="perf-collecting">
+        <div class="pc-icon">&#128202;</div>
+        <div class="pc-title">Performance Tracking Active</div>
+        <div class="pc-sub">Collecting signal snapshots every 15 minutes.<br>Accuracy scores will appear after 24 hours when we can compare predictions vs actual price moves.</div>
+        <div class="pc-count">${snaps}</div>
+        <div class="pc-count-label">snapshots collected</div>
+      </div>
+      ${signalRows ? `
+        <div class="perf-section-title" style="margin-top:28px">Current Signal Directions & Reasoning</div>
+        <table class="perf-signals-table">
+          <thead><tr>
+            <th>Asset</th>
+            <th>Score</th>
+            <th>Direction</th>
+            <th>Reasoning (Why This Score)</th>
+          </tr></thead>
+          <tbody>${signalRows}</tbody>
+        </table>
+      ` : ''}
+      <div class="perf-methodology" style="margin-top:20px">
+        <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
+        After 24h/48h/7d, we check if price moved in the predicted direction. Neutral signals are correct if price moved &le;2%.
+        Price source: CoinGecko. Scoring: binary hit/miss. Window: 30-day rolling.
+      </div>
+    `;
+    return;
+  }
+
+  // Active state — show full reputation data
+  const rep = perfData.reputation_score || 0;
+  const acc = perfData.accuracy_30d || 0;
+  const evaluated = perfData.signals_evaluated || 0;
+  const correct = perfData.signals_correct || 0;
+  const wrong = perfData.signals_wrong || 0;
+  const byTf = perfData.by_timeframe || {};
+  const byAsset = perfData.by_asset || {};
+  const snaps = perfData.snapshots_collected_30d || 0;
+
+  // Timeframe cards
+  const tfOrder = ['24h', '48h', '7d'];
+  const tfCards = tfOrder.map(tf => {
+    const d = byTf[tf];
+    if (!d) return `
+      <div class="perf-tf-card">
+        <div class="tf-label">${tf} Accuracy</div>
+        <div class="tf-value" style="color:var(--text-dim)">—</div>
+        <div class="tf-detail">No data yet</div>
+      </div>`;
+    return `
+      <div class="perf-tf-card">
+        <div class="tf-label">${tf} Accuracy</div>
+        <div class="tf-value" style="color:${repColor(d.accuracy)}">${d.accuracy}%</div>
+        <div class="tf-detail">${d.hits}/${d.total} correct</div>
+      </div>`;
+  }).join('');
+
+  // Per-asset cards
+  const assetEntries = Object.entries(byAsset).sort((a,b) => b[1] - a[1]);
+  const assetCards = assetEntries.map(([asset, acc]) => `
+    <div class="perf-asset-card">
+      <span class="pa-name">${asset}</span>
+      <span class="pa-acc" style="color:${repColor(acc)}">${acc}%</span>
+    </div>
+  `).join('');
+
+  // Current signals table with reasoning
+  let signalRows = '';
+  if (signalData) {
+    const signals = signalData.data?.signals || {};
+    const sorted = Object.entries(signals).sort((a,b) => (b[1].composite_score||0) - (a[1].composite_score||0));
+    signalRows = sorted.map(([asset, s]) => {
+      const score = s.composite_score || 0;
+      let dir = 'neutral';
+      if (score > 60) dir = 'bullish';
+      else if (score < 40) dir = 'bearish';
+      const dims = s.dimensions || {};
+      const assetAcc = byAsset[asset];
+      const accBadge = assetAcc != null
+        ? `<span style="font-size:11px;color:${repColor(assetAcc)};font-weight:600">${assetAcc}%</span>`
+        : '<span style="font-size:11px;color:var(--text-dim)">—</span>';
+      const reasons = [];
+      for (const [dName, dData] of Object.entries(dims)) {
+        const detail = dData?.detail;
+        if (detail && detail !== 'no data' && detail !== 'no scorer') {
+          reasons.push('<strong>' + dName.charAt(0).toUpperCase() + dName.slice(1) + ':</strong> ' + detail);
+        }
+      }
+      return `<tr>
+        <td><strong>${asset}</strong></td>
+        <td style="font-weight:700;color:${score > 60 ? 'var(--green)' : score < 40 ? 'var(--red)' : 'var(--yellow)'}">${score.toFixed(1)}</td>
+        <td><span class="dir-badge ${dir}">${dir.toUpperCase()}</span></td>
+        <td>${accBadge}</td>
+        <td style="font-size:12px;line-height:1.6;color:var(--text-dim)">${reasons.join('<br>') || 'No details'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  content.innerHTML = `
+    <div class="perf-header">
+      <div class="perf-score-card">
+        <div class="perf-big" style="color:${repColor(rep)}">${rep}</div>
+        <div class="perf-label">Reputation Score</div>
+        <div class="perf-sub">
+          ${acc}% accuracy over 30 days<br>
+          ${correct} correct / ${wrong} wrong<br>
+          ${evaluated} signals evaluated<br>
+          ${snaps} snapshots collected
+        </div>
+      </div>
+      <div class="perf-timeframes">
+        ${tfCards}
+      </div>
+    </div>
+
+    ${assetCards ? `
+      <div class="perf-section-title">Accuracy by Asset</div>
+      <div class="perf-asset-grid">${assetCards}</div>
+    ` : ''}
+
+    <div class="perf-section-title">Current Signals & Reasoning</div>
+    <table class="perf-signals-table">
+      <thead><tr>
+        <th>Asset</th>
+        <th>Score</th>
+        <th>Direction</th>
+        <th>30d Acc</th>
+        <th>Reasoning (Why This Score)</th>
+      </tr></thead>
+      <tbody>${signalRows}</tbody>
+    </table>
+
+    <div class="perf-methodology" style="margin-top:20px">
+      <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
+      After 24h/48h/7d, we compare predicted direction vs actual price movement. Neutral signals are correct if price moved &le;2%.
+      <strong>Price source:</strong> CoinGecko. <strong>Scoring:</strong> Binary hit/miss. <strong>Window:</strong> 30-day rolling.
+    </div>
+  `;
+}
+
+// ===== ANALYTICS VIEW =====
+function renderAnalytics() {
+  const content = document.getElementById('content');
+
+  if (!analyticsData || analyticsData.total_requests === 0) {
+    content.innerHTML = `
+      <div class="perf-collecting">
+        <div class="pc-icon">&#128200;</div>
+        <div class="pc-title">Usage Tracking Active</div>
+        <div class="pc-sub">
+          Request logging is now running. Every API call is tracked with user-agent classification.<br>
+          Analytics data will appear here as requests come in.
+        </div>
+        <div class="pc-count">${analyticsData ? analyticsData.total_requests : 0}</div>
+        <div class="pc-count-label">requests tracked</div>
+      </div>
+      <div class="perf-methodology" style="margin-top:20px">
+        <strong>What's tracked:</strong> Endpoint, HTTP method, user-agent (classified as AI agent / browser / bot / SDK),
+        response time, client IP (for unique client count). <strong>No PII is stored.</strong>
+        <br><strong>Discovery endpoints:</strong>
+        <code>/.well-known/agent.json</code> (A2A) &middot;
+        <code>/.well-known/agents.md</code> (AAIF) &middot;
+        <code>/mcp/sse</code> (MCP SSE) &middot;
+        <code>/docs</code> (OpenAPI)
+      </div>
+    `;
+    return;
+  }
+
+  const d = analyticsData;
+  const totalReqs = d.total_requests || 0;
+  const uniqueClients = d.unique_clients || 0;
+  const avgMs = d.avg_response_ms || 0;
+  const byType = d.by_client_type || {};
+  const byEndpoint = d.by_endpoint || {};
+  const perDay = d.requests_per_day || {};
+  const topUAs = d.top_user_agents || [];
+
+  // Count AI agent requests
+  const aiTypes = ['claude', 'openai', 'gemini', 'langchain', 'crewai', 'mcp_client', 'autogpt'];
+  let aiReqs = 0;
+  aiTypes.forEach(t => { aiReqs += (byType[t] || 0); });
+
+  // Summary cards
+  const summaryCards = `
+    <div class="analytics-grid">
+      <div class="analytics-card">
+        <div class="ac-label">Total Requests (7d)</div>
+        <div class="ac-value" style="color:var(--cyan)">${totalReqs.toLocaleString()}</div>
+      </div>
+      <div class="analytics-card">
+        <div class="ac-label">AI Agent Requests</div>
+        <div class="ac-value" style="color:var(--green)">${aiReqs.toLocaleString()}</div>
+        <div class="ac-sub">${totalReqs > 0 ? ((aiReqs/totalReqs)*100).toFixed(1) : 0}% of total</div>
+      </div>
+      <div class="analytics-card">
+        <div class="ac-label">Unique Clients</div>
+        <div class="ac-value">${uniqueClients}</div>
+      </div>
+      <div class="analytics-card">
+        <div class="ac-label">Avg Response</div>
+        <div class="ac-value">${avgMs < 1000 ? Math.round(avgMs) + '<span style="font-size:16px;color:var(--text-dim)">ms</span>' : (avgMs/1000).toFixed(1) + '<span style="font-size:16px;color:var(--text-dim)">s</span>'}</div>
+      </div>
+    </div>
+  `;
+
+  // Client type breakdown
+  const typeEntries = Object.entries(byType).sort((a,b) => b[1] - a[1]);
+  const typeCards = typeEntries.map(([type, count]) => {
+    const isAI = aiTypes.includes(type);
+    return `
+      <div class="ua-chip ${isAI ? 'ai-agent' : ''}">
+        <span class="ua-name">${type.replace(/_/g, ' ')}</span>
+        <span class="ua-count">${count}</span>
+      </div>`;
+  }).join('');
+
+  // Daily chart
+  const dayEntries = Object.entries(perDay).sort((a,b) => a[0].localeCompare(b[0]));
+  const maxDay = Math.max(...dayEntries.map(e => e[1]), 1);
+  const dailyBars = dayEntries.map(([day, count]) => {
+    const pct = (count / maxDay) * 100;
+    const shortDay = day.slice(5); // MM-DD
+    return `
+      <div class="daily-bar-wrap">
+        <div class="daily-bar-count">${count}</div>
+        <div class="daily-bar" style="height:${Math.max(pct, 2)}%"></div>
+        <div class="daily-bar-label">${shortDay}</div>
+      </div>`;
+  }).join('');
+
+  // Endpoint breakdown table
+  const epEntries = Object.entries(byEndpoint).sort((a,b) => b[1] - a[1]);
+  const maxEp = Math.max(...epEntries.map(e => e[1]), 1);
+  const epRows = epEntries.map(([ep, count]) => {
+    const pct = (count / maxEp) * 100;
+    return `<tr>
+      <td><code>${ep}</code></td>
+      <td style="font-weight:700">${count}</td>
+      <td style="width:40%">
+        <div class="ep-bar-bg"><div class="ep-bar" style="width:${pct}%"></div></div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Top user agents table
+  const uaRows = topUAs.slice(0, 15).map(ua => {
+    const isAI = aiTypes.includes(ua.type);
+    return `<tr>
+      <td style="font-size:12px;word-break:break-all;max-width:400px">${ua.user_agent || 'unknown'}</td>
+      <td><span class="dir-badge ${isAI ? 'bullish' : 'neutral'}">${ua.type.replace(/_/g, ' ').toUpperCase()}</span></td>
+      <td style="font-weight:700">${ua.requests}</td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `
+    ${summaryCards}
+
+    <div class="perf-section-title">Client Type Breakdown</div>
+    <div class="ua-breakdown">${typeCards}</div>
+
+    <div class="perf-section-title">Requests Per Day</div>
+    <div class="daily-chart">
+      <div class="daily-bars">${dailyBars || '<span style="color:var(--text-dim);padding:20px">No daily data yet</span>'}</div>
+    </div>
+
+    <div class="perf-section-title">Endpoint Popularity</div>
+    <table class="endpoint-table">
+      <thead><tr>
+        <th>Endpoint</th>
+        <th>Requests</th>
+        <th>Volume</th>
+      </tr></thead>
+      <tbody>${epRows}</tbody>
+    </table>
+
+    ${uaRows ? `
+      <div class="perf-section-title">Top User Agents</div>
+      <table class="endpoint-table">
+        <thead><tr>
+          <th>User Agent</th>
+          <th>Type</th>
+          <th>Requests</th>
+        </tr></thead>
+        <tbody>${uaRows}</tbody>
+      </table>
+    ` : ''}
+
+    <div class="perf-methodology">
+      <strong>Discovery Protocols Active:</strong><br>
+      &#x2705; <strong>A2A</strong> — <code>/.well-known/agent.json</code> (Google Agent-to-Agent Protocol)<br>
+      &#x2705; <strong>AGENTS.md</strong> — <code>/.well-known/agents.md</code> (Agentic AI Foundation standard)<br>
+      &#x2705; <strong>MCP SSE</strong> — <code>/mcp/sse</code> (Model Context Protocol, remote access)<br>
+      &#x2705; <strong>OpenAPI</strong> — <code>/docs</code> (auto-generated, works with LangChain/CrewAI/OpenAI)<br>
+      <br>
+      <strong>Client Classification:</strong> User-agents are classified as AI agent (Claude, OpenAI, Gemini, LangChain, CrewAI, MCP),
+      SDK (Python, Node.js, curl), browser, or bot. AI agent requests are highlighted in green.
+    </div>
+  `;
+}
 
 // Initial load
 fetchAll();

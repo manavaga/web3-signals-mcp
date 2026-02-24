@@ -47,24 +47,79 @@ class SignalFusion:
         label_cfg = self.profile.get("labels", [])
 
         signals: Dict[str, Dict[str, Any]] = {}
+        all_roles = ["whale", "technical", "derivatives", "narrative", "market"]
+        non_whale_roles = ["technical", "derivatives", "narrative", "market"]
+
+        # Dynamic reweighting config (from YAML)
+        reweight_cfg = self.profile.get("reweighting", {})
+        reweight_enabled = reweight_cfg.get("enabled", False)
+        tier_multipliers = reweight_cfg.get("tier_multipliers", {"full": 1.0, "sparse": 0.5, "none": 0.0})
+        no_data_kws = [kw.lower() for kw in reweight_cfg.get("no_data_keywords", ["no data", "no whale activity", "no scorer"])]
+        full_data_kws = [kw.lower() for kw in reweight_cfg.get("full_data_keywords", ["accumulate", "sell"])]
+
         for asset in self.assets:
+            # --- Phase 1: Score ALL dimensions first ---
+            raw_scores: Dict[str, Tuple[float, str]] = {}
+            for role in all_roles:
+                agent_data = raw.get(role)
+                rules = scoring_cfg.get(role, {})
+                raw_scores[role] = self._score_dimension(role, asset, agent_data, rules)
+
+            # --- Phase 2: Determine whale data tier ---
+            whale_score, whale_detail = raw_scores["whale"]
+            whale_detail_lower = whale_detail.lower()
+
+            if not reweight_enabled:
+                whale_data_tier = "full"  # reweighting disabled = always use full weight
+            elif (
+                any(kw in whale_detail_lower for kw in no_data_kws)
+                or whale_detail_lower.startswith("error:")
+            ):
+                whale_data_tier = "none"
+            elif any(kw in whale_detail_lower for kw in full_data_kws):
+                whale_data_tier = "full"
+            else:
+                whale_data_tier = "sparse"
+
+            # --- Phase 3: Calculate adjusted weights ---
+            base_weights: Dict[str, float] = {}
+            for role in all_roles:
+                base_weights[role] = float(weights.get(role, 0.0))
+
+            tier_mult = float(tier_multipliers.get(whale_data_tier, 1.0))
+            if tier_mult >= 1.0:
+                adjusted_weights = dict(base_weights)
+            else:
+                original_whale_w = base_weights["whale"]
+                effective_whale_w = original_whale_w * tier_mult
+
+                freed_weight = original_whale_w - effective_whale_w
+                non_whale_sum = sum(base_weights[r] for r in non_whale_roles)
+
+                adjusted_weights = {}
+                adjusted_weights["whale"] = effective_whale_w
+                for role in non_whale_roles:
+                    if non_whale_sum > 0:
+                        adjusted_weights[role] = base_weights[role] + freed_weight * (base_weights[role] / non_whale_sum)
+                    else:
+                        adjusted_weights[role] = base_weights[role]
+
+            # --- Phase 4: Build dimensions dict and compute composite ---
             dimensions: Dict[str, Dict[str, Any]] = {}
             composite = 0.0
 
-            for role in ["whale", "technical", "derivatives", "narrative", "market"]:
-                agent_data = raw.get(role)
-                rules = scoring_cfg.get(role, {})
-                weight = float(weights.get(role, 0.0))
-
-                score, detail = self._score_dimension(role, asset, agent_data, rules)
+            for role in all_roles:
+                score, detail = raw_scores[role]
                 label_name, direction = self._classify(score, label_cfg)
+                adj_w = adjusted_weights[role]
 
                 dimensions[role] = {
                     "score": round(score, 1),
                     "label": label_name,
                     "detail": detail,
+                    "weight": round(adj_w, 3),
                 }
-                composite += score * weight
+                composite += score * adj_w
 
             composite = round(composite, 1)
             label_name, direction = self._classify(composite, label_cfg)
@@ -91,6 +146,7 @@ class SignalFusion:
                 "dimensions": dimensions,
                 "momentum": momentum,
                 "prev_score": round(prev_score, 1) if prev_score is not None else None,
+                "whale_data_tier": whale_data_tier,
             }
 
             # Store current score for next momentum comparison
@@ -180,7 +236,8 @@ class SignalFusion:
     # ================================================================ #
 
     def _score_whale(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
-        score = float(rules.get("base_score", 50))
+        base_score = float(rules.get("base_score", 50))
+        score = base_score
         details: List[str] = []
 
         # Per-asset moves
@@ -188,16 +245,24 @@ class SignalFusion:
         asset_moves = by_asset.get(asset, [])
         accum_count = sum(1 for m in asset_moves if m.get("action") == "accumulate")
         sell_count = sum(1 for m in asset_moves if m.get("action") == "sell")
-        transfer_count = sum(1 for m in asset_moves if m.get("action") == "transfer")
 
-        score += accum_count * float(rules.get("accumulate_points", 10))
-        score += sell_count * float(rules.get("sell_points", -10))
-        score += transfer_count * float(rules.get("transfer_points", 2))
+        scoring_mode = str(rules.get("scoring_mode", "ratio"))
+        directional = accum_count + sell_count
 
-        if accum_count or sell_count:
+        if scoring_mode == "ratio" and directional >= int(rules.get("min_directional_moves", 2)):
+            # Ratio-based: accumulate/(accumulate+sell) mapped to 0-max points
+            ratio = accum_count / directional
+            max_pts = float(rules.get("ratio_max_points", 60))
+            # ratio 1.0 → max_pts, ratio 0.5 → max_pts/2, ratio 0.0 → 0
+            score = ratio * max_pts
+            details.append(f"{accum_count} accumulate, {sell_count} sell (ratio {ratio:.0%})")
+        elif directional > 0:
+            # Legacy per-move scoring (fallback)
+            score += accum_count * float(rules.get("accumulate_points", 10))
+            score += sell_count * float(rules.get("sell_points", -10))
             details.append(f"{accum_count} accumulate, {sell_count} sell")
 
-        # Exchange flow
+        # Exchange flow (adds up to ±10 on top)
         summary = data.get("summary", {})
         net_dir = summary.get("net_exchange_direction", "")
         if net_dir == "net_outflow":
@@ -207,7 +272,7 @@ class SignalFusion:
             score += float(rules.get("exchange_inflow_penalty", -10))
             details.append("exchange inflow")
 
-        # Whale wallet signals
+        # Whale wallet signals (adds up to ±8 per wallet)
         wallet_signals = summary.get("whale_wallet_signals", [])
         for ws in wallet_signals:
             if "accumulating" in ws.lower():
@@ -368,28 +433,74 @@ class SignalFusion:
             return 50.0, "no data"
 
         details: List[str] = []
+        score = 0.0
 
-        # Raw narrative score (0.0-1.0) from the narrative agent
+        # --- Component 1: Volume score (0-30 points) ---
+        # Uses normalised_score (0.0-1.0 vs rolling peak) * multiplier
         raw_score = float(asset_data.get("normalised_score", 0.0))
-        multiplier = float(rules.get("score_multiplier", 60))
-        score = raw_score * multiplier
+        volume_mult = float(rules.get("volume_multiplier", 30))
+        volume_pts = raw_score * volume_mult
+        score += volume_pts
         if raw_score > 0:
-            details.append(f"narrative {raw_score:.2f}")
+            total_mentions = int(asset_data.get("total_mentions", 0))
+            details.append(f"vol {raw_score:.2f} ({total_mentions} mentions)")
 
-        # Trending bonus
+        # --- Component 2: LLM sentiment (0-25 points) ---
+        llm_data = asset_data.get("llm_sentiment")
+        llm_max = float(rules.get("llm_max_points", 25))
+        llm_min_conf = float(rules.get("llm_min_confidence", 0.3))
+        if llm_data and isinstance(llm_data, dict):
+            llm_sent = float(llm_data.get("sentiment", 0.0))
+            llm_conf = float(llm_data.get("confidence", 0.0))
+            if llm_conf >= llm_min_conf:
+                # Map -1..1 to 0..max with 0 = max/2
+                llm_pts = (llm_sent + 1.0) / 2.0 * llm_max
+                score += llm_pts
+                tone = llm_data.get("tone", "neutral")
+                narrative = llm_data.get("dominant_narrative", "")
+                details.append(f"LLM {tone}")
+                if narrative:
+                    details.append(narrative)
+
+        # --- Component 3: Community sentiment (0-15 points) ---
+        community = asset_data.get("community_sentiment")
+        community_max = float(rules.get("community_max_points", 15))
+        if community and isinstance(community, dict):
+            cs_score = community.get("score")
+            if cs_score is not None:
+                # Map -1..1 to 0..max
+                community_pts = (float(cs_score) + 1.0) / 2.0 * community_max
+                score += community_pts
+                bull = community.get("bullish", 0)
+                bear = community.get("bearish", 0)
+                details.append(f"community {bull}B/{bear}S")
+
+        # --- Component 4: Trending bonus (0-10 points) ---
         trending = asset_data.get("trending_coingecko", False)
+        trending_bonus = float(rules.get("trending_bonus", 10))
         if trending:
-            score += float(rules.get("trending_bonus", 20))
+            score += trending_bonus
             details.append("trending")
 
-        # Sentiment from narrative_status
-        status = asset_data.get("narrative_status", "")
-        if status in ("sweet_spot", "strong"):
-            score += float(rules.get("sentiment_positive_bonus", 10))
-            details.append(f"narrative {status}")
-        elif status == "too_late":
-            score += float(rules.get("sentiment_negative_penalty", -10))
-            details.append("overheated")
+        # --- Component 5: Influencer bonus (0-10 points) ---
+        inf_count = int(asset_data.get("influencer_mentions", 0))
+        inf_threshold = int(rules.get("influencer_threshold", 2))
+        inf_bonus = float(rules.get("influencer_bonus", 10))
+        if inf_count >= inf_threshold:
+            score += inf_bonus
+            names = asset_data.get("top_influencers_active", [])
+            if names:
+                details.append(f"{inf_count} influencers ({', '.join(names[:2])})")
+            else:
+                details.append(f"{inf_count} influencers")
+
+        # --- Component 6: Multi-source confirmation (0-10 points) ---
+        sources_with_data = int(asset_data.get("sources_with_data", 0))
+        multi_threshold = int(rules.get("multi_source_threshold", 3))
+        multi_bonus = float(rules.get("multi_source_bonus", 10))
+        if sources_with_data >= multi_threshold:
+            score += multi_bonus
+            details.append(f"{sources_with_data} sources")
 
         max_score = float(rules.get("max_score", 100))
         return min(max_score, max(0.0, score)), "; ".join(details) if details else "low buzz"

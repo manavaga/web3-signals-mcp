@@ -2,13 +2,17 @@
 Web3 Signals API — FastAPI server.
 
 Endpoints:
-    GET /                  Welcome + links
-    GET /health            Agent status, last run, uptime
-    GET /signal            Full fusion (portfolio + 20 signals + LLM insights)
-    GET /signal/{asset}    Single asset signal
-    GET /performance       Signal accuracy tracking
-    GET /performance/{asset}  Per-asset accuracy
-    GET /docs              Auto-generated OpenAPI docs
+    GET /                           Welcome + links
+    GET /health                     Agent status, last run, uptime
+    GET /signal                     Full fusion (portfolio + 20 signals + LLM insights)
+    GET /signal/{asset}             Single asset signal
+    GET /performance/reputation     Public reputation score (30-day rolling accuracy)
+    GET /performance/{asset}        Per-asset accuracy breakdown
+    GET /analytics                  API usage analytics (user-agents, requests/day)
+    GET /.well-known/agent.json     A2A agent discovery card
+    GET /.well-known/agents.md      AGENTS.md (Agentic AI Foundation standard)
+    GET /mcp/sse                    MCP SSE transport for remote AI agents
+    GET /docs                       Auto-generated OpenAPI docs
 """
 from __future__ import annotations
 
@@ -19,8 +23,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.storage import Storage
 from signal_fusion.engine import SignalFusion
@@ -109,11 +114,56 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
         except Exception as exc:
             print(f"  signal_fusion: CRASH — {exc}")
 
+        # --- 12-hour LLM Sentiment Cycle ---
+        # Runs narrative LLM sentiment analysis every 12 hours (not every 15 min)
+        # to keep costs low (~$0.02/day vs $3-5/day at 15 min intervals)
+        try:
+            llm_cycle_hours = int(os.getenv("LLM_SENTIMENT_CYCLE_HOURS", "12"))
+            last_llm_run = store.load_kv("llm_cycle", "last_run")
+            now_ts = time.time()
+
+            should_run_llm = False
+            if last_llm_run is None:
+                should_run_llm = True
+            elif (now_ts - last_llm_run) >= llm_cycle_hours * 3600:
+                should_run_llm = True
+
+            if should_run_llm:
+                print(f"  [LLM] Running 12-hour narrative sentiment analysis...")
+                try:
+                    from narrative_agent.engine import NarrativeAgent
+                    narrator = NarrativeAgent()
+                    llm_result = narrator.run_llm_sentiment(store)
+                    store.save_kv("llm_cycle", "last_run", now_ts)
+                    print(f"  [LLM] Done: {llm_result}")
+                except Exception as llm_exc:
+                    print(f"  [LLM] Error: {llm_exc}")
+        except Exception as exc:
+            print(f"  llm_cycle: {exc}")
+
         # Record performance snapshot for accuracy tracking
         try:
             _record_performance_snapshot(store)
         except Exception as exc:
             print(f"  performance snapshot: {exc}")
+
+        # Evaluate old snapshots for accuracy (every 4 hours)
+        try:
+            eval_interval_hours = int(os.getenv("PERF_EVAL_INTERVAL_HOURS", "4"))
+            last_eval = store.load_kv("perf_eval", "last_run")
+            now_ts = time.time()
+            should_eval = False
+            if last_eval is None:
+                should_eval = True
+            elif (now_ts - last_eval) >= eval_interval_hours * 3600:
+                should_eval = True
+
+            if should_eval:
+                print(f"  [PERF] Running accuracy evaluation...")
+                _evaluate_old_snapshots(store)
+                store.save_kv("perf_eval", "last_run", now_ts)
+        except Exception as exc:
+            print(f"  performance eval: {exc}")
 
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         print(f"[{ts}] Orchestrator: done. Sleeping {interval}s.\n")
@@ -127,9 +177,19 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
 
 def _record_performance_snapshot(store: Storage) -> None:
     """
-    After agents run, record current prices + signal scores for later accuracy evaluation.
-    Uses market_agent prices + fusion scores.
+    Record performance snapshots — max 1 per asset per 12 hours.
+    This avoids inflating sample size with near-identical correlated snapshots.
+    Direction is derived from composite_score: >60 bullish, <40 bearish, else neutral.
     """
+    import re as _re
+
+    # Check if we should snapshot (1 per 12 hours)
+    snapshot_interval = int(os.getenv("PERF_SNAPSHOT_INTERVAL_HOURS", "12"))
+    last_snapshot_ts = store.load_kv("perf_snapshot", "last_run")
+    now_ts = time.time()
+    if last_snapshot_ts is not None and (now_ts - last_snapshot_ts) < snapshot_interval * 3600:
+        return  # Too soon, skip
+
     market = store.load_latest("market_agent")
     fusion = store.load_latest("signal_fusion")
     if not market or not fusion:
@@ -137,28 +197,131 @@ def _record_performance_snapshot(store: Storage) -> None:
 
     per_asset = market.get("data", {}).get("per_asset", {})
     signals = fusion.get("data", {}).get("signals", {})
-    now = datetime.now(timezone.utc).isoformat()
 
+    saved = 0
     for asset, price_data in per_asset.items():
         price = price_data.get("price")
         sig = signals.get(asset, {})
         score = sig.get("composite_score")
-        label = sig.get("label")
-        direction = sig.get("direction")
+        if price is None or score is None:
+            continue
 
-        if price is not None and score is not None:
-            # Store as a JSON blob in kv store
-            import json
-            snapshot = json.dumps({
-                "price": price,
-                "score": score,
-                "label": label,
-                "direction": direction,
-                "timestamp": now,
-            })
-            # Use timestamp-based key so we can query history
-            store.save_kv("perf_snapshots", f"{asset}:{now}", price)
-            store.save_kv("perf_scores", f"{asset}:{now}", score)
+        # Derive direction from score threshold
+        if score > 60:
+            direction = "bullish"
+        elif score < 40:
+            direction = "bearish"
+        else:
+            direction = "neutral"
+
+        # Count sources from narrative dimension
+        narrative_dim = sig.get("dimensions", {}).get("narrative", {})
+        detail = narrative_dim.get("detail", "")
+        sources = 0
+        m = _re.search(r"(\d+)\s+sources", detail)
+        if m:
+            sources = int(m.group(1))
+
+        # Build detail string from all dimensions
+        dim_details = []
+        for dim_name, dim_data in sig.get("dimensions", {}).items():
+            d = dim_data.get("detail", "")
+            if d and d not in ("no data", "no scorer"):
+                dim_details.append(f"{dim_name}: {d}")
+        full_detail = "; ".join(dim_details) if dim_details else ""
+
+        store.save_performance_snapshot(
+            asset=asset,
+            signal_score=score,
+            signal_direction=direction,
+            price_at_signal=price,
+            sources_count=sources,
+            detail=full_detail,
+        )
+        saved += 1
+
+    if saved:
+        store.save_kv("perf_snapshot", "last_run", now_ts)
+        print(f"  performance: saved {saved} snapshots (next in {snapshot_interval}h)")
+
+
+def _evaluate_old_snapshots(store: Storage) -> None:
+    """
+    Check snapshots that are 24h/48h/7d old and evaluate accuracy.
+    Fetches current prices from CoinGecko (free, no key needed).
+    """
+    import json
+    from urllib.request import Request, urlopen
+
+    # CoinGecko asset ID mapping
+    COINGECKO_IDS = {
+        "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
+        "XRP": "ripple", "ADA": "cardano", "AVAX": "avalanche-2", "DOT": "polkadot",
+        "MATIC": "matic-network", "LINK": "chainlink", "UNI": "uniswap", "ATOM": "cosmos",
+        "LTC": "litecoin", "FIL": "filecoin", "NEAR": "near", "APT": "aptos",
+        "ARB": "arbitrum", "OP": "optimism", "INJ": "injective-protocol", "SUI": "sui",
+    }
+
+    # Fetch current prices for all assets in one call
+    ids_str = ",".join(COINGECKO_IDS.values())
+    try:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_str}&vs_currencies=usd"
+        req = Request(url, headers={"Accept": "application/json"})
+        with urlopen(req, timeout=15) as resp:
+            price_data = json.loads(resp.read().decode())
+    except Exception as exc:
+        print(f"  performance eval: CoinGecko fetch failed — {exc}")
+        return
+
+    # Build asset → price map
+    current_prices = {}
+    for asset, cg_id in COINGECKO_IDS.items():
+        p = price_data.get(cg_id, {}).get("usd")
+        if p is not None:
+            current_prices[asset] = float(p)
+
+    if not current_prices:
+        print("  performance eval: no prices from CoinGecko")
+        return
+
+    # Evaluate each window: 24h, 48h, 7d (168h)
+    windows = [(24, 24), (48, 48), (168, 168)]
+    total_evaluated = 0
+
+    for window_hours, min_age in windows:
+        snapshots = store.load_unevaluated_snapshots(window_hours, min_age)
+        if not snapshots:
+            continue
+
+        for snap in snapshots:
+            asset = snap["asset"]
+            price_now = current_prices.get(asset)
+            if price_now is None:
+                continue
+
+            price_at_signal = snap["price_at_signal"]
+            direction = snap["signal_direction"]
+
+            # Calculate accuracy
+            pct_change = (price_now - price_at_signal) / price_at_signal * 100
+
+            if direction == "bullish":
+                hit = pct_change > 0
+            elif direction == "bearish":
+                hit = pct_change < 0
+            else:  # neutral
+                hit = abs(pct_change) <= 2.0
+
+            store.save_performance_accuracy(
+                snapshot_id=snap["id"],
+                window_hours=window_hours,
+                price_at_window=price_now,
+                direction_correct=hit,
+            )
+            total_evaluated += 1
+
+    if total_evaluated:
+        print(f"  performance eval: evaluated {total_evaluated} snapshots")
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +372,46 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
+# Usage Tracking Middleware
+# ---------------------------------------------------------------------------
+class UsageTrackingMiddleware(BaseHTTPMiddleware):
+    """Logs every API request for analytics — user-agent, endpoint, duration."""
+
+    # Skip tracking for static/noisy paths
+    SKIP_PATHS = {"/favicon.ico", "/openapi.json"}
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        duration_ms = (time.time() - start) * 1000
+
+        path = request.url.path
+        if path in self.SKIP_PATHS:
+            return response
+
+        # Fire-and-forget: don't slow down the response
+        try:
+            if _store:
+                ua = request.headers.get("user-agent", "")
+                client_ip = request.client.host if request.client else ""
+                _store.save_api_request(
+                    endpoint=path,
+                    method=request.method,
+                    user_agent=ua,
+                    status_code=response.status_code,
+                    duration_ms=round(duration_ms, 1),
+                    client_ip=client_ip,
+                )
+        except Exception:
+            pass  # Never break the response for tracking
+
+        return response
+
+
+app.add_middleware(UsageTrackingMiddleware)
+
+
+# ---------------------------------------------------------------------------
 # GET /
 # ---------------------------------------------------------------------------
 @app.get("/", tags=["info"])
@@ -222,8 +425,12 @@ async def root():
             "/health": "Agent status and uptime",
             "/signal": "Full fusion — portfolio + 20 signals + LLM insights",
             "/signal/{asset}": "Single asset signal (e.g. /signal/BTC)",
-            "/performance": "Signal accuracy tracking",
+            "/performance/reputation": "Public reputation score — 30-day signal accuracy",
+            "/performance/{asset}": "Per-asset accuracy breakdown",
+            "/analytics": "API usage analytics — who's using us, request trends",
             "/api/history": "Paginated history of all agent runs",
+            "/.well-known/agent.json": "A2A agent discovery card (Google A2A protocol)",
+            "/.well-known/agents.md": "AGENTS.md — Agentic AI Foundation discovery",
             "/docs": "OpenAPI documentation",
         },
         "assets": [
@@ -347,127 +554,124 @@ async def get_asset_signal(asset: str):
 
 
 # ---------------------------------------------------------------------------
-# GET /performance — Accuracy tracking
+# GET /performance/reputation — Public reputation score (agent-facing)
 # ---------------------------------------------------------------------------
-@app.get("/performance", tags=["performance"])
-async def get_performance():
+@app.get("/performance/reputation", tags=["performance"])
+async def get_reputation():
     """
-    Signal accuracy: how well did our signals predict price moves?
-    Needs at least 24h of data to start showing results.
+    Public reputation endpoint. AI agents use this to verify signal quality
+    before subscribing. Shows rolling 30-day accuracy across all timeframes.
     """
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
 
-    # Load recent fusion runs (last 7 days)
-    recent_fusions = _store.load_recent("signal_fusion", days=7)
+    stats = _store.load_accuracy_stats(days=30)
+    total_snapshots = _store.count_snapshots(days=30)
 
-    if len(recent_fusions) < 2:
+    if stats["total"] == 0:
         return {
-            "status": "insufficient_data",
-            "message": "Need at least 24h of signal history to calculate accuracy. Check back later.",
-            "total_fusion_runs": len(recent_fusions),
-            "data_collection_started": recent_fusions[0].get("timestamp") if recent_fusions else None,
+            "status": "collecting_data",
+            "message": "Performance tracking is active. Accuracy data will appear after 24h of signal history.",
+            "snapshots_collected": total_snapshots,
+            "started_tracking": datetime.now(timezone.utc).isoformat(),
         }
 
-    # Evaluate accuracy: for each old signal, check if direction was correct
-    # by comparing price at signal time vs current price from latest market data
-    market_latest = _store.load_latest("market_agent")
-    if not market_latest:
-        return {"status": "no_market_data", "message": "Waiting for market data."}
-
-    current_prices = {}
-    for asset, data in market_latest.get("data", {}).get("per_asset", {}).items():
-        current_prices[asset] = data.get("price", 0)
-
-    # Use the oldest available fusion run as the "prediction"
-    # and current prices as the "outcome"
-    oldest_run = recent_fusions[-1]  # oldest (list is DESC)
-    oldest_signals = oldest_run.get("data", {}).get("signals", {})
-    oldest_prices = {}
-
-    # Get prices at the time of that signal from the market snapshot closest to it
-    oldest_market = None
-    market_runs = _store.load_recent("market_agent", days=7)
-    if market_runs:
-        oldest_market = market_runs[-1]  # oldest market snapshot
-        for asset, data in oldest_market.get("data", {}).get("per_asset", {}).items():
-            oldest_prices[asset] = data.get("price", 0)
-
-    results = {}
-    correct_count = 0
-    total_count = 0
-
-    for asset, sig in oldest_signals.items():
-        old_price = oldest_prices.get(asset, 0)
-        new_price = current_prices.get(asset, 0)
-        if old_price <= 0 or new_price <= 0:
-            continue
-
-        price_change_pct = ((new_price - old_price) / old_price) * 100
-        direction = sig.get("direction", "neutral")
-        score = sig.get("composite_score", 50)
-
-        # Was the signal correct?
-        if direction == "buy" and price_change_pct > 0:
-            correct = True
-        elif direction == "sell" and price_change_pct < 0:
-            correct = True
-        elif direction == "neutral" and abs(price_change_pct) < 3:
-            correct = True
-        else:
-            correct = False
-
-        if direction != "neutral":
-            total_count += 1
-            if correct:
-                correct_count += 1
-
-        results[asset] = {
-            "signal_score": score,
-            "signal_direction": direction,
-            "signal_label": sig.get("label"),
-            "price_at_signal": round(old_price, 2),
-            "price_now": round(new_price, 2),
-            "price_change_pct": round(price_change_pct, 2),
-            "was_correct": correct,
-        }
-
-    accuracy = round((correct_count / total_count) * 100, 1) if total_count > 0 else None
+    accuracy = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+    reputation_score = int(round(accuracy))
 
     return {
         "status": "active",
-        "accuracy_pct": accuracy,
-        "signals_evaluated": total_count,
-        "signals_correct": correct_count,
-        "evaluation_window": {
-            "signal_time": oldest_run.get("timestamp"),
-            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "reputation_score": reputation_score,
+        "accuracy_30d": accuracy,
+        "signals_evaluated": stats["total"],
+        "signals_correct": stats["hits"],
+        "signals_wrong": stats["total"] - stats["hits"],
+        "by_timeframe": stats["by_timeframe"],
+        "by_asset": stats["by_asset"],
+        "snapshots_collected_30d": total_snapshots,
+        "methodology": {
+            "direction_extraction": "score >60 = bullish, <40 = bearish, 40-60 = neutral",
+            "neutral_threshold": "price move ≤2% = correct for neutral signals",
+            "scoring": "binary (hit/miss)",
+            "window": "30-day rolling",
+            "timeframes": ["24h", "48h", "7d"],
+            "price_source": "CoinGecko",
         },
-        "total_fusion_runs_7d": len(recent_fusions),
-        "per_asset": results,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }
 
 
 # ---------------------------------------------------------------------------
-# GET /performance/{asset}
+# GET /performance — Accuracy overview
+# ---------------------------------------------------------------------------
+@app.get("/performance", tags=["performance"])
+async def get_performance():
+    """Redirects to /performance/reputation for backward compatibility."""
+    return await get_reputation()
+
+
+# ---------------------------------------------------------------------------
+# GET /performance/{asset} — Per-asset accuracy
 # ---------------------------------------------------------------------------
 @app.get("/performance/{asset}", tags=["performance"])
 async def get_asset_performance(asset: str):
+    """Per-asset accuracy breakdown."""
     asset = asset.upper()
-    full_perf = await get_performance()
+    if not _store:
+        raise HTTPException(status_code=503, detail="Storage not initialized")
 
-    if full_perf.get("status") == "insufficient_data":
-        return full_perf
+    stats = _store.load_accuracy_stats(days=30)
 
-    per_asset = full_perf.get("per_asset", {})
-    if asset not in per_asset:
-        raise HTTPException(status_code=404, detail=f"No performance data for '{asset}'")
+    if stats["total"] == 0:
+        return {
+            "status": "collecting_data",
+            "message": "Performance tracking is active. Check back after 24h.",
+        }
+
+    asset_accuracy = stats["by_asset"].get(asset)
+    if asset_accuracy is None:
+        valid = list(stats["by_asset"].keys())
+        raise HTTPException(
+            status_code=404,
+            detail=f"No accuracy data for '{asset}'. Assets with data: {valid}",
+        )
+
+    overall = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
 
     return {
         "asset": asset,
-        "overall_accuracy_pct": full_perf.get("accuracy_pct"),
-        "evaluation_window": full_perf.get("evaluation_window"),
-        **per_asset[asset],
+        "accuracy_30d": asset_accuracy,
+        "overall_accuracy_30d": overall,
+        "reputation_score": int(round(overall)),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /analytics — API usage analytics (public)
+# ---------------------------------------------------------------------------
+@app.get("/analytics", tags=["analytics"])
+async def get_analytics(days: int = Query(7, ge=1, le=90, description="Number of days to aggregate")):
+    """
+    Public API usage analytics. Shows request counts, user-agent breakdown
+    (AI agents vs browsers vs bots), endpoint popularity, and daily trends.
+    """
+    if not _store:
+        raise HTTPException(status_code=503, detail="Storage not initialized")
+
+    stats = _store.load_api_analytics(days=days)
+
+    return {
+        "status": "active",
+        "window_days": days,
+        "total_requests": stats["total_requests"],
+        "unique_clients": stats["unique_ips"],
+        "avg_response_ms": stats["avg_duration_ms"],
+        "by_endpoint": stats["by_endpoint"],
+        "by_client_type": stats["by_user_agent_type"],
+        "requests_per_day": stats["requests_per_day"],
+        "top_user_agents": stats["top_user_agents"],
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -502,9 +706,15 @@ async def agent_card():
                 "method": "GET",
             },
             {
-                "name": "get_performance",
-                "description": "Get signal accuracy tracking — how well past signals predicted price moves",
-                "endpoint": f"{base_url}/performance",
+                "name": "get_reputation",
+                "description": "Get public reputation score — rolling 30-day signal accuracy across 24h/48h/7d timeframes, per-asset breakdown",
+                "endpoint": f"{base_url}/performance/reputation",
+                "method": "GET",
+            },
+            {
+                "name": "get_analytics",
+                "description": "API usage analytics — request counts, client types, daily trends",
+                "endpoint": f"{base_url}/analytics",
                 "method": "GET",
             },
             {
@@ -514,6 +724,12 @@ async def agent_card():
                 "method": "GET",
             },
         ],
+        "protocols": {
+            "rest": f"{base_url}/docs",
+            "mcp_sse": f"{base_url}/mcp/sse",
+            "a2a": f"{base_url}/.well-known/agent.json",
+            "agents_md": f"{base_url}/.well-known/agents.md",
+        },
         "assets_covered": [
             "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
             "MATIC", "LINK", "UNI", "ATOM", "LTC", "FIL", "NEAR", "APT",
@@ -522,6 +738,71 @@ async def agent_card():
         "update_frequency": "Every 15 minutes",
         "pricing": "Free (x402 micropayments coming soon)",
     }
+
+
+# ---------------------------------------------------------------------------
+# AGENTS.md — Agentic AI Foundation discovery
+# ---------------------------------------------------------------------------
+_AGENTS_MD = """# Web3 Signals Agent
+
+## Identity
+- **Name**: Web3 Signals Agent
+- **Description**: AI-powered crypto signal intelligence for 20 assets. Fuses whale tracking, derivatives positioning, technical analysis, narrative momentum, and market data into scored signals with LLM insights.
+- **Version**: 0.1.0
+- **Provider**: Web3 Signals
+
+## Capabilities
+- Provides composite buy/sell/neutral signals for 20 crypto assets
+- Portfolio-level risk assessment and market regime detection
+- LLM-generated cross-dimensional insights
+- Signal accuracy tracking with rolling 30-day reputation score
+- Historical signal data with full audit trail
+
+## Protocols
+- **REST API**: OpenAPI-documented endpoints at /docs
+- **MCP**: Model Context Protocol server (SSE transport at /mcp/sse)
+- **A2A**: Agent-to-Agent discovery card at /.well-known/agent.json
+
+## Endpoints
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| /signal | GET | All 20 asset signals with portfolio summary | None |
+| /signal/{asset} | GET | Single asset signal (e.g. /signal/BTC) | None |
+| /performance/reputation | GET | 30-day rolling accuracy score | None |
+| /performance/{asset} | GET | Per-asset accuracy breakdown | None |
+| /health | GET | Agent status and uptime | None |
+| /analytics | GET | API usage analytics | None |
+| /api/history | GET | Historical signal runs (paginated) | None |
+
+## Assets Covered
+BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI
+
+## Data Sources
+1. Whale tracking (on-chain flows + exchange movements)
+2. Technical analysis (RSI, MACD, MA via Binance)
+3. Derivatives positioning (funding rate, OI, long/short ratio)
+4. Narrative momentum (Reddit, News, CoinGecko trending)
+5. Market data (price, volume, Fear & Greed Index)
+
+## Update Frequency
+- Signals refresh every 15 minutes
+- LLM sentiment analysis every 12 hours
+- Performance evaluation every 4 hours
+
+## Pricing
+Free (x402 micropayments coming soon)
+
+## Contact
+- API Docs: /docs
+- Dashboard: /dashboard
+"""
+
+
+@app.get("/.well-known/agents.md", tags=["discovery"], include_in_schema=False)
+async def agents_md():
+    """AGENTS.md — Agentic AI Foundation standard for agent discovery."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(_AGENTS_MD, media_type="text/markdown")
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +846,45 @@ async def get_signal_history(
         "offset": offset,
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# MCP SSE Transport — direct routes on /mcp/sse and /mcp/messages
+# ---------------------------------------------------------------------------
+try:
+    from mcp.server.sse import SseServerTransport
+    from mcp_server.server import mcp as mcp_server_instance
+    from starlette.responses import Response
+
+    # Create SSE transport with /mcp/messages as the POST endpoint
+    _mcp_sse_transport = SseServerTransport("/mcp/messages")
+
+    @app.get("/mcp/sse", include_in_schema=False)
+    async def mcp_sse_endpoint(request: Request):
+        """MCP SSE endpoint — AI agents connect here for real-time tool access."""
+        from starlette.responses import Response as StarletteResponse
+
+        async with _mcp_sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await mcp_server_instance._mcp_server.run(
+                streams[0],
+                streams[1],
+                mcp_server_instance._mcp_server.create_initialization_options(),
+            )
+        return StarletteResponse()
+
+    # Mount the messages POST handler
+    from starlette.routing import Mount
+    app.router.routes.append(
+        Mount("/mcp/messages", app=_mcp_sse_transport.handle_post_message)
+    )
+
+    print("MCP SSE transport mounted at /mcp/sse")
+except ImportError as e:
+    print(f"MCP SSE mount skipped — {e}")
+except Exception as e:
+    print(f"MCP SSE mount error — {e}")
 
 
 # ---------------------------------------------------------------------------

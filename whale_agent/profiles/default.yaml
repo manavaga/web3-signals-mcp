@@ -1,7 +1,9 @@
 # =============================================================================
-# Whale Agent Profile — 4-Layer Whale Intelligence
+# Whale Agent Profile — Multi-Layer Whale Intelligence
 # =============================================================================
-# Tracks credible whale wallet activity across BTC, ETH, and EVM tokens.
+# Tracks credible whale wallet activity across 20 assets.
+# Primary data: Whale Alert REST API. Supplementary: Etherscan, Blockchain.com,
+# Twitter (Apify), exchange flow tracking, known whale wallets.
 # All free APIs. Change any value here — agent logic adapts automatically.
 # =============================================================================
 
@@ -9,7 +11,7 @@ name: whale_default
 http_timeout_sec: 20
 
 # ---------------------------------------------------------------------------
-# Assets to track
+# Assets to track (all 20 — Whale Alert API accepts all of these)
 # ---------------------------------------------------------------------------
 assets:
   - BTC
@@ -44,10 +46,43 @@ credibility:
 # ---------------------------------------------------------------------------
 # Collection settings
 # ---------------------------------------------------------------------------
-lookback_hours: 24                     # how far back to look for whale moves
+lookback_hours: 24                     # global lookback for supplementary layers
 
 # ==========================================================================
-# LAYER 1: Twitter whale accounts (via Apify — FREE, no cookies needed)
+# LAYER 1: Whale Alert REST API (Primary)
+# ==========================================================================
+# API Key via env: WHALE_ALERT_API_KEY
+# Queries all 20 assets, paginates through results, classifies each
+# transaction as accumulate/sell/transfer based on owner_type.
+# ==========================================================================
+whale_alert:
+  enabled: true
+  base_url: "https://api.whale-alert.io/v1"
+  min_value_usd: 100_000              # $100K minimum per transaction
+  max_results_per_page: 100            # Whale Alert returns up to 100 per page
+  max_pages: 10                        # paginate up to 10 pages (1000 txs max)
+  lookback_sec: 86400                  # 24 hour lookback — stable view, smooths hourly noise
+  # API key via env: WHALE_ALERT_API_KEY
+
+  # Rate limit handling
+  rate_limit:
+    max_retries: 3                     # retry up to 3 times on 429
+    base_delay_sec: 2.0                # initial backoff delay (doubles each retry)
+    page_delay_sec: 1.0                # sleep between pagination pages
+
+# ==========================================================================
+# LAYER 1b: Whale Alert Socials (Future — WebSocket feed)
+# ==========================================================================
+# Requires persistent WebSocket connection — not suitable for 15-min polling.
+# Planned for v2. The socials feed provides text alerts with blockchain,
+# timestamp — we would parse for asset mentions and direction keywords.
+# ==========================================================================
+whale_alert_socials:
+  enabled: false                       # Future: WebSocket socials feed
+  # Requires persistent connection, planned for v2
+
+# ==========================================================================
+# LAYER 2: Twitter whale accounts (Supplementary — via Apify)
 # ==========================================================================
 twitter_whales:
   enabled: true
@@ -99,7 +134,7 @@ twitter_whales:
   min_usd_mentioned: 1_000_000
 
 # ==========================================================================
-# LAYER 2: On-chain verification
+# LAYER 3: On-chain verification (Supplementary)
 # ==========================================================================
 
 # --- Etherscan V2 (ETH + ERC-20 tokens) ---
@@ -152,7 +187,7 @@ blockchain_com:
   max_txs_per_wallet: 10
 
 # ==========================================================================
-# LAYER 3: Exchange flow (net inflow/outflow via wallet balance tracking)
+# LAYER 4: Exchange flow (net inflow/outflow via wallet balance tracking)
 # ==========================================================================
 exchange_flow:
   enabled: true
@@ -173,7 +208,7 @@ exchange_flow:
     - bitfinex
 
 # ==========================================================================
-# LAYER 4: Known whale wallet tracking
+# LAYER 5: Known whale wallet tracking
 # ==========================================================================
 whale_wallets:
   enabled: true
@@ -194,7 +229,7 @@ whale_wallets:
       address: "0x1157a2076b9bb22a85cc2c162f20fab3898f4101"      # 2,100+ ETH (OTC desk)
 
   # BTC whale wallets — MicroStrategy/Tesla addresses not publicly available
-  # BTC whale activity tracked via Layer 1 (Twitter) + Layer 2 (exchange wallet txs)
+  # BTC whale activity tracked via Layer 1 (Whale Alert API) + Layer 3 (exchange wallet txs)
   btc_wallets: {}
 
   # Minimum balance change to flag
@@ -212,12 +247,6 @@ action_rules:
 # ---------------------------------------------------------------------------
 # Legacy sources (kept for future use, disabled)
 # ---------------------------------------------------------------------------
-whale_alert:
-  enabled: false                       # whalealert.io is dead / domain for sale
-  base_url: "https://api.whale-alert.io/v1"
-  min_value_usd: 500_000
-  max_results: 100
-
 arkham:
   enabled: false                       # needs API key, disabled until configured
   base_url: "https://api.arkhamintelligence.com"

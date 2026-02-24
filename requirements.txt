@@ -8,6 +8,9 @@ pyyaml==6.0.2
 # Reddit API (narrative agent)
 praw==7.8.1
 
+# Twitter/X scraper (narrative agent — free, no API key)
+twikit>=2.3.0
+
 # Postgres driver (used when DATABASE_URL is set, ignored otherwise)
 psycopg2-binary==2.9.10
 

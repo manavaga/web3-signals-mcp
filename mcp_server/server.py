@@ -190,90 +190,44 @@ def get_health() -> str:
 @mcp.tool()
 def get_performance() -> str:
     """
-    Get signal accuracy tracking — how well past signals predicted price moves.
+    Get signal reputation and accuracy tracking — rolling 30-day performance.
 
-    Compares historical signal predictions against actual price outcomes.
-    Shows overall accuracy percentage, per-asset breakdown, and evaluation window.
+    Shows overall accuracy percentage across 24h/48h/7d timeframes,
+    per-asset accuracy breakdown, and reputation score.
     Needs at least 24 hours of data to produce meaningful results.
     """
     store = _get_store()
 
-    recent_fusions = store.load_recent("signal_fusion", days=7)
-    if len(recent_fusions) < 2:
+    stats = store.load_accuracy_stats(days=30)
+    total_snapshots = store.count_snapshots(days=30)
+
+    if stats["total"] == 0:
         return json.dumps({
-            "status": "insufficient_data",
-            "message": "Need at least 24h of signal history. Check back later.",
-            "total_fusion_runs": len(recent_fusions),
+            "status": "collecting_data",
+            "message": "Performance tracking is active. Accuracy data will appear after 24h of signal history.",
+            "snapshots_collected": total_snapshots,
         })
 
-    market_latest = store.load_latest("market_agent")
-    if not market_latest:
-        return json.dumps({"status": "no_market_data", "message": "Waiting for market data."})
-
-    current_prices: dict[str, float] = {}
-    for asset, data in market_latest.get("data", {}).get("per_asset", {}).items():
-        current_prices[asset] = data.get("price", 0)
-
-    oldest_run = recent_fusions[-1]
-    oldest_signals = oldest_run.get("data", {}).get("signals", {})
-    oldest_prices: dict[str, float] = {}
-
-    market_runs = store.load_recent("market_agent", days=7)
-    if market_runs:
-        oldest_market = market_runs[-1]
-        for asset, data in oldest_market.get("data", {}).get("per_asset", {}).items():
-            oldest_prices[asset] = data.get("price", 0)
-
-    results: dict[str, Any] = {}
-    correct_count = 0
-    total_count = 0
-
-    for asset, sig in oldest_signals.items():
-        old_price = oldest_prices.get(asset, 0)
-        new_price = current_prices.get(asset, 0)
-        if old_price <= 0 or new_price <= 0:
-            continue
-
-        price_change_pct = ((new_price - old_price) / old_price) * 100
-        direction = sig.get("direction", "neutral")
-        score = sig.get("composite_score", 50)
-
-        if direction == "buy" and price_change_pct > 0:
-            correct = True
-        elif direction == "sell" and price_change_pct < 0:
-            correct = True
-        elif direction == "neutral" and abs(price_change_pct) < 3:
-            correct = True
-        else:
-            correct = False
-
-        if direction != "neutral":
-            total_count += 1
-            if correct:
-                correct_count += 1
-
-        results[asset] = {
-            "signal_score": score,
-            "signal_direction": direction,
-            "price_at_signal": round(old_price, 2),
-            "price_now": round(new_price, 2),
-            "price_change_pct": round(price_change_pct, 2),
-            "was_correct": correct,
-        }
-
-    accuracy = round((correct_count / total_count) * 100, 1) if total_count > 0 else None
+    accuracy = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
 
     return json.dumps({
         "status": "active",
-        "accuracy_pct": accuracy,
-        "signals_evaluated": total_count,
-        "signals_correct": correct_count,
-        "evaluation_window": {
-            "signal_time": oldest_run.get("timestamp"),
-            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "reputation_score": int(round(accuracy)),
+        "accuracy_30d": accuracy,
+        "signals_evaluated": stats["total"],
+        "signals_correct": stats["hits"],
+        "by_timeframe": stats["by_timeframe"],
+        "by_asset": stats["by_asset"],
+        "snapshots_collected_30d": total_snapshots,
+        "methodology": {
+            "direction_extraction": "score >60 = bullish, <40 = bearish, 40-60 = neutral",
+            "neutral_threshold": "price move <=2% = correct for neutral signals",
+            "scoring": "binary (hit/miss)",
+            "window": "30-day rolling",
+            "timeframes": ["24h", "48h", "7d"],
+            "price_source": "CoinGecko",
         },
-        "total_fusion_runs_7d": len(recent_fusions),
-        "per_asset": results,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
 
 
@@ -289,8 +243,7 @@ def get_asset_performance(asset: str) -> str:
         asset: The crypto asset ticker (e.g. BTC, ETH, SOL). Case-insensitive.
 
     Shows how accurately our signals predicted this asset's price movement,
-    including the signal score at prediction time, price then vs now,
-    and whether the prediction was correct.
+    including per-asset accuracy in the rolling 30-day window.
     """
     asset = asset.upper().strip()
     if asset not in VALID_ASSETS:
@@ -298,22 +251,27 @@ def get_asset_performance(asset: str) -> str:
             "error": f"Invalid asset '{asset}'. Valid: {VALID_ASSETS}"
         })
 
-    # Re-use full performance calculation
-    perf_json = get_performance()
-    perf = json.loads(perf_json)
+    store = _get_store()
+    stats = store.load_accuracy_stats(days=30)
 
-    if perf.get("status") == "insufficient_data":
-        return perf_json
+    if stats["total"] == 0:
+        return json.dumps({
+            "status": "collecting_data",
+            "message": "Performance tracking is active. Check back after 24h.",
+        })
 
-    per_asset = perf.get("per_asset", {})
-    if asset not in per_asset:
-        return json.dumps({"error": f"No performance data for '{asset}'"})
+    asset_accuracy = stats["by_asset"].get(asset)
+    if asset_accuracy is None:
+        return json.dumps({"error": f"No accuracy data for '{asset}'"})
+
+    overall = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
 
     return json.dumps({
         "asset": asset,
-        "overall_accuracy_pct": perf.get("accuracy_pct"),
-        "evaluation_window": perf.get("evaluation_window"),
-        **per_asset[asset],
+        "accuracy_30d": asset_accuracy,
+        "overall_accuracy_30d": overall,
+        "reputation_score": int(round(overall)),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
 
 
