@@ -241,10 +241,37 @@ The system tracks its own signal accuracy — no self-reported claims:
 
 | Protocol | Endpoint | Standard |
 |----------|----------|----------|
+| **x402** | `/signal`, `/signal/{asset}` | [HTTP 402 Micropayments](https://www.x402.org/) (Coinbase) |
 | **MCP SSE** | `/mcp/sse` | [Model Context Protocol](https://modelcontextprotocol.io) (Anthropic) |
 | **A2A** | `/.well-known/agent.json` | [Agent-to-Agent](https://google.github.io/A2A/) (Google) |
 | **AGENTS.md** | `/.well-known/agents.md` | [Agentic AI Foundation](https://agenticaialliance.org/) |
 | **OpenAPI** | `/docs` | OpenAPI 3.0 |
+
+---
+
+## x402 Micropayments
+
+Payment IS authentication. No API keys, no signup, no OAuth.
+
+AI agents pay $0.001 USDC per call on Base mainnet. The x402 protocol handles discovery, payment, and settlement automatically via the [Coinbase CDP Facilitator](https://x402.org/facilitator).
+
+### Paid Endpoints ($0.001/call)
+| Endpoint | What you get |
+|----------|-------------|
+| `GET /signal` | All 20 signals + portfolio summary + LLM insights |
+| `GET /signal/{asset}` | Single asset signal with 5 dimensions |
+| `GET /performance/reputation` | 30-day rolling accuracy score |
+
+### Free Endpoints
+`/health`, `/dashboard`, `/analytics`, `/docs`, `/.well-known/*`, `/mcp/sse`
+
+### How it works
+1. Agent calls `GET /signal` → gets `402 Payment Required` with payment instructions
+2. Agent signs USDC payment on Base → retries with `PAYMENT-SIGNATURE` header
+3. Facilitator verifies payment → endpoint returns data
+4. Settlement happens on-chain in <2 seconds
+
+Agents using x402-compatible clients (Otto, Questflow, Fluora, Oops!402) handle this automatically.
 
 ---
 

@@ -31,6 +31,17 @@ from shared.storage import Storage
 from signal_fusion.engine import SignalFusion
 from api.dashboard import DASHBOARD_HTML
 
+# x402 payment gate (enabled when PAY_TO env var is set)
+try:
+    from x402.http import HTTPFacilitatorClient, FacilitatorConfig, PaymentOption
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import RouteConfig as X402RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.server import x402ResourceServer
+    _X402_AVAILABLE = True
+except ImportError:
+    _X402_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Globals — set on startup
 # ---------------------------------------------------------------------------
@@ -43,6 +54,62 @@ _orchestrator_thread: Optional[threading.Thread] = None
 _orchestrator_running = False
 
 CACHE_TTL_SEC = int(os.getenv("CACHE_TTL_SEC", "300"))  # 5 min default
+
+# ---------------------------------------------------------------------------
+# x402 Payment Gate — discoverable micropayments for AI agents
+# ---------------------------------------------------------------------------
+_PAY_TO = os.getenv("PAY_TO", "")
+_X402_FACILITATOR_URL = os.getenv("X402_FACILITATOR_URL", "https://x402.org/facilitator")
+_X402_ENABLED = bool(_PAY_TO) and _X402_AVAILABLE
+
+_x402_server = None
+_x402_routes: dict = {}
+
+if _X402_ENABLED:
+    _facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=_X402_FACILITATOR_URL))
+    _x402_server = x402ResourceServer(_facilitator)
+    _x402_server.register("eip155:8453", ExactEvmServerScheme())  # Base mainnet
+
+    _x402_routes = {
+        "GET /signal": X402RouteConfig(
+            accepts=[PaymentOption(
+                scheme="exact", pay_to=_PAY_TO, price="$0.001",
+                network="eip155:8453",
+            )],
+            description=(
+                "Full crypto signal fusion: 20 assets scored 0-100 with whale, "
+                "derivatives, technical, narrative, and market dimensions. "
+                "Portfolio summary + LLM insights."
+            ),
+            mime_type="application/json",
+            extensions={"bazaar": {"discoverable": True}},
+        ),
+        "GET /signal/{asset}": X402RouteConfig(
+            accepts=[PaymentOption(
+                scheme="exact", pay_to=_PAY_TO, price="$0.001",
+                network="eip155:8453",
+            )],
+            description=(
+                "Single asset crypto signal: 5-dimension composite score (0-100), "
+                "direction, momentum, and market context."
+            ),
+            mime_type="application/json",
+            extensions={"bazaar": {"discoverable": True}},
+        ),
+        "GET /performance/reputation": X402RouteConfig(
+            accepts=[PaymentOption(
+                scheme="exact", pay_to=_PAY_TO, price="$0.001",
+                network="eip155:8453",
+            )],
+            description=(
+                "30-day rolling signal accuracy: hit/miss at 24h/48h/7d windows, "
+                "per-asset breakdown. Verifiable reputation score."
+            ),
+            mime_type="application/json",
+            extensions={"bazaar": {"discoverable": True}},
+        ),
+    }
+    print(f"x402: configured {len(_x402_routes)} paid routes (pay_to={_PAY_TO[:10]}...)")
 
 
 # ---------------------------------------------------------------------------
@@ -410,13 +477,18 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(UsageTrackingMiddleware)
 
+# x402 middleware — runs BEFORE usage tracking (LIFO order)
+if _X402_ENABLED:
+    app.add_middleware(PaymentMiddlewareASGI, routes=_x402_routes, server=_x402_server)
+    print(f"x402 payment gate enabled (facilitator={_X402_FACILITATOR_URL})")
+
 
 # ---------------------------------------------------------------------------
 # GET /
 # ---------------------------------------------------------------------------
 @app.get("/", tags=["info"])
 async def root():
-    return {
+    response = {
         "name": "Web3 Signals API",
         "version": "0.1.0",
         "description": "AI-powered crypto signal intelligence for 20 assets",
@@ -446,6 +518,23 @@ async def root():
             "Market data (Price, Volume, Fear & Greed, DexScreener)",
         ],
     }
+    if _X402_ENABLED:
+        response["x402"] = {
+            "enabled": True,
+            "facilitator": _X402_FACILITATOR_URL,
+            "network": "Base (eip155:8453)",
+            "currency": "USDC",
+            "pricing": {
+                "/signal": "$0.001",
+                "/signal/{asset}": "$0.001",
+                "/performance/reputation": "$0.001",
+            },
+            "free_endpoints": [
+                "/health", "/dashboard", "/analytics",
+                "/.well-known/*", "/mcp/sse", "/docs",
+            ],
+        }
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +818,7 @@ async def agent_card():
             "mcp_sse": f"{base_url}/mcp/sse",
             "a2a": f"{base_url}/.well-known/agent.json",
             "agents_md": f"{base_url}/.well-known/agents.md",
+            **({"x402": f"{base_url}/signal"} if _X402_ENABLED else {}),
         },
         "assets_covered": [
             "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
@@ -736,73 +826,21 @@ async def agent_card():
             "ARB", "OP", "INJ", "SUI",
         ],
         "update_frequency": "Every 15 minutes",
-        "pricing": "Free (x402 micropayments coming soon)",
+        "pricing": "$0.001/call USDC on Base via x402" if _X402_ENABLED else "Free",
     }
 
 
 # ---------------------------------------------------------------------------
 # AGENTS.md — Agentic AI Foundation discovery
 # ---------------------------------------------------------------------------
-_AGENTS_MD = """# Web3 Signals Agent
-
-## Identity
-- **Name**: Web3 Signals Agent
-- **Description**: AI-powered crypto signal intelligence for 20 assets. Fuses whale tracking, derivatives positioning, technical analysis, narrative momentum, and market data into scored signals with LLM insights.
-- **Version**: 0.1.0
-- **Provider**: Web3 Signals
-
-## Capabilities
-- Provides composite buy/sell/neutral signals for 20 crypto assets
-- Portfolio-level risk assessment and market regime detection
-- LLM-generated cross-dimensional insights
-- Signal accuracy tracking with rolling 30-day reputation score
-- Historical signal data with full audit trail
-
-## Protocols
-- **REST API**: OpenAPI-documented endpoints at /docs
-- **MCP**: Model Context Protocol server (SSE transport at /mcp/sse)
-- **A2A**: Agent-to-Agent discovery card at /.well-known/agent.json
-
-## Endpoints
-| Endpoint | Method | Description | Auth |
-|----------|--------|-------------|------|
-| /signal | GET | All 20 asset signals with portfolio summary | None |
-| /signal/{asset} | GET | Single asset signal (e.g. /signal/BTC) | None |
-| /performance/reputation | GET | 30-day rolling accuracy score | None |
-| /performance/{asset} | GET | Per-asset accuracy breakdown | None |
-| /health | GET | Agent status and uptime | None |
-| /analytics | GET | API usage analytics | None |
-| /api/history | GET | Historical signal runs (paginated) | None |
-
-## Assets Covered
-BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI
-
-## Data Sources
-1. Whale tracking (on-chain flows + exchange movements)
-2. Technical analysis (RSI, MACD, MA via Binance)
-3. Derivatives positioning (funding rate, OI, long/short ratio)
-4. Narrative momentum (Reddit, News, CoinGecko trending)
-5. Market data (price, volume, Fear & Greed Index)
-
-## Update Frequency
-- Signals refresh every 15 minutes
-- LLM sentiment analysis every 12 hours
-- Performance evaluation every 4 hours
-
-## Pricing
-Free (x402 micropayments coming soon)
-
-## Contact
-- API Docs: /docs
-- Dashboard: /dashboard
-"""
-
-
 @app.get("/.well-known/agents.md", tags=["discovery"], include_in_schema=False)
 async def agents_md():
     """AGENTS.md — Agentic AI Foundation standard for agent discovery."""
+    import pathlib
     from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(_AGENTS_MD, media_type="text/markdown")
+    agents_path = pathlib.Path(__file__).resolve().parent.parent / "AGENTS.md"
+    content = agents_path.read_text() if agents_path.exists() else "# Web3 Signals Agent"
+    return PlainTextResponse(content, media_type="text/markdown")
 
 
 # ---------------------------------------------------------------------------
