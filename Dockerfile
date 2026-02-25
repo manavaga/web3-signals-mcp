@@ -24,9 +24,9 @@ COPY . .
 ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
-# Health check — hit the /health endpoint
-HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD python -c "import os; from urllib.request import urlopen; urlopen(f'http://localhost:{os.getenv(\"PORT\",8000)}/health')" || exit 1
+# Health check — uses same PORT logic as __main__.py
+HEALTHCHECK --interval=60s --timeout=15s --start-period=30s --retries=3 \
+    CMD python -c "import os; p=int(os.getenv('RAILWAY_PORT',os.getenv('PORT',8000))); p=8000 if p==5432 else p; from urllib.request import urlopen; urlopen(f'http://localhost:{p}/health',timeout=10)" || exit 1
 
 # Run the FastAPI server (includes background orchestrator)
 # Uses Python to read PORT env var (avoids shell expansion issues on Railway)
