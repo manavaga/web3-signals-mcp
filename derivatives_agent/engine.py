@@ -159,7 +159,16 @@ class DerivativesAgent(BaseAgent):
     # HTTP helper
     # ------------------------------------------------------------------ #
 
-    def _get_json(self, url: str) -> Any:
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    def _get_json(self, url: str, retries: int = 2) -> Any:
+        import time as _time
+        last_exc = None
+        for attempt in range(retries + 1):
+            try:
+                req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+                with urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retries:
+                    _time.sleep(1 * (attempt + 1))  # backoff: 1s, 2s
+        raise last_exc

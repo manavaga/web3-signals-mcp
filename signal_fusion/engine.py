@@ -415,7 +415,7 @@ class SignalFusion:
 
         # Open interest
         oi_rules = rules.get("open_interest", {})
-        oi = asset_data.get("open_interest")
+        oi = asset_data.get("open_interest_usd") or asset_data.get("open_interest")
         if oi is not None:
             # Simple: if OI > 0 it's present, score stable
             score += float(oi_rules.get("stable_score", 15))
@@ -673,22 +673,28 @@ class SignalFusion:
     def _llm_call(self, messages: List[Dict[str, str]], cfg: Dict[str, Any]) -> str:
         """Call Anthropic Messages API."""
         url = "https://api.anthropic.com/v1/messages"
+        system_prompt = cfg.get("system_prompt", "").strip()
         payload = {
             "model": cfg.get("model", "claude-haiku-4-5-20251001"),
             "max_tokens": int(cfg.get("max_tokens", 1024)),
-            "system": cfg.get("system_prompt", ""),
             "messages": messages,
         }
+        if system_prompt:
+            payload["system"] = system_prompt
         data = json.dumps(payload).encode()
         req = Request(url, data=data, headers={
             "Content-Type": "application/json",
             "x-api-key": self.anthropic_key,
             "anthropic-version": "2023-06-01",
         })
-        with urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode())
-        content = result.get("content", [])
-        return content[0].get("text", "") if content else ""
+        try:
+            with urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+            content = result.get("content", [])
+            return content[0].get("text", "") if content else ""
+        except Exception as exc:
+            # Log but don't crash — LLM insights are optional
+            return f"[LLM unavailable: {exc}]"
 
     def _llm_portfolio_insight(
         self,
