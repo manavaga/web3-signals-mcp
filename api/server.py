@@ -39,8 +39,13 @@ try:
     from x402.mechanisms.evm.exact import ExactEvmServerScheme
     from x402.server import x402ResourceServer
     _X402_AVAILABLE = True
-except ImportError:
+    print("x402: imports OK")
+except ImportError as _x402_err:
     _X402_AVAILABLE = False
+    print(f"x402: IMPORT FAILED — {_x402_err}")
+except Exception as _x402_err:
+    _X402_AVAILABLE = False
+    print(f"x402: UNEXPECTED ERROR — {_x402_err}")
 
 # ---------------------------------------------------------------------------
 # Globals — set on startup
