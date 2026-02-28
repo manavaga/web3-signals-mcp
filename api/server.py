@@ -70,11 +70,26 @@ _X402_ENABLED = bool(_PAY_TO) and _X402_AVAILABLE
 _x402_server = None
 _x402_routes: dict = {}
 
+_x402_init_error: Optional[str] = None  # stored for /health diagnostics
+
 if _X402_ENABLED:
     _facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=_X402_FACILITATOR_URL))
     _x402_server = x402ResourceServer(_facilitator)
     _x402_server.register("eip155:8453", ExactEvmServerScheme())  # Base mainnet
 
+    # Eagerly initialize: connect to facilitator NOW, not on first request.
+    # If facilitator is unreachable, disable x402 gracefully (app stays up, routes free).
+    try:
+        _x402_server.initialize()
+        print(f"x402: facilitator OK ({_X402_FACILITATOR_URL})")
+    except Exception as _init_exc:
+        _x402_init_error = str(_init_exc)
+        print(f"x402: FACILITATOR INIT FAILED — {_init_exc}")
+        print(f"x402: disabling payment gate — routes will be free until fixed")
+        _X402_ENABLED = False
+        _x402_server = None
+
+if _X402_ENABLED:
     # Route patterns: x402 uses glob syntax (* for wildcards, not {param})
     _payment_option = PaymentOption(
         scheme="exact", pay_to=_PAY_TO, price="$0.001",
@@ -550,12 +565,22 @@ async def health():
         "last_run": fusion_latest.get("timestamp") if fusion_latest else None,
     }
 
+    # x402 payment gate status
+    x402_status: Dict[str, Any] = {"enabled": _X402_ENABLED}
+    if _PAY_TO:
+        x402_status["pay_to"] = _PAY_TO[:10] + "..."
+        x402_status["facilitator_url"] = _X402_FACILITATOR_URL
+    if _x402_init_error:
+        x402_status["init_error"] = _x402_init_error
+        x402_status["note"] = "payment gate disabled — routes serving free until fixed"
+
     return {
         "status": "healthy",
         "boot_time": _boot_time,
         "storage_backend": _store.backend if _store else "none",
         "agents": agent_status,
         "fusion": fusion_status,
+        "x402": x402_status,
     }
 
 
