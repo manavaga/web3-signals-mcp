@@ -64,7 +64,7 @@ CACHE_TTL_SEC = int(os.getenv("CACHE_TTL_SEC", "300"))  # 5 min default
 # x402 Payment Gate — discoverable micropayments for AI agents
 # ---------------------------------------------------------------------------
 _PAY_TO = os.getenv("PAY_TO", "")
-_X402_FACILITATOR_URL = os.getenv("X402_FACILITATOR_URL", "https://x402.org/facilitator")
+_X402_FACILITATOR_URL = os.getenv("X402_FACILITATOR_URL", "https://api.cdp.coinbase.com/platform/v2/x402")
 _X402_ENABLED = bool(_PAY_TO) and _X402_AVAILABLE
 
 _x402_server = None
@@ -75,12 +75,14 @@ if _X402_ENABLED:
     _x402_server = x402ResourceServer(_facilitator)
     _x402_server.register("eip155:8453", ExactEvmServerScheme())  # Base mainnet
 
+    # Route patterns: x402 uses glob syntax (* for wildcards, not {param})
+    _payment_option = PaymentOption(
+        scheme="exact", pay_to=_PAY_TO, price="$0.001",
+        network="eip155:8453",
+    )
     _x402_routes = {
         "GET /signal": X402RouteConfig(
-            accepts=[PaymentOption(
-                scheme="exact", pay_to=_PAY_TO, price="$0.001",
-                network="eip155:8453",
-            )],
+            accepts=[_payment_option],
             description=(
                 "Full crypto signal fusion: 20 assets scored 0-100 with whale, "
                 "derivatives, technical, narrative, and market dimensions. "
@@ -89,11 +91,8 @@ if _X402_ENABLED:
             mime_type="application/json",
             extensions={"bazaar": {"discoverable": True}},
         ),
-        "GET /signal/{asset}": X402RouteConfig(
-            accepts=[PaymentOption(
-                scheme="exact", pay_to=_PAY_TO, price="$0.001",
-                network="eip155:8453",
-            )],
+        "GET /signal/*": X402RouteConfig(
+            accepts=[_payment_option],
             description=(
                 "Single asset crypto signal: 5-dimension composite score (0-100), "
                 "direction, momentum, and market context."
@@ -102,10 +101,7 @@ if _X402_ENABLED:
             extensions={"bazaar": {"discoverable": True}},
         ),
         "GET /performance/reputation": X402RouteConfig(
-            accepts=[PaymentOption(
-                scheme="exact", pay_to=_PAY_TO, price="$0.001",
-                network="eip155:8453",
-            )],
+            accepts=[_payment_option],
             description=(
                 "30-day rolling signal accuracy: hit/miss at 24h/48h/7d windows, "
                 "per-asset breakdown. Verifiable reputation score."
