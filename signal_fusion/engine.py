@@ -413,12 +413,26 @@ class SignalFusion:
                 score += float(fund_rules.get("high_score", 5))
                 details.append("high funding")
 
-        # Open interest
+        # Open interest — compare to previous run to detect rising/falling
         oi_rules = rules.get("open_interest", {})
         oi = asset_data.get("open_interest_usd") or asset_data.get("open_interest")
         if oi is not None:
-            # Simple: if OI > 0 it's present, score stable
-            score += float(oi_rules.get("stable_score", 15))
+            prev_oi = self.store.load_kv("oi_prev", asset)
+            self.store.save_kv("oi_prev", asset, float(oi))
+
+            if prev_oi is not None and prev_oi > 0:
+                oi_change_pct = ((float(oi) - prev_oi) / prev_oi) * 100
+                threshold = float(oi_rules.get("change_threshold_pct", 5))
+                if oi_change_pct > threshold:
+                    score += float(oi_rules.get("rising_score", 25))
+                    details.append(f"OI +{oi_change_pct:.1f}%")
+                elif oi_change_pct < -threshold:
+                    score += float(oi_rules.get("falling_score", 10))
+                    details.append(f"OI {oi_change_pct:.1f}%")
+                else:
+                    score += float(oi_rules.get("stable_score", 15))
+            else:
+                score += float(oi_rules.get("stable_score", 15))
 
         return min(100.0, max(0.0, score)), "; ".join(details) if details else "no deriv data"
 

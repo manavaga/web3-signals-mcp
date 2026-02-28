@@ -829,25 +829,41 @@ class NarrativeAgent(BaseAgent):
     # ------------------------------------------------------------------ #
 
     def _load_peak(self, symbol: str, days: int) -> Optional[int]:
-        """Load rolling peak from shared storage (Postgres-aware)."""
+        """Load rolling peak with time decay (5% per day) from shared storage."""
         try:
+            import time as _time
             from shared.storage import Storage
             store = Storage()
             val = store.load_kv("narrative_peaks", f"{symbol}_peak")
+            ts = store.load_kv("narrative_peaks", f"{symbol}_peak_ts")
+            if val is not None and ts is not None:
+                days_elapsed = (_time.time() - ts) / 86400
+                decayed = val * (0.95 ** days_elapsed)  # 5% decay per day
+                return max(1, int(decayed))
             return int(val) if val is not None else None
         except Exception:
             return None
 
     def _store_count(self, symbol: str, count: int) -> None:
-        """Store mention count for rolling peak tracking."""
+        """Store mention count with decaying peak tracking."""
         try:
+            import time as _time
             from shared.storage import Storage
             store = Storage()
-            # Update peak if current count is higher
             current_peak = store.load_kv("narrative_peaks", f"{symbol}_peak")
-            if current_peak is None or count > current_peak:
-                store.save_kv("narrative_peaks", f"{symbol}_peak", float(count))
-            # Also store latest count
+            peak_ts = store.load_kv("narrative_peaks", f"{symbol}_peak_ts")
+
+            # Apply decay to stored peak before comparing
+            if current_peak is not None and peak_ts is not None:
+                days_elapsed = (_time.time() - peak_ts) / 86400
+                decayed_peak = current_peak * (0.95 ** days_elapsed)
+            else:
+                decayed_peak = 0
+
+            # New peak = max of decayed old peak and current count
+            effective_peak = max(decayed_peak, float(count))
+            store.save_kv("narrative_peaks", f"{symbol}_peak", effective_peak)
+            store.save_kv("narrative_peaks", f"{symbol}_peak_ts", float(_time.time()))
             store.save_kv("narrative_peaks", f"{symbol}_latest", float(count))
         except Exception:
             pass

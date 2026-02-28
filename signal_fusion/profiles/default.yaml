@@ -103,68 +103,60 @@ scoring:
   # -----------------------------------------------------------------------
   # TECHNICAL scoring (per asset)
   # -----------------------------------------------------------------------
+  # Rebalanced so neutral market ≈ 50, bearish indicators score > 0
+  # Max bullish ≈ 85, max bearish ≈ 18, neutral midpoint ≈ 50
   technical:
-    # RSI contribution (0-40 points)
+    # RSI contribution (15-35 points)
     rsi:
-      # RSI 30-70 maps linearly to 0-40 points
-      # Below 30 = oversold = contrarian bullish (30 pts)
-      # Above 70 = overbought = caution (10 pts)
       oversold_below: 30
       overbought_above: 70
-      oversold_score: 30       # contrarian — good buying opportunity
-      overbought_score: 10     # risky to enter
-      neutral_min_score: 15    # RSI exactly at 30
-      neutral_max_score: 40    # RSI exactly at 70
+      oversold_score: 35         # contrarian — good buying opportunity
+      overbought_score: 15       # risky to enter
+      neutral_min_score: 20      # RSI exactly at 30
+      neutral_max_score: 35      # RSI exactly at 70
 
-    # MACD contribution (0-20 points)
+    # MACD contribution (5-15 points)
     macd:
-      bullish_cross_points: 20   # MACD > signal line
-      bearish_cross_points: 0    # MACD < signal line
+      bullish_cross_points: 15   # MACD > signal line
+      bearish_cross_points: 5    # MACD < signal line — was 0!
 
-    # Moving average contribution (0-20 points)
+    # Moving average contribution (6-16 points)
     ma:
-      above_ma7_points: 10       # price > 7-day MA
-      above_ma30_points: 10      # price > 30-day MA
-      below_ma7_points: 0
-      below_ma30_points: 0
+      above_ma7_points: 8        # price > 7-day MA
+      above_ma30_points: 8       # price > 30-day MA
+      below_ma7_points: 3        # price < 7-day MA — was 0!
+      below_ma30_points: 3       # price < 30-day MA — was 0!
 
-    # Trend confirmation (0-20 points)
+    # Trend confirmation (5-15 points)
     trend:
-      bullish_points: 20         # trend classified as "bullish"
-      bearish_points: 0
+      bullish_points: 15         # trend classified as "bullish"
+      bearish_points: 5          # trend classified as "bearish" — was 0!
       neutral_points: 10
 
   # -----------------------------------------------------------------------
   # DERIVATIVES scoring (per asset)
   # -----------------------------------------------------------------------
+  # Rebalanced so neutral market ≈ 50, overcrowded/high-funding score > 0
   derivatives:
-    # Long/short ratio contribution (0-40 points)
+    # Long/short ratio contribution (15-35 points)
     long_short:
-      # Sweet spot: 55-65% longs = healthy bullish
       sweet_spot_min: 0.55
       sweet_spot_max: 0.65
-      sweet_spot_score: 40
-      # Above 70% = overcrowded longs = bearish signal
+      sweet_spot_score: 35       # was 40 — healthy bullish
       overcrowded_above: 0.70
-      overcrowded_score: 10
-      # Below 45% = heavy shorts = contrarian bullish
+      overcrowded_score: 15      # was 10 — overcrowded longs still scores
       contrarian_below: 0.45
-      contrarian_score: 35
-      # Everything else = moderate
-      default_score: 25
+      contrarian_score: 30       # was 35 — heavy shorts contrarian
+      default_score: 25          # unchanged
 
-    # Funding rate contribution (0-30 points)
+    # Funding rate contribution (10-30 points)
     funding:
-      # Low funding = cheap to hold = bullish
       low_threshold: 0.0002
-      low_score: 30
-      # Moderate funding
+      low_score: 25              # was 30
       moderate_threshold: 0.0005
-      moderate_score: 15
-      # High funding = expensive = bearish
-      high_score: 5
-      # Negative funding = shorts paying = very bullish
-      negative_score: 35
+      moderate_score: 18         # was 15
+      high_score: 10             # was 5 — high funding still scores
+      negative_score: 30         # was 35
 
     # Open interest change contribution (0-30 points)
     open_interest:
@@ -213,38 +205,38 @@ scoring:
   # -----------------------------------------------------------------------
   # MARKET scoring (per asset)
   # -----------------------------------------------------------------------
+  # Rebalanced: dampened contrarian F&G, bearish price still scores
   market:
-    # Price change contribution (0-40 points)
+    # Price change contribution (5-35 points)
     price_change:
-      # 24h price change mapped to score
-      strong_positive_above: 5.0     # >5% = very bullish
-      strong_positive_score: 40
-      positive_above: 0.0            # 0-5% = moderate bullish
-      positive_score: 30
-      mild_negative_above: -5.0      # -5% to 0% = mild bearish
-      mild_negative_score: 20
-      strong_negative_score: 10      # <-5% = bearish
+      strong_positive_above: 5.0
+      strong_positive_score: 35      # was 40
+      positive_above: 0.0
+      positive_score: 25             # was 30
+      mild_negative_above: -5.0
+      mild_negative_score: 15        # was 20
+      strong_negative_score: 5       # was 10
 
-    # Volume spike contribution (0-30 points)
+    # Volume spike contribution (10-30 points)
     volume:
-      spike_multiplier_above: 2.0    # >2x avg = spike
+      spike_multiplier_above: 2.0
       spike_score: 30
-      elevated_multiplier_above: 1.5 # >1.5x avg
+      elevated_multiplier_above: 1.5
       elevated_score: 20
       normal_score: 10
 
-    # Fear & Greed (global — same for all assets) (0-30 points)
-    # Contrarian: extreme fear = buying opportunity
+    # Fear & Greed (global) (5-25 points)
+    # Dampened contrarian — extreme fear is opportunity but not max score
     fear_greed:
       extreme_fear_below: 25
-      extreme_fear_score: 30         # best time to buy
+      extreme_fear_score: 25         # was 30 — dampened contrarian
       fear_below: 45
-      fear_score: 25
+      fear_score: 20                 # was 25
       neutral_below: 55
       neutral_score: 15
       greed_below: 75
       greed_score: 10
-      extreme_greed_score: 5         # worst time to buy
+      extreme_greed_score: 5
 
 # ---------------------------------------------------------------------------
 # Dynamic reweighting — adjust whale weight based on data availability
