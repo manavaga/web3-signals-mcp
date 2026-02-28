@@ -315,40 +315,23 @@ def _record_performance_snapshot(store: Storage) -> None:
 def _evaluate_old_snapshots(store: Storage) -> None:
     """
     Check snapshots that are 24h/48h/7d old and evaluate accuracy.
-    Fetches current prices from CoinGecko (free, no key needed).
+    Reuses prices already stored by the market agent (no extra API call).
     """
-    import json
-    from urllib.request import Request, urlopen
-
-    # CoinGecko asset ID mapping
-    COINGECKO_IDS = {
-        "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
-        "XRP": "ripple", "ADA": "cardano", "AVAX": "avalanche-2", "DOT": "polkadot",
-        "MATIC": "matic-network", "LINK": "chainlink", "UNI": "uniswap", "ATOM": "cosmos",
-        "LTC": "litecoin", "FIL": "filecoin", "NEAR": "near", "APT": "aptos",
-        "ARB": "arbitrum", "OP": "optimism", "INJ": "injective-protocol", "SUI": "sui",
-    }
-
-    # Fetch current prices for all assets in one call
-    ids_str = ",".join(COINGECKO_IDS.values())
-    try:
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_str}&vs_currencies=usd"
-        req = Request(url, headers={"Accept": "application/json"})
-        with urlopen(req, timeout=15) as resp:
-            price_data = json.loads(resp.read().decode())
-    except Exception as exc:
-        print(f"  performance eval: CoinGecko fetch failed — {exc}")
+    # Get current prices from the market agent's latest run (already in storage)
+    market = store.load_latest("market_agent")
+    if not market:
+        print("  performance eval: no market agent data in storage")
         return
 
-    # Build asset → price map
+    per_asset = market.get("data", {}).get("per_asset", {})
     current_prices = {}
-    for asset, cg_id in COINGECKO_IDS.items():
-        p = price_data.get(cg_id, {}).get("usd")
+    for asset, adata in per_asset.items():
+        p = adata.get("price")
         if p is not None:
             current_prices[asset] = float(p)
 
     if not current_prices:
-        print("  performance eval: no prices from CoinGecko")
+        print("  performance eval: no prices in market agent data")
         return
 
     # Evaluate each window: 24h, 48h, 7d (168h)
@@ -388,7 +371,9 @@ def _evaluate_old_snapshots(store: Storage) -> None:
             total_evaluated += 1
 
     if total_evaluated:
-        print(f"  performance eval: evaluated {total_evaluated} snapshots")
+        print(f"  [PERF] Evaluated {total_evaluated} snapshots across {len(windows)} windows")
+    else:
+        print(f"  [PERF] No snapshots ready for evaluation yet (need 24h+ age)")
 
 
 # ---------------------------------------------------------------------------
