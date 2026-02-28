@@ -6,10 +6,15 @@ FROM python:3.13-slim
 # Set working directory
 WORKDIR /app
 
-# Install system deps (for psycopg2-binary and general build)
+# Install system deps (psycopg2, x402 EVM crypto libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
     libpq-dev \
+    libffi-dev \
+    libgmp-dev \
+    make \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (Docker layer caching)
