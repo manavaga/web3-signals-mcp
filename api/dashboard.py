@@ -648,7 +648,7 @@ async function fetchAll() {
     healthData = await healthRes.json();
     renderAgents();
 
-    const sigRes = await fetch(API_BASE + '/signal');
+    const sigRes = await fetch(API_BASE + '/api/signal');
     clearTimeout(loadTimer);
 
     if (!sigRes.ok) {
@@ -663,7 +663,7 @@ async function fetchAll() {
 
     // Fetch performance data (non-blocking)
     try {
-      const perfRes = await fetch(API_BASE + '/performance/reputation');
+      const perfRes = await fetch(API_BASE + '/api/performance/reputation');
       perfData = await perfRes.json();
     } catch(e) { perfData = null; }
 

@@ -633,6 +633,15 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# GET /api/signal — Internal (free) signal endpoint for dashboard
+# ---------------------------------------------------------------------------
+@app.get("/api/signal", tags=["internal"], include_in_schema=False)
+async def get_signal_internal():
+    """Same data as /signal but free — used by the dashboard UI."""
+    return await get_signal()
+
+
+# ---------------------------------------------------------------------------
 # GET /signal — Full fusion output
 # ---------------------------------------------------------------------------
 @app.get("/signal", tags=["signals"])
@@ -699,6 +708,15 @@ async def get_asset_signal(asset: str):
             "signal_momentum": portfolio.get("signal_momentum"),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/performance/reputation — Internal (free) for dashboard
+# ---------------------------------------------------------------------------
+@app.get("/api/performance/reputation", tags=["internal"], include_in_schema=False)
+async def get_reputation_internal():
+    """Same data as /performance/reputation but free — used by dashboard UI."""
+    return await get_reputation()
 
 
 # ---------------------------------------------------------------------------
