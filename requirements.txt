@@ -19,3 +19,6 @@ mcp>=1.26.0
 
 # x402 payment gate (enabled when PAY_TO env var is set)
 x402[fastapi,evm]==2.2.0
+
+# CDP SDK — generates JWT auth tokens for Coinbase x402 facilitator
+cdp-sdk>=1.39.0
