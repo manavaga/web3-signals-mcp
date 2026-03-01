@@ -34,6 +34,7 @@ from api.dashboard import DASHBOARD_HTML
 # x402 payment gate (enabled when PAY_TO env var is set)
 try:
     from x402.http import HTTPFacilitatorClient, FacilitatorConfig, PaymentOption
+    from x402.http.facilitator_client_base import CreateHeadersAuthProvider
     from x402.http.middleware.fastapi import PaymentMiddlewareASGI
     from x402.http.types import RouteConfig as X402RouteConfig
     from x402.mechanisms.evm.exact import ExactEvmServerScheme
@@ -65,6 +66,8 @@ CACHE_TTL_SEC = int(os.getenv("CACHE_TTL_SEC", "300"))  # 5 min default
 # ---------------------------------------------------------------------------
 _PAY_TO = os.getenv("PAY_TO", "")
 _X402_FACILITATOR_URL = os.getenv("X402_FACILITATOR_URL", "https://api.cdp.coinbase.com/platform/v2/x402")
+_CDP_API_KEY_ID = os.getenv("CDP_API_KEY_ID", "")
+_CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET", "")
 _X402_ENABLED = bool(_PAY_TO) and _X402_AVAILABLE
 
 _x402_server = None
@@ -72,8 +75,53 @@ _x402_routes: dict = {}
 
 _x402_init_error: Optional[str] = None  # stored for /health diagnostics
 
+
+def _build_cdp_auth_provider():
+    """Build x402 AuthProvider that generates CDP JWT Bearer tokens.
+
+    The CDP facilitator at api.cdp.coinbase.com requires Ed25519 JWTs.
+    Uses the cdp-sdk's generate_jwt() if available, otherwise returns None.
+    """
+    if not _CDP_API_KEY_ID or not _CDP_API_KEY_SECRET:
+        print("x402: no CDP_API_KEY_ID/SECRET — facilitator may reject unauthenticated requests")
+        return None
+
+    try:
+        from cdp.auth import generate_jwt, JwtOptions
+
+        def create_headers():
+            headers = {}
+            for endpoint, method in [("supported", "GET"), ("verify", "POST"), ("settle", "POST")]:
+                opts = JwtOptions(
+                    api_key_id=_CDP_API_KEY_ID,
+                    api_key_secret=_CDP_API_KEY_SECRET,
+                    request_method=method,
+                    request_host="api.cdp.coinbase.com",
+                    request_path=f"/platform/v2/x402/{endpoint}",
+                )
+                jwt_token = generate_jwt(opts)
+                headers[endpoint] = {
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Content-Type": "application/json",
+                }
+            return headers
+
+        print(f"x402: CDP auth configured (key_id={_CDP_API_KEY_ID[:12]}...)")
+        return CreateHeadersAuthProvider(create_headers)
+    except ImportError:
+        print("x402: cdp-sdk not installed — cannot authenticate with CDP facilitator")
+        return None
+    except Exception as e:
+        print(f"x402: CDP auth setup failed — {e}")
+        return None
+
+
 if _X402_ENABLED:
-    _facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=_X402_FACILITATOR_URL))
+    _auth_provider = _build_cdp_auth_provider()
+    _facilitator = HTTPFacilitatorClient(FacilitatorConfig(
+        url=_X402_FACILITATOR_URL,
+        auth_provider=_auth_provider,
+    ))
     _x402_server = x402ResourceServer(_facilitator)
     _x402_server.register("eip155:8453", ExactEvmServerScheme())  # Base mainnet
 
