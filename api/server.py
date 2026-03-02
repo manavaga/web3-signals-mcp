@@ -379,9 +379,41 @@ def _record_performance_snapshot(store: Storage) -> None:
         print(f"  performance: saved {saved} snapshots (next in {snapshot_interval}h)")
 
 
+def _calculate_gradient_score(
+    direction: str, pct_change: float, accuracy_cfg: dict,
+) -> float:
+    """Calculate gradient accuracy score (0.0-1.0) for a directional signal.
+
+    Instead of binary hit/miss, scores based on direction AND magnitude:
+      strong_correct (1.0) — strong move in predicted direction
+      correct (0.7) — moderate move in predicted direction
+      weak_correct (0.4) — right direction but within noise
+      weak_wrong (0.2) — wrong direction but within noise
+      wrong (0.0) — clear wrong call
+    """
+    noise_pct = float(accuracy_cfg.get("noise_threshold_pct", 2.0))
+    strong_pct = float(accuracy_cfg.get("strong_threshold_pct", 5.0))
+    gradient = accuracy_cfg.get("gradient", {})
+
+    # Normalize: for bearish signals, flip the sign so positive = correct
+    effective_change = pct_change if direction == "bullish" else -pct_change
+
+    if effective_change >= strong_pct:
+        return float(gradient.get("strong_correct", 1.0))
+    elif effective_change >= noise_pct:
+        return float(gradient.get("correct", 0.7))
+    elif effective_change >= 0:
+        return float(gradient.get("weak_correct", 0.4))
+    elif effective_change >= -noise_pct:
+        return float(gradient.get("weak_wrong", 0.2))
+    else:
+        return float(gradient.get("wrong", 0.0))
+
+
 def _evaluate_old_snapshots(store: Storage) -> None:
     """
     Check snapshots that are 24h/48h/7d old and evaluate accuracy.
+    Uses gradient scoring: 0.0-1.0 based on direction AND magnitude.
     Reuses prices already stored by the market agent (no extra API call).
     """
     # Get current prices from the market agent's latest run (already in storage)
@@ -400,6 +432,11 @@ def _evaluate_old_snapshots(store: Storage) -> None:
     if not current_prices:
         print("  performance eval: no prices in market agent data")
         return
+
+    # Load gradient scoring config from fusion profile
+    accuracy_cfg = {}
+    if _fusion and hasattr(_fusion, "profile"):
+        accuracy_cfg = _fusion.profile.get("accuracy", {})
 
     # Evaluate each window: 24h, 48h, 7d (168h)
     windows = [(24, 24), (48, 48), (168, 168)]
@@ -420,29 +457,25 @@ def _evaluate_old_snapshots(store: Storage) -> None:
             direction = snap["signal_direction"]
 
             # Skip neutral signals — only evaluate directional calls.
-            # A system saying "I don't know" shouldn't be penalized.
             if direction == "neutral":
                 store.save_performance_accuracy(
                     snapshot_id=snap["id"],
                     window_hours=window_hours,
                     price_at_window=price_now,
-                    direction_correct=None,  # NULL = skipped (neutral)
+                    gradient_score=None,  # NULL = skipped (neutral)
                 )
                 continue
 
-            # Calculate accuracy for directional signals only
+            # Calculate gradient score for directional signals
             pct_change = (price_now - price_at_signal) / price_at_signal * 100
-
-            if direction == "bullish":
-                hit = pct_change > 0
-            else:  # bearish
-                hit = pct_change < 0
+            gradient_score = _calculate_gradient_score(direction, pct_change, accuracy_cfg)
 
             store.save_performance_accuracy(
                 snapshot_id=snap["id"],
                 window_hours=window_hours,
                 price_at_window=price_now,
-                direction_correct=hit,
+                gradient_score=gradient_score,
+                pct_change=round(pct_change, 2),
             )
             total_evaluated += 1
 
@@ -754,16 +787,18 @@ async def get_reputation():
             "started_tracking": datetime.now(timezone.utc).isoformat(),
         }
 
-    accuracy = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+    # Gradient accuracy: average gradient score × 100
+    avg_gradient = stats.get("avg_gradient", 0.0)
+    accuracy = round(avg_gradient * 100, 1)
     reputation_score = int(round(accuracy))
 
     return {
         "status": "active",
         "reputation_score": reputation_score,
         "accuracy_30d": accuracy,
+        "avg_gradient_score": avg_gradient,
         "directional_signals_evaluated": stats["total"],
-        "directional_signals_correct": stats["hits"],
-        "directional_signals_wrong": stats["total"] - stats["hits"],
+        "avg_abs_pct_change": stats.get("avg_abs_pct_change", 0),
         "neutral_signals_skipped": stats.get("neutral_skipped", 0),
         "by_timeframe": stats["by_timeframe"],
         "by_asset": stats["by_asset"],
@@ -771,9 +806,16 @@ async def get_reputation():
         "methodology": {
             "direction_extraction": "score >=55 = bullish, <45 = bearish, 45-55 = neutral",
             "neutral_handling": "neutral signals are NOT evaluated — only directional calls count",
-            "bullish_hit": "price moved up (any amount)",
-            "bearish_hit": "price moved down (any amount)",
-            "scoring": "binary (hit/miss) on directional calls only",
+            "scoring": "gradient (0.0-1.0) based on direction AND magnitude",
+            "gradient_scale": {
+                "1.0": "strong move (>5%) in predicted direction",
+                "0.7": "moderate move (2-5%) in predicted direction",
+                "0.4": "right direction but within noise (<2%)",
+                "0.2": "wrong direction but within noise (<2%)",
+                "0.0": "clear wrong call (>2% against prediction)",
+            },
+            "accuracy_formula": "AVG(gradient_score) × 100",
+            "noise_threshold": "±2% — moves within this range are inconclusive",
             "window": "30-day rolling",
             "timeframes": ["24h", "48h", "7d"],
             "price_source": "market agent (CoinGecko + Binance)",

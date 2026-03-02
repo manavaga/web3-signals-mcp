@@ -360,6 +360,45 @@ portfolio:
     greed: 75
 
 # ---------------------------------------------------------------------------
+# Accuracy evaluation — gradient scoring
+# ---------------------------------------------------------------------------
+# Instead of binary hit/miss, every directional signal is scored 0.0-1.0
+# based on direction AND magnitude of the price move.
+#
+# Example (bullish signal):
+#   +8% move → 1.0 (strong correct call)
+#   +3% move → 0.7 (good directional call)
+#   +0.5% move → 0.4 (right direction but within noise)
+#   -0.5% move → 0.2 (wrong but within noise)
+#   -4% move → 0.0 (wrong call)
+#
+# Accuracy = average gradient score × 100
+# A system that nails big moves: 80-90%
+# A system that's directionally right on small moves: 50-60%
+# A random system: ~30%
+# ---------------------------------------------------------------------------
+accuracy:
+  # Noise zone: moves within ±noise_pct are inconclusive
+  # Not fully right, not fully wrong
+  noise_threshold_pct: 2.0
+
+  # Strong move: moves beyond ±strong_pct are fully correct/wrong
+  strong_threshold_pct: 5.0
+
+  # Gradient scores for each zone (bullish signal example):
+  #   pct_change > strong_pct     → strong_correct (1.0)
+  #   noise_pct < pct < strong    → correct (0.7)
+  #   0 < pct < noise_pct         → weak_correct (0.4)
+  #   -noise_pct < pct < 0        → weak_wrong (0.2)
+  #   pct < -noise_pct            → wrong (0.0)
+  gradient:
+    strong_correct: 1.0     # strong move in predicted direction
+    correct: 0.7            # moderate move in predicted direction
+    weak_correct: 0.4       # right direction but within noise
+    weak_wrong: 0.2         # wrong direction but within noise
+    wrong: 0.0              # clear wrong call
+
+# ---------------------------------------------------------------------------
 # LLM insights (Claude Haiku)
 # ---------------------------------------------------------------------------
 llm_insights:
