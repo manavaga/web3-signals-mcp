@@ -440,8 +440,15 @@ class Storage:
                 return cur.lastrowid
 
     def save_performance_accuracy(self, snapshot_id: int, window_hours: int,
-                                   price_at_window: float, direction_correct: bool) -> None:
-        """Save an accuracy evaluation for a snapshot."""
+                                   price_at_window: float,
+                                   gradient_score: Optional[float],
+                                   pct_change: Optional[float] = None) -> None:
+        """Save a gradient accuracy evaluation for a snapshot.
+
+        gradient_score can be:
+          0.0-1.0 — directional signal scored (1.0 = perfect, 0.0 = wrong)
+          None — neutral signal, skipped (not counted in accuracy)
+        """
         table = "performance_accuracy"
         now = datetime.now(timezone.utc).isoformat()
 
@@ -454,7 +461,8 @@ class Storage:
                         f"  snapshot_id INTEGER NOT NULL,"
                         f"  window_hours INTEGER NOT NULL,"
                         f"  price_at_window DOUBLE PRECISION NOT NULL,"
-                        f"  direction_correct BOOLEAN NOT NULL,"
+                        f"  gradient_score DOUBLE PRECISION,"
+                        f"  pct_change DOUBLE PRECISION,"
                         f"  evaluated_at TEXT NOT NULL"
                         f")"
                     )
@@ -463,9 +471,9 @@ class Storage:
                     )
                     cur.execute(
                         f"INSERT INTO {table} (snapshot_id, window_hours, price_at_window, "
-                        f"direction_correct, evaluated_at) VALUES (%s, %s, %s, %s, %s)",
+                        f"gradient_score, pct_change, evaluated_at) VALUES (%s, %s, %s, %s, %s, %s)",
                         (snapshot_id, window_hours, price_at_window,
-                         direction_correct, now),
+                         gradient_score, pct_change, now),
                     )
                     # Mark snapshot as evaluated for this window
                     snap_table = "performance_snapshots"
@@ -483,7 +491,8 @@ class Storage:
                     f"  snapshot_id INTEGER NOT NULL,"
                     f"  window_hours INTEGER NOT NULL,"
                     f"  price_at_window REAL NOT NULL,"
-                    f"  direction_correct INTEGER NOT NULL,"
+                    f"  gradient_score REAL,"
+                    f"  pct_change REAL,"
                     f"  evaluated_at TEXT NOT NULL"
                     f")"
                 )
@@ -492,9 +501,9 @@ class Storage:
                 )
                 conn.execute(
                     f"INSERT INTO {table} (snapshot_id, window_hours, price_at_window, "
-                    f"direction_correct, evaluated_at) VALUES (?, ?, ?, ?, ?)",
+                    f"gradient_score, pct_change, evaluated_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (snapshot_id, window_hours, price_at_window,
-                     int(direction_correct), now),
+                     gradient_score, pct_change, now),
                 )
                 snap_table = "performance_snapshots"
                 col = f"evaluated_{window_hours}h" if window_hours != 168 else "evaluated_7d"
@@ -551,13 +560,21 @@ class Storage:
                 return []
 
     def load_accuracy_stats(self, days: int = 30) -> Dict[str, Any]:
-        """Load aggregated accuracy stats for the reputation endpoint."""
+        """Load aggregated gradient accuracy stats for the reputation endpoint.
+
+        Uses gradient scoring (0.0-1.0) instead of binary hit/miss.
+        Accuracy = AVG(gradient_score) × 100.
+        Neutral signals (gradient_score IS NULL) tracked separately.
+        """
         acc_table = "performance_accuracy"
         snap_table = "performance_snapshots"
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-        result = {
-            "total": 0, "hits": 0,
+        # Filter: only rows where gradient_score IS NOT NULL (directional signals)
+        directional_filter = "AND a.gradient_score IS NOT NULL"
+
+        result: Dict[str, Any] = {
+            "total": 0, "avg_gradient": 0.0, "neutral_skipped": 0,
             "by_timeframe": {},
             "by_asset": {},
         }
@@ -566,92 +583,128 @@ class Storage:
             try:
                 with _pg_conn() as conn:
                     with conn.cursor() as cur:
-                        # Overall stats
+                        # Count neutrals skipped
                         cur.execute(
-                            f"SELECT COUNT(*), SUM(CASE WHEN a.direction_correct THEN 1 ELSE 0 END) "
+                            f"SELECT COUNT(*) FROM {acc_table} a "
+                            f"JOIN {snap_table} s ON a.snapshot_id = s.id "
+                            f"WHERE s.timestamp >= %s AND a.gradient_score IS NULL",
+                            (since,),
+                        )
+                        row = cur.fetchone()
+                        result["neutral_skipped"] = row[0] if row else 0
+
+                        # Overall gradient accuracy (directional only)
+                        cur.execute(
+                            f"SELECT COUNT(*), AVG(a.gradient_score), "
+                            f"AVG(ABS(a.pct_change)) "
                             f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                            f"WHERE s.timestamp >= %s",
+                            f"WHERE s.timestamp >= %s {directional_filter}",
                             (since,),
                         )
                         row = cur.fetchone()
                         if row and row[0]:
                             result["total"] = row[0]
-                            result["hits"] = int(row[1] or 0)
+                            result["avg_gradient"] = round(float(row[1] or 0), 3)
+                            result["avg_abs_pct_change"] = round(float(row[2] or 0), 2)
 
                         # By timeframe
                         cur.execute(
-                            f"SELECT a.window_hours, COUNT(*), "
-                            f"SUM(CASE WHEN a.direction_correct THEN 1 ELSE 0 END) "
+                            f"SELECT a.window_hours, COUNT(*), AVG(a.gradient_score), "
+                            f"AVG(ABS(a.pct_change)) "
                             f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                            f"WHERE s.timestamp >= %s GROUP BY a.window_hours",
+                            f"WHERE s.timestamp >= %s {directional_filter} "
+                            f"GROUP BY a.window_hours",
                             (since,),
                         )
                         for row in cur.fetchall():
                             wh = row[0]
                             label = "7d" if wh == 168 else f"{wh}h"
                             total = row[1]
-                            hits = int(row[2] or 0)
+                            avg_grad = round(float(row[2] or 0), 3)
+                            avg_pct = round(float(row[3] or 0), 2)
                             result["by_timeframe"][label] = {
-                                "accuracy": round(hits / total * 100, 1) if total > 0 else 0,
-                                "hits": hits, "total": total,
+                                "accuracy": round(avg_grad * 100, 1),
+                                "avg_gradient": avg_grad,
+                                "avg_abs_pct_change": avg_pct,
+                                "total": total,
                             }
 
                         # By asset
                         cur.execute(
-                            f"SELECT s.asset, COUNT(*), "
-                            f"SUM(CASE WHEN a.direction_correct THEN 1 ELSE 0 END) "
+                            f"SELECT s.asset, COUNT(*), AVG(a.gradient_score), "
+                            f"AVG(ABS(a.pct_change)) "
                             f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                            f"WHERE s.timestamp >= %s GROUP BY s.asset",
+                            f"WHERE s.timestamp >= %s {directional_filter} "
+                            f"GROUP BY s.asset",
                             (since,),
                         )
                         for row in cur.fetchall():
                             asset = row[0]
-                            total = row[1]
-                            hits = int(row[2] or 0)
-                            result["by_asset"][asset] = round(hits / total * 100, 1) if total > 0 else 0
+                            avg_grad = round(float(row[2] or 0), 3)
+                            result["by_asset"][asset] = round(avg_grad * 100, 1)
 
             except Exception:
                 pass
         else:
             try:
                 with sqlite3.connect(self.db_path) as conn:
+                    # Count neutrals skipped
                     row = conn.execute(
-                        f"SELECT COUNT(*), SUM(direction_correct) "
+                        f"SELECT COUNT(*) FROM {acc_table} a "
+                        f"JOIN {snap_table} s ON a.snapshot_id = s.id "
+                        f"WHERE s.timestamp >= ? AND a.gradient_score IS NULL",
+                        (since,),
+                    ).fetchone()
+                    result["neutral_skipped"] = row[0] if row else 0
+
+                    # Overall gradient accuracy
+                    row = conn.execute(
+                        f"SELECT COUNT(*), AVG(a.gradient_score), "
+                        f"AVG(ABS(a.pct_change)) "
                         f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                        f"WHERE s.timestamp >= ?",
+                        f"WHERE s.timestamp >= ? {directional_filter}",
                         (since,),
                     ).fetchone()
                     if row and row[0]:
                         result["total"] = row[0]
-                        result["hits"] = int(row[1] or 0)
+                        result["avg_gradient"] = round(float(row[1] or 0), 3)
+                        result["avg_abs_pct_change"] = round(float(row[2] or 0), 2)
 
+                    # By timeframe
                     rows = conn.execute(
-                        f"SELECT a.window_hours, COUNT(*), SUM(a.direction_correct) "
+                        f"SELECT a.window_hours, COUNT(*), AVG(a.gradient_score), "
+                        f"AVG(ABS(a.pct_change)) "
                         f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                        f"WHERE s.timestamp >= ? GROUP BY a.window_hours",
+                        f"WHERE s.timestamp >= ? {directional_filter} "
+                        f"GROUP BY a.window_hours",
                         (since,),
                     ).fetchall()
                     for row in rows:
                         wh = row[0]
                         label = "7d" if wh == 168 else f"{wh}h"
                         total = row[1]
-                        hits = int(row[2] or 0)
+                        avg_grad = round(float(row[2] or 0), 3)
+                        avg_pct = round(float(row[3] or 0), 2)
                         result["by_timeframe"][label] = {
-                            "accuracy": round(hits / total * 100, 1) if total > 0 else 0,
-                            "hits": hits, "total": total,
+                            "accuracy": round(avg_grad * 100, 1),
+                            "avg_gradient": avg_grad,
+                            "avg_abs_pct_change": avg_pct,
+                            "total": total,
                         }
 
+                    # By asset
                     rows = conn.execute(
-                        f"SELECT s.asset, COUNT(*), SUM(a.direction_correct) "
+                        f"SELECT s.asset, COUNT(*), AVG(a.gradient_score), "
+                        f"AVG(ABS(a.pct_change)) "
                         f"FROM {acc_table} a JOIN {snap_table} s ON a.snapshot_id = s.id "
-                        f"WHERE s.timestamp >= ? GROUP BY s.asset",
+                        f"WHERE s.timestamp >= ? {directional_filter} "
+                        f"GROUP BY s.asset",
                         (since,),
                     ).fetchall()
                     for row in rows:
                         asset = row[0]
-                        total = row[1]
-                        hits = int(row[2] or 0)
-                        result["by_asset"][asset] = round(hits / total * 100, 1) if total > 0 else 0
+                        avg_grad = round(float(row[2] or 0), 3)
+                        result["by_asset"][asset] = round(avg_grad * 100, 1)
             except Exception:
                 pass
 
@@ -684,6 +737,64 @@ class Storage:
                 return row[0] if row else 0
             except Exception:
                 return 0
+
+    def reset_accuracy_data(self) -> Dict[str, int]:
+        """Drop and recreate accuracy table, reset snapshot evaluated flags.
+
+        Used when methodology/schema changes make old accuracy data invalid.
+        Drops the old table entirely (handles column changes like
+        direction_correct → gradient_score) and lets save_performance_accuracy
+        recreate it with the new schema on next evaluation.
+        """
+        acc_table = "performance_accuracy"
+        snap_table = "performance_snapshots"
+        deleted = 0
+        reset = 0
+
+        if self.backend == "postgres":
+            try:
+                with _pg_conn() as conn:
+                    with conn.cursor() as cur:
+                        try:
+                            cur.execute(f"SELECT COUNT(*) FROM {acc_table}")
+                            row = cur.fetchone()
+                            deleted = row[0] if row else 0
+                        except Exception:
+                            deleted = 0
+                            conn.rollback()
+
+                        cur.execute(f"DROP TABLE IF EXISTS {acc_table}")
+                        cur.execute(
+                            f"UPDATE {snap_table} SET "
+                            f"evaluated_24h = FALSE, evaluated_48h = FALSE, evaluated_7d = FALSE"
+                        )
+                        cur.execute(f"SELECT COUNT(*) FROM {snap_table}")
+                        row = cur.fetchone()
+                        reset = row[0] if row else 0
+                    conn.commit()
+            except Exception:
+                pass
+        else:
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    try:
+                        row = conn.execute(f"SELECT COUNT(*) FROM {acc_table}").fetchone()
+                        deleted = row[0] if row else 0
+                    except Exception:
+                        deleted = 0
+
+                    conn.execute(f"DROP TABLE IF EXISTS {acc_table}")
+                    conn.execute(
+                        f"UPDATE {snap_table} SET "
+                        f"evaluated_24h = 0, evaluated_48h = 0, evaluated_7d = 0"
+                    )
+                    row = conn.execute(f"SELECT COUNT(*) FROM {snap_table}").fetchone()
+                    reset = row[0] if row else 0
+                    conn.commit()
+            except Exception:
+                pass
+
+        return {"accuracy_rows_deleted": deleted, "snapshots_reset": reset}
 
     # ------------------------------------------------------------------ #
     #  API usage tracking

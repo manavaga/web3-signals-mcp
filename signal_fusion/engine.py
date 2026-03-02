@@ -48,14 +48,12 @@ class SignalFusion:
 
         signals: Dict[str, Dict[str, Any]] = {}
         all_roles = ["whale", "technical", "derivatives", "narrative", "market"]
-        non_whale_roles = ["technical", "derivatives", "narrative", "market"]
 
         # Dynamic reweighting config (from YAML)
         reweight_cfg = self.profile.get("reweighting", {})
         reweight_enabled = reweight_cfg.get("enabled", False)
-        tier_multipliers = reweight_cfg.get("tier_multipliers", {"full": 1.0, "sparse": 0.5, "none": 0.0})
-        no_data_kws = [kw.lower() for kw in reweight_cfg.get("no_data_keywords", ["no data", "no whale activity", "no scorer"])]
-        full_data_kws = [kw.lower() for kw in reweight_cfg.get("full_data_keywords", ["accumulate", "sell"])]
+        tier_multipliers = reweight_cfg.get("tier_multipliers", {"full": 1.0, "partial": 0.5, "none": 0.0})
+        agent_reweight_rules = reweight_cfg.get("agents", {})
 
         for asset in self.assets:
             # --- Phase 1: Score ALL dimensions first ---
@@ -65,44 +63,47 @@ class SignalFusion:
                 rules = scoring_cfg.get(role, {})
                 raw_scores[role] = self._score_dimension(role, asset, agent_data, rules)
 
-            # --- Phase 2: Determine whale data tier ---
-            whale_score, whale_detail = raw_scores["whale"]
-            whale_detail_lower = whale_detail.lower()
+            # --- Phase 2: Determine data tier for EVERY agent ---
+            data_tiers: Dict[str, str] = {}
+            for role in all_roles:
+                if not reweight_enabled:
+                    data_tiers[role] = "full"
+                else:
+                    score_val, detail_str = raw_scores[role]
+                    data_tiers[role] = self._detect_data_tier(
+                        role, score_val, detail_str,
+                        agent_reweight_rules.get(role, {}),
+                    )
 
-            if not reweight_enabled:
-                whale_data_tier = "full"  # reweighting disabled = always use full weight
-            elif (
-                any(kw in whale_detail_lower for kw in no_data_kws)
-                or whale_detail_lower.startswith("error:")
-            ):
-                whale_data_tier = "none"
-            elif any(kw in whale_detail_lower for kw in full_data_kws):
-                whale_data_tier = "full"
-            else:
-                whale_data_tier = "sparse"
+            # Keep whale_data_tier for backward compatibility in output
+            whale_data_tier = data_tiers.get("whale", "full")
 
             # --- Phase 3: Calculate adjusted weights ---
             base_weights: Dict[str, float] = {}
             for role in all_roles:
                 base_weights[role] = float(weights.get(role, 0.0))
 
-            tier_mult = float(tier_multipliers.get(whale_data_tier, 1.0))
-            if tier_mult >= 1.0:
-                adjusted_weights = dict(base_weights)
-            else:
-                original_whale_w = base_weights["whale"]
-                effective_whale_w = original_whale_w * tier_mult
+            # Apply tier multipliers to ALL agents, then redistribute freed weight
+            adjusted_weights: Dict[str, float] = {}
+            total_freed = 0.0
+            full_data_roles: List[str] = []
 
-                freed_weight = original_whale_w - effective_whale_w
-                non_whale_sum = sum(base_weights[r] for r in non_whale_roles)
+            for role in all_roles:
+                tier = data_tiers[role]
+                mult = float(tier_multipliers.get(tier, 1.0))
+                effective_w = base_weights[role] * mult
+                adjusted_weights[role] = effective_w
+                freed = base_weights[role] - effective_w
+                total_freed += freed
+                if mult >= 1.0:
+                    full_data_roles.append(role)
 
-                adjusted_weights = {}
-                adjusted_weights["whale"] = effective_whale_w
-                for role in non_whale_roles:
-                    if non_whale_sum > 0:
-                        adjusted_weights[role] = base_weights[role] + freed_weight * (base_weights[role] / non_whale_sum)
-                    else:
-                        adjusted_weights[role] = base_weights[role]
+            # Redistribute freed weight proportionally to agents with full data
+            if total_freed > 0 and full_data_roles:
+                full_data_sum = sum(base_weights[r] for r in full_data_roles)
+                if full_data_sum > 0:
+                    for role in full_data_roles:
+                        adjusted_weights[role] += total_freed * (base_weights[role] / full_data_sum)
 
             # --- Phase 4: Build dimensions dict and compute composite ---
             dimensions: Dict[str, Dict[str, Any]] = {}
@@ -118,10 +119,40 @@ class SignalFusion:
                     "label": label_name,
                     "detail": detail,
                     "weight": round(adj_w, 3),
+                    "data_tier": data_tiers[role],
                 }
                 composite += score * adj_w
 
             composite = round(composite, 1)
+
+            # --- Phase 5: Conviction multiplier ---
+            # When 3+ dimensions agree on direction, amplify composite away from 50.
+            # This breaks the "everything is neutral" clustering problem.
+            conviction_cfg = self.profile.get("conviction", {})
+            if conviction_cfg.get("enabled", True):
+                min_agreeing = int(conviction_cfg.get("min_agreeing_dimensions", 3))
+                boost_factor = float(conviction_cfg.get("boost_factor", 1.25))
+                center = 50.0
+
+                bullish_count = sum(1 for r in all_roles if raw_scores[r][0] > 55)
+                bearish_count = sum(1 for r in all_roles if raw_scores[r][0] < 45)
+
+                if bullish_count >= min_agreeing and composite > center:
+                    # Amplify distance from center
+                    distance = composite - center
+                    composite = round(center + distance * boost_factor, 1)
+                elif bearish_count >= min_agreeing and composite < center:
+                    distance = center - composite
+                    composite = round(center - distance * boost_factor, 1)
+
+                # Clamp to 0-100
+                composite = round(max(0.0, min(100.0, composite)), 1)
+                conviction_applied = bullish_count >= min_agreeing or bearish_count >= min_agreeing
+            else:
+                bullish_count = 0
+                bearish_count = 0
+                conviction_applied = False
+
             label_name, direction = self._classify(composite, label_cfg)
 
             # Momentum vs previous run
@@ -146,7 +177,8 @@ class SignalFusion:
                 "dimensions": dimensions,
                 "momentum": momentum,
                 "prev_score": round(prev_score, 1) if prev_score is not None else None,
-                "whale_data_tier": whale_data_tier,
+                "data_tiers": data_tiers,
+                "conviction_boost": conviction_applied,
             }
 
             # Store current score for next momentum comparison
@@ -517,6 +549,11 @@ class SignalFusion:
             details.append(f"{sources_with_data} sources")
 
         max_score = float(rules.get("max_score", 100))
+
+        # If zero mentions across all sources, return "low buzz" with score 0.
+        # The reweighting system will detect this (none_if_score_below: 1.0)
+        # and set narrative weight to 0%, preventing it from dragging the
+        # composite down for assets that simply aren't being discussed.
         return min(max_score, max(0.0, score)), "; ".join(details) if details else "low buzz"
 
     # ================================================================ #
@@ -588,6 +625,58 @@ class SignalFusion:
                 details.append(f"F&G {fg:.0f} extreme greed")
 
         return min(100.0, max(0.0, score)), "; ".join(details) if details else "no market data"
+
+    # ================================================================ #
+    #  Data-tier detection (universal reweighting)
+    # ================================================================ #
+
+    def _detect_data_tier(
+        self, role: str, score: float, detail: str, rules: Dict[str, Any],
+    ) -> str:
+        """Determine data quality tier for an agent's score on a given asset.
+
+        Returns "full", "partial", or "none".
+        Rules are loaded from YAML: reweighting.agents.<role>
+        """
+        detail_lower = detail.lower()
+
+        # Universal: errors always → none
+        if detail_lower.startswith("error:"):
+            return "none"
+
+        # Check no-data keywords (YAML-configurable per agent)
+        no_data_kws = [kw.lower() for kw in rules.get("no_data_keywords", ["no data", "no scorer"])]
+        if any(kw in detail_lower for kw in no_data_kws):
+            return "none"
+
+        # Score-based none detection (e.g., narrative score=0 means no data)
+        none_below = rules.get("none_if_score_below")
+        if none_below is not None and score <= float(none_below):
+            return "none"
+
+        # Check full-data keywords (YAML-configurable per agent)
+        full_data_kws = [kw.lower() for kw in rules.get("full_data_keywords", [])]
+        if full_data_kws:
+            if any(kw in detail_lower for kw in full_data_kws):
+                return "full"
+            # Has data but not the strong keywords → partial
+            return "partial"
+
+        # Score-based partial detection
+        partial_below = rules.get("partial_if_score_below")
+        if partial_below is not None and score < float(partial_below):
+            return "partial"
+
+        # Partial-keywords: if detail ONLY contains these, it's partial
+        partial_kws = [kw.lower() for kw in rules.get("partial_keywords", [])]
+        if partial_kws and all(
+            any(pk in part.lower() for pk in partial_kws)
+            for part in detail.split("; ")
+            if part.strip()
+        ) and detail.strip():
+            return "partial"
+
+        return "full"
 
     # ================================================================ #
     #  Classification
@@ -686,6 +775,8 @@ class SignalFusion:
 
     def _llm_call(self, messages: List[Dict[str, str]], cfg: Dict[str, Any]) -> str:
         """Call Anthropic Messages API."""
+        from urllib.error import HTTPError
+
         url = "https://api.anthropic.com/v1/messages"
         system_prompt = cfg.get("system_prompt", "").strip()
         payload = {
@@ -695,7 +786,9 @@ class SignalFusion:
         }
         if system_prompt:
             payload["system"] = system_prompt
-        data = json.dumps(payload).encode()
+
+        # Ensure payload is JSON-safe (replace None, NaN, etc.)
+        data = json.dumps(payload, default=str).encode()
         req = Request(url, data=data, headers={
             "Content-Type": "application/json",
             "x-api-key": self.anthropic_key,
@@ -706,6 +799,15 @@ class SignalFusion:
                 result = json.loads(resp.read().decode())
             content = result.get("content", [])
             return content[0].get("text", "") if content else ""
+        except HTTPError as exc:
+            # Capture the response body for better diagnostics
+            body = ""
+            try:
+                body = exc.read().decode()[:500]
+            except Exception:
+                pass
+            print(f"LLM call failed ({exc.code}): {body}")
+            return f"[LLM unavailable: HTTP {exc.code} — {body[:200]}]"
         except Exception as exc:
             # Log but don't crash — LLM insights are optional
             return f"[LLM unavailable: {exc}]"

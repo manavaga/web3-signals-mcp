@@ -239,40 +239,84 @@ scoring:
       extreme_greed_score: 5
 
 # ---------------------------------------------------------------------------
-# Dynamic reweighting — adjust whale weight based on data availability
+# Dynamic reweighting — adjust ALL agent weights based on data availability
 # ---------------------------------------------------------------------------
-# When whale data is missing for an asset, the 30% whale weight gets
-# redistributed proportionally to the other 4 dimensions.
-# This prevents fake 50.0 neutral scores from dragging composite scores.
+# When any agent has missing/weak data for an asset, its weight is reduced
+# and redistributed proportionally to agents with full data.
+# This prevents fake-neutral scores (50.0) or zero scores (0.0)
+# from dragging the composite toward the center or toward bearish.
 #
-# Tiers:
-#   full   — real whale moves (accumulate/sell detected) → full whale weight
-#   sparse — only transfers or exchange flow, no directional moves → half weight
-#   none   — no whale data at all → zero weight, fully redistributed
+# Tiers per agent:
+#   full    — real, usable data → full weight
+#   partial — some data but incomplete → half weight
+#   none    — no useful data → zero weight, fully redistributed
+#
+# Detection is driven by the detail string and score from _score_dimension().
+# Rules are YAML-configurable per agent below.
 # ---------------------------------------------------------------------------
 reweighting:
   enabled: true
 
-  # Multiplier applied to whale weight for each tier
+  # Multiplier applied to each agent's weight based on its data tier
   tier_multipliers:
     full: 1.0          # full weight (e.g. 0.30 × 1.0 = 0.30)
-    sparse: 0.5        # half weight (e.g. 0.30 × 0.5 = 0.15)
-    none: 0.0          # zero weight (redistributed to other dimensions)
+    partial: 0.5       # half weight (e.g. 0.30 × 0.5 = 0.15)
+    none: 0.0          # zero weight (redistributed to agents with data)
 
-  # Keywords in whale detail string that indicate "no data" → tier "none"
-  no_data_keywords:
-    - "no data"
-    - "no whale activity"
-    - "no scorer"
+  # Per-agent tier detection rules
+  agents:
+    # WHALE: existing 3-tier system (accumulate/sell = full, transfers = partial, none = none)
+    whale:
+      no_data_keywords:
+        - "no data"
+        - "no whale activity"
+        - "no scorer"
+      full_data_keywords:
+        - "accumulate"
+        - "sell"
+      # Everything else (e.g. "exchange outflow", "transfer") → partial
 
-  # Keywords that indicate real directional data → tier "full"
-  # If any of these appear in whale detail, it's tier "full"
-  full_data_keywords:
-    - "accumulate"
-    - "sell"
+    # TECHNICAL: full when all indicators present, none when no data
+    technical:
+      no_data_keywords:
+        - "no data"
+      # No full_data_keywords → defaults to "full" when data exists
 
-  # Everything else → tier "sparse"
-  # (e.g. only "exchange outflow", "transfer", etc.)
+    # DERIVATIVES: none when no data, partial when only 1 of 3 metrics
+    derivatives:
+      no_data_keywords:
+        - "no data"
+        - "no deriv data"
+      # When data exists, defaults to "full"
+
+    # NARRATIVE: score-based detection — zero mentions = no data
+    narrative:
+      no_data_keywords:
+        - "no data"
+        - "low buzz"
+      none_if_score_below: 1.0      # score 0 = genuinely no data
+      partial_if_score_below: 15    # very weak narrative signal
+
+    # MARKET: partial when only global F&G (not per-asset data)
+    market:
+      no_data_keywords:
+        - "no market data"
+      partial_keywords:
+        - "F&G"                     # only global F&G, no per-asset data
+
+# ---------------------------------------------------------------------------
+# Conviction multiplier — amplify composite when dimensions agree
+# ---------------------------------------------------------------------------
+# When N+ dimensions independently agree on a direction, boost the composite
+# score away from 50. This breaks the "everything is neutral" clustering
+# problem and generates more actionable signals.
+#
+# Example: composite=56, 3 dimensions bullish → 56 + (56-50)*0.25 = 57.5
+# Example: composite=42, 3 dimensions bearish → 42 - (50-42)*0.25 = 40.0
+conviction:
+  enabled: true
+  min_agreeing_dimensions: 3    # need >= N dimensions scoring same direction
+  boost_factor: 1.25            # multiply distance from 50 by this factor
 
 # ---------------------------------------------------------------------------
 # Momentum detection — compare current vs previous fusion run
@@ -314,6 +358,45 @@ portfolio:
     fear: 45
     neutral: 55
     greed: 75
+
+# ---------------------------------------------------------------------------
+# Accuracy evaluation — gradient scoring
+# ---------------------------------------------------------------------------
+# Instead of binary hit/miss, every directional signal is scored 0.0-1.0
+# based on direction AND magnitude of the price move.
+#
+# Example (bullish signal):
+#   +8% move → 1.0 (strong correct call)
+#   +3% move → 0.7 (good directional call)
+#   +0.5% move → 0.4 (right direction but within noise)
+#   -0.5% move → 0.2 (wrong but within noise)
+#   -4% move → 0.0 (wrong call)
+#
+# Accuracy = average gradient score × 100
+# A system that nails big moves: 80-90%
+# A system that's directionally right on small moves: 50-60%
+# A random system: ~30%
+# ---------------------------------------------------------------------------
+accuracy:
+  # Noise zone: moves within ±noise_pct are inconclusive
+  # Not fully right, not fully wrong
+  noise_threshold_pct: 2.0
+
+  # Strong move: moves beyond ±strong_pct are fully correct/wrong
+  strong_threshold_pct: 5.0
+
+  # Gradient scores for each zone (bullish signal example):
+  #   pct_change > strong_pct     → strong_correct (1.0)
+  #   noise_pct < pct < strong    → correct (0.7)
+  #   0 < pct < noise_pct         → weak_correct (0.4)
+  #   -noise_pct < pct < 0        → weak_wrong (0.2)
+  #   pct < -noise_pct            → wrong (0.0)
+  gradient:
+    strong_correct: 1.0     # strong move in predicted direction
+    correct: 0.7            # moderate move in predicted direction
+    weak_correct: 0.4       # right direction but within noise
+    weak_wrong: 0.2         # wrong direction but within noise
+    wrong: 0.0              # clear wrong call
 
 # ---------------------------------------------------------------------------
 # LLM insights (Claude Haiku)
