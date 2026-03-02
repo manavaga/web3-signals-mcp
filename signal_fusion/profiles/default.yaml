@@ -275,6 +275,20 @@ reweighting:
   # (e.g. only "exchange outflow", "transfer", etc.)
 
 # ---------------------------------------------------------------------------
+# Conviction multiplier — amplify composite when dimensions agree
+# ---------------------------------------------------------------------------
+# When N+ dimensions independently agree on a direction, boost the composite
+# score away from 50. This breaks the "everything is neutral" clustering
+# problem and generates more actionable signals.
+#
+# Example: composite=56, 3 dimensions bullish → 56 + (56-50)*0.25 = 57.5
+# Example: composite=42, 3 dimensions bearish → 42 - (50-42)*0.25 = 40.0
+conviction:
+  enabled: true
+  min_agreeing_dimensions: 3    # need >= N dimensions scoring same direction
+  boost_factor: 1.25            # multiply distance from 50 by this factor
+
+# ---------------------------------------------------------------------------
 # Momentum detection — compare current vs previous fusion run
 # ---------------------------------------------------------------------------
 momentum:

@@ -122,6 +122,35 @@ class SignalFusion:
                 composite += score * adj_w
 
             composite = round(composite, 1)
+
+            # --- Phase 5: Conviction multiplier ---
+            # When 3+ dimensions agree on direction, amplify composite away from 50.
+            # This breaks the "everything is neutral" clustering problem.
+            conviction_cfg = self.profile.get("conviction", {})
+            if conviction_cfg.get("enabled", True):
+                min_agreeing = int(conviction_cfg.get("min_agreeing_dimensions", 3))
+                boost_factor = float(conviction_cfg.get("boost_factor", 1.25))
+                center = 50.0
+
+                bullish_count = sum(1 for r in all_roles if raw_scores[r][0] > 55)
+                bearish_count = sum(1 for r in all_roles if raw_scores[r][0] < 45)
+
+                if bullish_count >= min_agreeing and composite > center:
+                    # Amplify distance from center
+                    distance = composite - center
+                    composite = round(center + distance * boost_factor, 1)
+                elif bearish_count >= min_agreeing and composite < center:
+                    distance = center - composite
+                    composite = round(center - distance * boost_factor, 1)
+
+                # Clamp to 0-100
+                composite = round(max(0.0, min(100.0, composite)), 1)
+                conviction_applied = bullish_count >= min_agreeing or bearish_count >= min_agreeing
+            else:
+                bullish_count = 0
+                bearish_count = 0
+                conviction_applied = False
+
             label_name, direction = self._classify(composite, label_cfg)
 
             # Momentum vs previous run
@@ -147,6 +176,7 @@ class SignalFusion:
                 "momentum": momentum,
                 "prev_score": round(prev_score, 1) if prev_score is not None else None,
                 "whale_data_tier": whale_data_tier,
+                "conviction_boost": conviction_applied,
             }
 
             # Store current score for next momentum comparison
@@ -686,6 +716,8 @@ class SignalFusion:
 
     def _llm_call(self, messages: List[Dict[str, str]], cfg: Dict[str, Any]) -> str:
         """Call Anthropic Messages API."""
+        from urllib.error import HTTPError
+
         url = "https://api.anthropic.com/v1/messages"
         system_prompt = cfg.get("system_prompt", "").strip()
         payload = {
@@ -695,7 +727,9 @@ class SignalFusion:
         }
         if system_prompt:
             payload["system"] = system_prompt
-        data = json.dumps(payload).encode()
+
+        # Ensure payload is JSON-safe (replace None, NaN, etc.)
+        data = json.dumps(payload, default=str).encode()
         req = Request(url, data=data, headers={
             "Content-Type": "application/json",
             "x-api-key": self.anthropic_key,
@@ -706,6 +740,15 @@ class SignalFusion:
                 result = json.loads(resp.read().decode())
             content = result.get("content", [])
             return content[0].get("text", "") if content else ""
+        except HTTPError as exc:
+            # Capture the response body for better diagnostics
+            body = ""
+            try:
+                body = exc.read().decode()[:500]
+            except Exception:
+                pass
+            print(f"LLM call failed ({exc.code}): {body}")
+            return f"[LLM unavailable: HTTP {exc.code} — {body[:200]}]"
         except Exception as exc:
             # Log but don't crash — LLM insights are optional
             return f"[LLM unavailable: {exc}]"

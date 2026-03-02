@@ -4,11 +4,14 @@ Web3 Signals API — FastAPI server.
 Endpoints:
     GET /                           Welcome + links
     GET /health                     Agent status, last run, uptime
-    GET /signal                     Full fusion (portfolio + 20 signals + LLM insights)
-    GET /signal/{asset}             Single asset signal
-    GET /performance/reputation     Public reputation score (30-day rolling accuracy)
+    GET /signal                     Full fusion (portfolio + 20 signals + LLM insights)  [x402 paid]
+    GET /signal/{asset}             Single asset signal  [x402 paid]
+    GET /performance/reputation     Public reputation score (30-day rolling accuracy)  [x402 paid]
     GET /performance/{asset}        Per-asset accuracy breakdown
     GET /analytics                  API usage analytics (user-agents, requests/day)
+    GET /api/signal                 Internal free signal endpoint (dashboard)
+    GET /api/performance/reputation Internal free reputation endpoint (dashboard)
+    POST /admin/reset-accuracy      Reset tainted accuracy data (admin token required)
     GET /.well-known/agent.json     A2A agent discovery card
     GET /.well-known/agents.md      AGENTS.md (Agentic AI Foundation standard)
     GET /mcp/sse                    MCP SSE transport for remote AI agents
@@ -337,10 +340,10 @@ def _record_performance_snapshot(store: Storage) -> None:
         if price is None or score is None:
             continue
 
-        # Derive direction from score threshold
-        if score > 60:
+        # Derive direction from score threshold (matches YAML label bands)
+        if score >= 55:
             direction = "bullish"
-        elif score < 40:
+        elif score < 45:
             direction = "bearish"
         else:
             direction = "neutral"
@@ -416,15 +419,24 @@ def _evaluate_old_snapshots(store: Storage) -> None:
             price_at_signal = snap["price_at_signal"]
             direction = snap["signal_direction"]
 
-            # Calculate accuracy
+            # Skip neutral signals — only evaluate directional calls.
+            # A system saying "I don't know" shouldn't be penalized.
+            if direction == "neutral":
+                store.save_performance_accuracy(
+                    snapshot_id=snap["id"],
+                    window_hours=window_hours,
+                    price_at_window=price_now,
+                    direction_correct=None,  # NULL = skipped (neutral)
+                )
+                continue
+
+            # Calculate accuracy for directional signals only
             pct_change = (price_now - price_at_signal) / price_at_signal * 100
 
             if direction == "bullish":
                 hit = pct_change > 0
-            elif direction == "bearish":
+            else:  # bearish
                 hit = pct_change < 0
-            else:  # neutral
-                hit = abs(pct_change) <= 2.0
 
             store.save_performance_accuracy(
                 snapshot_id=snap["id"],
@@ -749,19 +761,22 @@ async def get_reputation():
         "status": "active",
         "reputation_score": reputation_score,
         "accuracy_30d": accuracy,
-        "signals_evaluated": stats["total"],
-        "signals_correct": stats["hits"],
-        "signals_wrong": stats["total"] - stats["hits"],
+        "directional_signals_evaluated": stats["total"],
+        "directional_signals_correct": stats["hits"],
+        "directional_signals_wrong": stats["total"] - stats["hits"],
+        "neutral_signals_skipped": stats.get("neutral_skipped", 0),
         "by_timeframe": stats["by_timeframe"],
         "by_asset": stats["by_asset"],
         "snapshots_collected_30d": total_snapshots,
         "methodology": {
-            "direction_extraction": "score >60 = bullish, <40 = bearish, 40-60 = neutral",
-            "neutral_threshold": "price move ≤2% = correct for neutral signals",
-            "scoring": "binary (hit/miss)",
+            "direction_extraction": "score >=55 = bullish, <45 = bearish, 45-55 = neutral",
+            "neutral_handling": "neutral signals are NOT evaluated — only directional calls count",
+            "bullish_hit": "price moved up (any amount)",
+            "bearish_hit": "price moved down (any amount)",
+            "scoring": "binary (hit/miss) on directional calls only",
             "window": "30-day rolling",
             "timeframes": ["24h", "48h", "7d"],
-            "price_source": "CoinGecko",
+            "price_source": "market agent (CoinGecko + Binance)",
         },
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
@@ -838,6 +853,38 @@ async def get_analytics(days: int = Query(7, ge=1, le=90, description="Number of
         "requests_per_day": stats["requests_per_day"],
         "top_user_agents": stats["top_user_agents"],
         "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/reset-accuracy — Clear tainted accuracy data (admin only)
+# ---------------------------------------------------------------------------
+_ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+@app.post("/admin/reset-accuracy", tags=["admin"], include_in_schema=False)
+async def reset_accuracy(request: Request):
+    """
+    Delete all accuracy evaluations and reset snapshot evaluated flags.
+    Protected by ADMIN_TOKEN env var. Use when accuracy methodology changes.
+    Usage: curl -X POST /admin/reset-accuracy -H "Authorization: Bearer <token>"
+    """
+    if not _ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="ADMIN_TOKEN not configured")
+
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer ") or auth[7:] != _ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+    if not _store:
+        raise HTTPException(status_code=503, detail="Storage not initialized")
+
+    result = _store.reset_accuracy_data()
+    return {
+        "status": "accuracy data reset",
+        "accuracy_rows_deleted": result["accuracy_rows_deleted"],
+        "snapshots_reset": result["snapshots_reset"],
+        "message": "All old evaluations cleared. Snapshots will be re-evaluated with new methodology.",
     }
 
 
