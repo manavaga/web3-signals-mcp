@@ -105,10 +105,10 @@ direction_gating:
       bearish_gate: false     # 62% — keep
     derivatives:
       bullish_gate: false     # 48% — keep
-      bearish_gate: false     # 37% — borderline, keep for now
+      bearish_gate: true      # 24% bearish accuracy (n=8) — actively harmful, gate it
     narrative:
       bullish_gate: false     # 54% — keep
-      bearish_gate: false     # 46% — keep
+      bearish_gate: true      # 43% bearish accuracy (n=212), bearish 93% of time — dragging composite down
     market:
       bullish_gate: false     # 40% — borderline
       bearish_gate: false     # 53% — keep
@@ -354,15 +354,17 @@ scoring:
   # -----------------------------------------------------------------------
   # Rebalanced: dampened contrarian F&G, bearish price still scores
   market:
-    # Price change contribution (5-35 points)
+    # Price change contribution (10-25 points) — rebalanced to reduce bullish bias
+    # Old spread: 35-5=30pts. New spread: 25-10=15pts.
+    # Bearish market scenario: 10+10+25+10=55 (was 50 — no longer stuck at neutral)
     price_change:
       strong_positive_above: 5.0
-      strong_positive_score: 35      # was 40
+      strong_positive_score: 25      # was 35 — less bullish inflation
       positive_above: 0.0
-      positive_score: 25             # was 30
+      positive_score: 20             # was 25
       mild_negative_above: -5.0
-      mild_negative_score: 15        # was 20
-      strong_negative_score: 5       # was 10
+      mild_negative_score: 15        # unchanged
+      strong_negative_score: 10      # was 5 — bearish price not penalised as hard
 
     # Volume spike contribution (10-30 points)
     volume:
@@ -490,7 +492,7 @@ conviction:
 # of a weak directional signal. Prevents false conviction.
 abstain:
   enabled: true
-  min_distance_from_center: 8    # |composite - 50| must be >= 8 to signal
+  min_distance_from_center: 12   # was 8 — raised to filter low/medium conviction signals (37.1% and 46.7%)
   abstain_label: "INSUFFICIENT EDGE"
 
 # ---------------------------------------------------------------------------
