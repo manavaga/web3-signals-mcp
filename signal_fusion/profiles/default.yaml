@@ -188,10 +188,10 @@ labels:
     min_score: 70
     direction: "buy"
   - name: "MODERATE BUY"
-    min_score: 58             # was 55 — wider neutral band
+    min_score: 58             # aligned with abstain zone edge (50+8=58)
     direction: "buy"
   - name: "NEUTRAL"
-    min_score: 42             # was 45 — wider neutral band
+    min_score: 42             # aligned with abstain zone edge (50-8=42)
     direction: "neutral"
   - name: "MODERATE SELL"
     min_score: 30
@@ -274,33 +274,38 @@ scoring:
   # -----------------------------------------------------------------------
   # Key insight: overcrowded longs + high funding = crash incoming (not buy!)
   # Contrarian shorts + negative funding = squeeze setup = buy
+  #
+  # RECENTERED (Phase 5): Default/neutral state now scores ~50 instead of 65.
+  # Old neutral: sweet_spot(25) + low_funding(25) + stable_OI(15) = 65 (15pts above center!)
+  # New neutral: sweet_spot(18) + low_funding(17) + stable_OI(15) = 50 (centered)
+  # This fixes the structural bullish floor that compressed scores toward 55-65.
   derivatives:
     # Long/short ratio contribution (3-35 points)
     long_short:
       sweet_spot_min: 0.55
       sweet_spot_max: 0.65
-      sweet_spot_score: 25       # neutral, not exciting
+      sweet_spot_score: 18       # was 25 — recentered: neutral should be ~center
       overcrowded_above: 0.65    # lowered caution threshold
       overcrowded_score: 8       # overcrowded longs = danger
       very_overcrowded_above: 0.75  # extreme overcrowding
       very_overcrowded_score: 3     # very bearish signal
       contrarian_below: 0.45
       contrarian_score: 35       # heavy shorts = squeeze potential
-      default_score: 25
+      default_score: 18          # was 25 — recentered
 
     # Funding rate contribution (5-35 points)
     funding:
       low_threshold: 0.0002
-      low_score: 25
+      low_score: 17              # was 25 — recentered: low funding is neutral, not bullish
       moderate_threshold: 0.0005
-      moderate_score: 18
+      moderate_score: 12         # was 18 — slight compression
       high_score: 5              # overleveraged = bearish
-      negative_score: 35         # squeeze potential
+      negative_score: 35         # squeeze potential (unchanged — this is the real signal)
 
     # Open interest change contribution (0-30 points)
     open_interest:
       rising_score: 25           # OI increasing = conviction
-      falling_score: 15          # deleveraging = less risk (raised)
+      falling_score: 10          # was 15 — deleveraging slightly more bearish
       stable_score: 15
       change_threshold_pct: 5
 
@@ -318,15 +323,20 @@ scoring:
   # -----------------------------------------------------------------------
   narrative:
     # Base score: start above zero so penalties have room to reduce
-    narrative_base_score: 25
+    # RECENTERED (Phase 5): was 25 → 15. Old base created a structural floor
+    # where narrative could never go below ~40 in practice. With base=15,
+    # a quiet asset with no sentiment: 15+20+10+0+0+0+0+0 = 45 (below center).
+    # A hyped asset with bullish sentiment: 15+2+0+25+15-10+3+5 = 55 (mild bullish).
+    # This allows narrative to differentiate assets on BOTH sides of 50.
+    narrative_base_score: 15         # was 25 — recentered
 
     # Component 1: Volume — INVERTED for contrarian
-    volume_multiplier: 30
+    volume_multiplier: 20            # was 30 — reduced to prevent quiet assets auto-scoring high
     volume_invert: true              # high buzz = low score (1-normalised)
 
     # Quiet bonus: low mentions = opportunity (contrarian)
     quiet_threshold: 0.15            # below 15% of rolling peak = "quiet"
-    quiet_bonus: 15                  # bonus for quiet assets
+    quiet_bonus: 10                  # was 15 — reduced to prevent quiet auto-bullish
 
     # Component 2: LLM sentiment (0-25) — from 12h batch analysis
     llm_max_points: 25
@@ -354,17 +364,19 @@ scoring:
   # -----------------------------------------------------------------------
   # Rebalanced: dampened contrarian F&G, bearish price still scores
   market:
-    # Price change contribution (10-25 points) — rebalanced to reduce bullish bias
-    # Old spread: 35-5=30pts. New spread: 25-10=15pts.
-    # Bearish market scenario: 10+10+25+10=55 (was 50 — no longer stuck at neutral)
+    # Price change contribution (10-30 points) — CONTRARIAN (Phase 5)
+    # Price DROPS = buying opportunity (high score). Price PUMPS = already priced in (low score).
+    # This aligns with technical/derivatives/narrative contrarian philosophy.
+    # Old scoring was MOMENTUM (price up = high score), contradicting the contrarian system.
+    # New: strong drop → 30pts (buy the blood), strong rally → 10pts (chase risk)
     price_change:
       strong_positive_above: 5.0
-      strong_positive_score: 25      # was 35 — less bullish inflation
+      strong_positive_score: 10      # was 25 — strong rally = already pumped, chase risk
       positive_above: 0.0
-      positive_score: 20             # was 25
+      positive_score: 15             # was 20 — mild positive = neutral-ish
       mild_negative_above: -5.0
-      mild_negative_score: 15        # unchanged
-      strong_negative_score: 10      # was 5 — bearish price not penalised as hard
+      mild_negative_score: 25        # was 15 — mild dip = buying opportunity
+      strong_negative_score: 30      # was 10 — strong drop = contrarian buy signal
 
     # Volume spike contribution (10-30 points)
     volume:
@@ -492,7 +504,11 @@ conviction:
 # of a weak directional signal. Prevents false conviction.
 abstain:
   enabled: true
-  min_distance_from_center: 12   # was 8 — raised to filter low/medium conviction signals (37.1% and 46.7%)
+  min_distance_from_center: 8    # was 12, then 6 — settled on 8 (Phase 5). Score recentering spread
+                                 # scores wider so 8 is sufficient to filter noise. At 12, 82% abstained
+                                 # (useless). At 6, too many low-conviction signals (42.8%, n=185).
+                                 # At 8, we get good coverage while filtering the weakest signals.
+                                 # Labels aligned: MODERATE BUY at 58 (50+8), NEUTRAL at 42 (50-8).
   abstain_label: "INSUFFICIENT EDGE"
 
 # ---------------------------------------------------------------------------
@@ -634,9 +650,14 @@ learning:
 # is more predictive than a static high whale score. Blended with absolute
 # composite: final = absolute * absolute_weight + delta * delta_weight.
 delta_scoring:
-  enabled: true
-  delta_weight: 0.15             # was 0.4 — at 15min intervals, deltas are ~neutral, dragging signals to 50
-  absolute_weight: 0.85          # was 0.6 — trust absolute composite more until interval increases
+  enabled: false                 # DISABLED (Phase 5): At 15-min intervals, dimension scores barely change.
+                                 # Delta composite ≈ 50 (neutral) ~95% of the time.
+                                 # Even at 15% weight, this systematically drags all scores toward 50,
+                                 # compressing the range by ~2-3 points. Combined with recentered scoring,
+                                 # disabling delta gives the absolute composite room to express real signals.
+                                 # Re-enable if orchestrator interval increases to 4h+.
+  delta_weight: 0.15
+  absolute_weight: 0.85
   thresholds:
     whale:       { significant: 15, major: 25 }
     technical:   { significant: 12, major: 20 }
