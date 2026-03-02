@@ -239,40 +239,70 @@ scoring:
       extreme_greed_score: 5
 
 # ---------------------------------------------------------------------------
-# Dynamic reweighting — adjust whale weight based on data availability
+# Dynamic reweighting — adjust ALL agent weights based on data availability
 # ---------------------------------------------------------------------------
-# When whale data is missing for an asset, the 30% whale weight gets
-# redistributed proportionally to the other 4 dimensions.
-# This prevents fake 50.0 neutral scores from dragging composite scores.
+# When any agent has missing/weak data for an asset, its weight is reduced
+# and redistributed proportionally to agents with full data.
+# This prevents fake-neutral scores (50.0) or zero scores (0.0)
+# from dragging the composite toward the center or toward bearish.
 #
-# Tiers:
-#   full   — real whale moves (accumulate/sell detected) → full whale weight
-#   sparse — only transfers or exchange flow, no directional moves → half weight
-#   none   — no whale data at all → zero weight, fully redistributed
+# Tiers per agent:
+#   full    — real, usable data → full weight
+#   partial — some data but incomplete → half weight
+#   none    — no useful data → zero weight, fully redistributed
+#
+# Detection is driven by the detail string and score from _score_dimension().
+# Rules are YAML-configurable per agent below.
 # ---------------------------------------------------------------------------
 reweighting:
   enabled: true
 
-  # Multiplier applied to whale weight for each tier
+  # Multiplier applied to each agent's weight based on its data tier
   tier_multipliers:
     full: 1.0          # full weight (e.g. 0.30 × 1.0 = 0.30)
-    sparse: 0.5        # half weight (e.g. 0.30 × 0.5 = 0.15)
-    none: 0.0          # zero weight (redistributed to other dimensions)
+    partial: 0.5       # half weight (e.g. 0.30 × 0.5 = 0.15)
+    none: 0.0          # zero weight (redistributed to agents with data)
 
-  # Keywords in whale detail string that indicate "no data" → tier "none"
-  no_data_keywords:
-    - "no data"
-    - "no whale activity"
-    - "no scorer"
+  # Per-agent tier detection rules
+  agents:
+    # WHALE: existing 3-tier system (accumulate/sell = full, transfers = partial, none = none)
+    whale:
+      no_data_keywords:
+        - "no data"
+        - "no whale activity"
+        - "no scorer"
+      full_data_keywords:
+        - "accumulate"
+        - "sell"
+      # Everything else (e.g. "exchange outflow", "transfer") → partial
 
-  # Keywords that indicate real directional data → tier "full"
-  # If any of these appear in whale detail, it's tier "full"
-  full_data_keywords:
-    - "accumulate"
-    - "sell"
+    # TECHNICAL: full when all indicators present, none when no data
+    technical:
+      no_data_keywords:
+        - "no data"
+      # No full_data_keywords → defaults to "full" when data exists
 
-  # Everything else → tier "sparse"
-  # (e.g. only "exchange outflow", "transfer", etc.)
+    # DERIVATIVES: none when no data, partial when only 1 of 3 metrics
+    derivatives:
+      no_data_keywords:
+        - "no data"
+        - "no deriv data"
+      # When data exists, defaults to "full"
+
+    # NARRATIVE: score-based detection — zero mentions = no data
+    narrative:
+      no_data_keywords:
+        - "no data"
+        - "low buzz"
+      none_if_score_below: 1.0      # score 0 = genuinely no data
+      partial_if_score_below: 15    # very weak narrative signal
+
+    # MARKET: partial when only global F&G (not per-asset data)
+    market:
+      no_data_keywords:
+        - "no market data"
+      partial_keywords:
+        - "F&G"                     # only global F&G, no per-asset data
 
 # ---------------------------------------------------------------------------
 # Conviction multiplier — amplify composite when dimensions agree
