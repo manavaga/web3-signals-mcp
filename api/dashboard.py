@@ -1253,7 +1253,7 @@ function renderPerformance() {
       ` : ''}
       <div class="perf-methodology" style="margin-top:20px">
         <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
-        After 24h/48h/7d, we check if price moved in the predicted direction. Neutral signals are correct if price moved &le;2%.
+        After 24h/48h, we check if price moved in the predicted direction. Neutral signals are correct if price moved &le;2%.
         Price source: CoinGecko. Scoring: binary hit/miss. Window: 30-day rolling.
       </div>
     `;
@@ -1271,7 +1271,7 @@ function renderPerformance() {
   const snaps = perfData.snapshots_collected_30d || 0;
 
   // Timeframe cards
-  const tfOrder = ['24h', '48h', '7d'];
+  const tfOrder = ['24h', '48h'];
   const tfCards = tfOrder.map(tf => {
     const d = byTf[tf];
     if (!d) return `
@@ -1365,7 +1365,7 @@ function renderPerformance() {
 
     <div class="perf-methodology" style="margin-top:20px">
       <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
-      After 24h/48h/7d, we compare predicted direction vs actual price movement. Neutral signals are correct if price moved &le;2%.
+      After 24h/48h, we compare predicted direction vs actual price movement. Neutral signals are correct if price moved &le;2%.
       <strong>Price source:</strong> CoinGecko. <strong>Scoring:</strong> Binary hit/miss. <strong>Window:</strong> 30-day rolling.
     </div>
   `;

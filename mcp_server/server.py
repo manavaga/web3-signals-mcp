@@ -192,7 +192,7 @@ def get_performance() -> str:
     """
     Get signal reputation and accuracy tracking — rolling 30-day performance.
 
-    Shows overall accuracy percentage across 24h/48h/7d timeframes,
+    Shows overall accuracy percentage across 24h/48h timeframes,
     per-asset accuracy breakdown, and reputation score.
     Needs at least 24 hours of data to produce meaningful results.
     """
@@ -224,7 +224,7 @@ def get_performance() -> str:
             "neutral_threshold": "price move <=2% = correct for neutral signals",
             "scoring": "binary (hit/miss)",
             "window": "30-day rolling",
-            "timeframes": ["24h", "48h", "7d"],
+            "timeframes": ["24h", "48h"],
             "price_source": "CoinGecko",
         },
         "last_updated": datetime.now(timezone.utc).isoformat(),

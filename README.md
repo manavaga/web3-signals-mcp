@@ -30,7 +30,7 @@ AI agents and trading systems need structured, multi-dimensional crypto intellig
 ## Target Horizon
 
 - **Signal refresh**: Every 15 minutes
-- **Accuracy evaluation**: 24h, 48h, 7d windows
+- **Accuracy evaluation**: 24h, 48h windows
 - **Best for**: Swing trades (hours to days), portfolio risk monitoring, market regime detection
 - **Not designed for**: Sub-minute scalping or HFT
 
@@ -63,7 +63,7 @@ Then ask your AI: *"What are the current crypto signals?"* or *"Get me the BTC s
 | `get_all_signals` | Full portfolio: 20 scored signals + portfolio summary + LLM insights |
 | `get_asset_signal` | Single asset signal with market context |
 | `get_health` | Agent status, last run times, error counts |
-| `get_performance` | Rolling 30-day accuracy across 24h/48h/7d timeframes |
+| `get_performance` | Rolling 30-day accuracy across 24h/48h timeframes |
 | `get_asset_performance` | Per-asset accuracy breakdown |
 
 ---
@@ -206,7 +206,7 @@ curl https://web3-signals-api-production.up.railway.app/performance/reputation
     "neutral_threshold": "price move <=2% = correct for neutral signals",
     "scoring": "binary (hit/miss)",
     "window": "30-day rolling",
-    "timeframes": ["24h", "48h", "7d"],
+    "timeframes": ["24h", "48h"],
     "price_source": "CoinGecko"
   }
 }
@@ -229,7 +229,7 @@ curl https://web3-signals-api-production.up.railway.app/performance/reputation
 The system tracks its own signal accuracy — no self-reported claims:
 
 - **Snapshots** captured every 12 hours (1 per asset, max 40/day)
-- **Evaluation** at 24h, 48h, and 7d windows against actual price movement
+- **Evaluation** at 24h and 48h windows against actual price movement
 - **Direction match**: Did the predicted direction (bullish/bearish/neutral) match the actual price move?
 - **Neutral threshold**: Price move <=2% counts as correct for neutral signals
 - **Price source**: CoinGecko (independent, no API key needed)
