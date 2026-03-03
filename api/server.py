@@ -1192,9 +1192,9 @@ async def x402_discovery_compat():
     return {
         "version": 1,
         "resources": [
-            {"url": f"{base_url}/signal", "method": "GET"},
-            {"url": f"{base_url}/signal/{{asset}}", "method": "GET"},
-            {"url": f"{base_url}/performance/reputation", "method": "GET"},
+            f"{base_url}/signal",
+            f"{base_url}/signal/{{asset}}",
+            f"{base_url}/performance/reputation",
         ],
     }
 
