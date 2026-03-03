@@ -1192,9 +1192,9 @@ async def x402_discovery_compat():
     return {
         "version": 1,
         "resources": [
-            f"{base_url}/signal",
-            f"{base_url}/signal/{{asset}}",
-            f"{base_url}/performance/reputation",
+            {"url": f"{base_url}/signal", "method": "GET"},
+            {"url": f"{base_url}/signal/{{asset}}", "method": "GET"},
+            {"url": f"{base_url}/performance/reputation", "method": "GET"},
         ],
     }
 
@@ -1309,6 +1309,37 @@ except ImportError as e:
     print(f"MCP SSE mount skipped — {e}")
 except Exception as e:
     print(f"MCP SSE mount error — {e}")
+
+
+# ---------------------------------------------------------------------------
+# Custom OpenAPI schema — inject x-agentcash-auth for x402scan discovery
+# ---------------------------------------------------------------------------
+_PAID_ROUTES = {"/signal", "/signal/{asset}", "/performance/reputation"}
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        description=app.description, routes=app.routes,
+    )
+    for path, methods in schema.get("paths", {}).items():
+        if path in _PAID_ROUTES:
+            for method_data in methods.values():
+                if isinstance(method_data, dict):
+                    method_data.setdefault("x-agentcash-auth", {
+                        "mode": "x402",
+                        "price": "$0.001",
+                        "network": "eip155:8453",
+                        "token": "USDC",
+                    })
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 # ---------------------------------------------------------------------------
