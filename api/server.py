@@ -638,7 +638,8 @@ async def root():
         "discovery": {
             "/.well-known/agent.json": "A2A agent discovery card (Google A2A protocol)",
             "/.well-known/agents.md": "AGENTS.md — Agentic AI Foundation discovery",
-            "/.well-known/x402.json": "x402 payment protocol discovery",
+            "/.well-known/x402": "x402scan-compatible discovery (agentcash format)",
+            "/.well-known/x402.json": "x402 payment protocol discovery (detailed)",
             "/openapi.json": "OpenAPI 3.0 specification",
             "/docs": "Swagger UI — interactive API documentation",
             "/robots.txt": "Crawler guidance",
@@ -733,7 +734,18 @@ async def get_signal_internal():
 # ---------------------------------------------------------------------------
 # GET /signal — Full fusion output
 # ---------------------------------------------------------------------------
-@app.get("/signal", tags=["signals"])
+@app.get("/signal", tags=["signals"],
+         openapi_extra={
+             "x-payment-info": {
+                 "protocols": ["x402"],
+                 "price": "$0.001",
+                 "network": "eip155:8453",
+                 "token": "USDC",
+             },
+             "responses": {
+                 "402": {"description": "Payment Required — x402 micropayment needed"},
+             },
+         })
 async def get_signal():
     global _cached_result, _cache_timestamp
 
@@ -769,7 +781,18 @@ async def get_signal():
 # ---------------------------------------------------------------------------
 # GET /signal/{asset} — Single asset
 # ---------------------------------------------------------------------------
-@app.get("/signal/{asset}", tags=["signals"])
+@app.get("/signal/{asset}", tags=["signals"],
+         openapi_extra={
+             "x-payment-info": {
+                 "protocols": ["x402"],
+                 "price": "$0.001",
+                 "network": "eip155:8453",
+                 "token": "USDC",
+             },
+             "responses": {
+                 "402": {"description": "Payment Required — x402 micropayment needed"},
+             },
+         })
 async def get_asset_signal(asset: str):
     asset = asset.upper()
 
@@ -811,7 +834,18 @@ async def get_reputation_internal():
 # ---------------------------------------------------------------------------
 # GET /performance/reputation — Public reputation score (agent-facing)
 # ---------------------------------------------------------------------------
-@app.get("/performance/reputation", tags=["performance"])
+@app.get("/performance/reputation", tags=["performance"],
+         openapi_extra={
+             "x-payment-info": {
+                 "protocols": ["x402"],
+                 "price": "$0.001",
+                 "network": "eip155:8453",
+                 "token": "USDC",
+             },
+             "responses": {
+                 "402": {"description": "Payment Required — x402 micropayment needed"},
+             },
+         })
 async def get_reputation():
     """
     Public reputation endpoint. AI agents use this to verify signal quality
@@ -1142,6 +1176,26 @@ async def x402_discovery():
             "openapi": f"{base_url}/openapi.json",
             "mcp": f"{base_url}/mcp/sse",
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# /.well-known/x402 — x402scan-compatible discovery (no .json extension)
+# ---------------------------------------------------------------------------
+@app.get("/.well-known/x402", tags=["discovery"], include_in_schema=False)
+async def x402_discovery_compat():
+    """x402scan-compatible discovery endpoint (no .json extension).
+    Returns the minimal format expected by npx @agentcash/discovery."""
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    if not _X402_ENABLED:
+        return {"version": 1, "resources": []}
+    return {
+        "version": 1,
+        "resources": [
+            f"{base_url}/signal",
+            f"{base_url}/signal/{{asset}}",
+            f"{base_url}/performance/reputation",
+        ],
     }
 
 
