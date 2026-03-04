@@ -844,12 +844,10 @@ class Storage:
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_ep ON {table} (endpoint)"
                     )
                     # Migrate: add columns if they don't exist
+                    # Use IF NOT EXISTS to avoid aborting the PG transaction
                     for col in ["payment_status TEXT", "request_source TEXT DEFAULT 'unknown'",
                                 "referer TEXT DEFAULT ''", "origin TEXT DEFAULT ''"]:
-                        try:
-                            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
-                        except Exception:
-                            logger.debug("Column migration skipped (already exists): %s", col.split()[0])
+                        cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col}")
                     cur.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_source ON {table} (request_source)"
                     )
