@@ -77,8 +77,9 @@ class WeightOptimizer:
         min_slices = int(self.cfg.get("min_ic_slices", 10))
         total_slices = ic_data.get("total_slices", 0)
         if total_slices < min_slices:
-            logger.info(f"WeightOptimizer: only {total_slices} IC slices, need {min_slices}")
-            return None
+            logger.info(f"WeightOptimizer: only {total_slices} IC slices (need {min_slices}), "
+                        f"falling back to accuracy-based")
+            return self._compute_from_accuracy()
 
         # Compute IC-based weights with promote/demote
         new_weights, reasons = self._compute_ic_weights(ic_data)

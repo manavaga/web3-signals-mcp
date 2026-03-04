@@ -164,7 +164,8 @@ class Storage:
                         )
                         row = cur.fetchone()
                 return json.loads(row[0]) if row else None
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_latest(%s) failed: %s", agent_name, exc)
                 return None
         else:
             if not self._sqlite_table_exists(table):
@@ -316,7 +317,8 @@ class Storage:
                         )
                         row = cur.fetchone()
                 return float(row[0]) if row else None
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_kv(%s, %s) pg failed: %s", namespace, key, exc)
                 return None
         else:
             try:
@@ -327,7 +329,8 @@ class Storage:
                         (key,),
                     ).fetchone()
                 return float(row[0]) if row else None
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_kv(%s, %s) sqlite failed: %s", namespace, key, exc)
                 return None
 
     # ------------------------------------------------------------------ #
@@ -387,7 +390,8 @@ class Storage:
                         )
                         row = cur.fetchone()
                 return json.loads(row[0]) if row else None
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_kv_json(%s, %s) pg failed: %s", namespace, key, exc)
                 return None
         else:
             try:
@@ -398,7 +402,8 @@ class Storage:
                         (key,),
                     ).fetchone()
                 return json.loads(row[0]) if row else None
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_kv_json(%s, %s) sqlite failed: %s", namespace, key, exc)
                 return None
 
     # ------------------------------------------------------------------ #
@@ -489,6 +494,8 @@ class Storage:
           0.0-1.0 — directional signal scored (1.0 = perfect, 0.0 = wrong)
           None — neutral signal, skipped (not counted in accuracy)
         """
+        if gradient_score is not None:
+            gradient_score = max(0.0, min(1.0, float(gradient_score)))
         table = "performance_accuracy"
         now = datetime.now(timezone.utc).isoformat()
 
@@ -577,7 +584,8 @@ class Storage:
                      "price_at_signal": r[5]}
                     for r in rows
                 ]
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_unevaluated_snapshots pg failed: %s", exc)
                 return []
         else:
             try:
@@ -596,7 +604,8 @@ class Storage:
                      "price_at_signal": r[5]}
                     for r in rows
                 ]
-            except Exception:
+            except Exception as exc:
+                logger.warning("load_unevaluated_snapshots sqlite failed: %s", exc)
                 return []
 
     def load_accuracy_stats(self, days: int = 30) -> Dict[str, Any]:
@@ -945,16 +954,26 @@ class Storage:
                 continue
             returns = [obs["pct_change"] for obs in observations]
             for dim in all_dimensions:
-                scores = [obs["dimensions"].get(dim, 50.0) for obs in observations]
-                dim_pairs[dim].append((scores, returns))
-            # Composite IC
+                # Only include assets that have real data for this dimension
+                # (skip missing dimensions instead of injecting synthetic 50.0)
+                dim_obs = [(obs["dimensions"][dim], obs["pct_change"])
+                           for obs in observations if dim in obs["dimensions"]]
+                if len(dim_obs) >= 3:
+                    dim_scores = [d[0] for d in dim_obs]
+                    dim_returns = [d[1] for d in dim_obs]
+                    dim_pairs[dim].append((dim_scores, dim_returns))
+            # Composite IC (always available)
             composites = [obs["composite"] for obs in observations]
             dim_pairs["composite"].append((composites, returns))
             # Per-regime tracking
             regime = observations[0]["regime"] if observations else ""
             for dim in all_dimensions:
-                scores = [obs["dimensions"].get(dim, 50.0) for obs in observations]
-                regime_dim_pairs[regime][dim].append((scores, returns))
+                dim_obs = [(obs["dimensions"][dim], obs["pct_change"])
+                           for obs in observations if dim in obs["dimensions"]]
+                if len(dim_obs) >= 3:
+                    dim_scores = [d[0] for d in dim_obs]
+                    dim_returns = [d[1] for d in dim_obs]
+                    regime_dim_pairs[regime][dim].append((dim_scores, dim_returns))
             regime_dim_pairs[regime]["composite"].append((composites, returns))
 
         def _spearman_ic(pairs: list) -> Optional[float]:
@@ -992,6 +1011,8 @@ class Storage:
                         ic_val = _pearson(sr, rr)
                         if ic_val is not None:
                             slice_ics.append(ic_val)
+                # Report actual slices used for ICIR (not total)
+                result_dims[dim]["slices_used"] = len(slice_ics)
                 if len(slice_ics) >= 2:
                     mean_ic = sum(slice_ics) / len(slice_ics)
                     std_ic = (sum((x - mean_ic) ** 2 for x in slice_ics) / len(slice_ics)) ** 0.5

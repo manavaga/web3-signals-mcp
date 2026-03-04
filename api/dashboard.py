@@ -618,7 +618,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="loading"><div class="spinner"></div><span style="color:var(--text-dim)">Loading signals...</span></div>
   </div>
 </div>
-<div id="debugBar" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;color:#06b6d4;padding:8px 16px;font-size:12px;font-family:monospace;z-index:9999;border-top:1px solid #333;">Starting...</div>
 
 <!-- Detail Modal -->
 <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
@@ -644,28 +643,20 @@ async function fetchAll() {
     content.innerHTML = '<div class="loading"><div class="spinner"></div><span style="color:var(--text-dim)">Agents are computing signals... this can take up to 60s on first load.</span></div>';
   }, 5000);
 
-  const dbg = document.getElementById('debugBar');
-  function dbgLog(msg) { if(dbg) dbg.textContent = msg; console.log('[dashboard]', msg); }
-
   try {
     // Fetch health first (always fast), then signal (may be slow on first load)
-    dbgLog('Fetching /health...');
     const healthRes = await fetch(API_BASE + '/health');
     healthData = await healthRes.json();
-    dbgLog('Health OK. Fetching /api/signal...');
     renderAgents();
 
     const sigRes = await fetch(API_BASE + '/api/signal');
     clearTimeout(loadTimer);
-    dbgLog('Signal response: ' + sigRes.status);
 
     if (!sigRes.ok) {
       throw new Error(`Signal API returned ${sigRes.status}`);
     }
 
     signalData = await sigRes.json();
-    const sigCount = Object.keys(signalData?.data?.signals || {}).length;
-    dbgLog('Loaded ' + sigCount + ' signals. Rendering...');
 
     document.getElementById('statusDot').className = 'status-dot';
     document.getElementById('lastUpdate').textContent =
@@ -696,7 +687,6 @@ async function fetchAll() {
     }
   } catch (e) {
     clearTimeout(loadTimer);
-    dbgLog('ERROR: ' + (e.message || e));
     document.getElementById('statusDot').className = 'status-dot offline';
     document.getElementById('lastUpdate').textContent = 'Connection error';
     content.innerHTML = `<div class="loading">
