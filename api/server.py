@@ -712,7 +712,10 @@ def _classify_request_source(request: Request) -> str:
 
     # Layer 4: Development tool user-agents (only when NO payment header)
     ua = (request.headers.get("user-agent", "") or "").lower()
-    has_payment = bool(request.headers.get("payment-signature", ""))
+    has_payment = bool(
+        request.headers.get("payment-signature", "")
+        or request.headers.get("x-payment", "")
+    )
 
     if not has_payment:
         if "postman" in ua or "curl" in ua:
@@ -754,7 +757,10 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
 
         # Detect x402 payment context
         is_paid_route = self._is_paid_path(path)
-        has_payment_header = bool(request.headers.get("payment-signature", ""))
+        has_payment_header = bool(
+            request.headers.get("payment-signature", "")
+            or request.headers.get("x-payment", "")
+        )
         status = response.status_code
 
         # Classify the x402 payment state
@@ -796,12 +802,13 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app.add_middleware(UsageTrackingMiddleware)
-
-# x402 middleware — runs BEFORE usage tracking (LIFO order)
+# x402 middleware — added first so it runs INNER (handles payments)
 if _X402_ENABLED:
     app.add_middleware(PaymentMiddlewareASGI, routes=_x402_routes, server=_x402_server)
     logger.info("x402 payment gate enabled (facilitator=%s)", _X402_FACILITATOR_URL)
+
+# Usage tracking — added last so it runs OUTERMOST and sees ALL responses (incl. 402s)
+app.add_middleware(UsageTrackingMiddleware)
 
 
 # ---------------------------------------------------------------------------
