@@ -806,6 +806,7 @@ function renderSignals() {
     else if (sortField === 'derivatives') { va = a.dimensions?.derivatives?.score || 0; vb = b.dimensions?.derivatives?.score || 0; }
     else if (sortField === 'narrative') { va = a.dimensions?.narrative?.score || 0; vb = b.dimensions?.narrative?.score || 0; }
     else if (sortField === 'market') { va = a.dimensions?.market?.score || 0; vb = b.dimensions?.market?.score || 0; }
+    else if (sortField === 'trend') { va = a.dimensions?.trend?.score || 0; vb = b.dimensions?.trend?.score || 0; }
     else { va = a.composite_score || 0; vb = b.composite_score || 0; }
     return sortDir * (va - vb);
   });
@@ -834,6 +835,7 @@ function renderGrid(list) {
             ${renderDimBar('derivatives', dims.derivatives)}
             ${renderDimBar('narrative', dims.narrative)}
             ${renderDimBar('market', dims.market)}
+            ${renderDimBar('trend', dims.trend)}
           </div>
         </div>`;
     }).join('')
@@ -866,6 +868,7 @@ function renderTable(list) {
         <th class="${sortCls('derivatives')}" onclick="setSort('derivatives')">Derivatives${sortIcon('derivatives')}</th>
         <th class="${sortCls('narrative')}" onclick="setSort('narrative')">Narrative${sortIcon('narrative')}</th>
         <th class="${sortCls('market')}" onclick="setSort('market')">Market${sortIcon('market')}</th>
+        <th class="${sortCls('trend')}" onclick="setSort('trend')">Trend${sortIcon('trend')}</th>
         <th>Momentum</th>
       </tr></thead>
       <tbody>
@@ -882,6 +885,7 @@ function renderTable(list) {
             <td style="color:${dimColor(dims.derivatives?.score)}">${dims.derivatives?.score ?? '—'}</td>
             <td style="color:${dimColor(dims.narrative?.score)}">${dims.narrative?.score ?? '—'}</td>
             <td style="color:${dimColor(dims.market?.score)}">${dims.market?.score ?? '—'}</td>
+            <td style="color:${dimColor(dims.trend?.score)}">${dims.trend?.score ?? '—'}</td>
             <td>${s.momentum || 'new'}</td>
           </tr>`;
         }).join('')}
@@ -1345,7 +1349,7 @@ function openModal(asset) {
   const dir = s.direction || 'neutral';
   const color = dir === 'buy' ? 'var(--green)' : dir === 'sell' ? 'var(--red)' : 'var(--yellow)';
   const dims = s.dimensions || {};
-  const dimOrder = ['whale', 'technical', 'derivatives', 'narrative', 'market'];
+  const dimOrder = ['whale', 'technical', 'derivatives', 'narrative', 'market', 'trend'];
 
   const insightHTML = s.llm_insight
     ? `<div class="modal-insight">${formatMarkdown(s.llm_insight)}</div>`
