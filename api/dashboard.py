@@ -1648,10 +1648,14 @@ function renderPerformance() {
 // ===== ANALYTICS VIEW =====
 function renderAttribution(d) {
   const refSources = d.attribution?.external_by_referer_source || {};
-  const entries = Object.entries(refSources).sort((a,b) => b[1] - a[1]);
-  if (!entries.length) return '';
-  const maxVal = Math.max(...entries.map(e => e[1]), 1);
-  const total = entries.reduce((s, e) => s + e[1], 0) || 1;
+  const entries = Object.entries(refSources).filter(([k]) => k !== 'direct').sort((a,b) => b[1] - a[1]);
+  const directCount = refSources.direct || 0;
+  if (!entries.length && !directCount) return `
+    <div class="perf-section-title">Traffic Attribution (External)</div>
+    <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">No referrer data yet. Attribution data populates as external traffic arrives with referrer headers from directories, search engines, and social platforms.</div></div>
+  `;
+  const maxVal = Math.max(...(entries.length ? entries.map(e => e[1]) : [1]), directCount || 1);
+  const total = entries.reduce((s, e) => s + e[1], 0) + directCount || 1;
   const bars = entries.map(([src, count]) => {
     const pct = ((count / maxVal) * 100).toFixed(0);
     const share = ((count / total) * 100).toFixed(0);
@@ -1662,15 +1666,27 @@ function renderAttribution(d) {
       <span class="attr-pct">${share}%</span>
     </div>`;
   }).join('');
+  const directBar = directCount > 0 ? `<div class="attr-row">
+    <span class="attr-label" style="color:var(--text-dim)">Direct / No Ref</span>
+    <div class="attr-bar-bg"><div class="attr-bar" style="width:${((directCount / maxVal) * 100).toFixed(0)}%;opacity:0.4"></div></div>
+    <span class="attr-count" style="color:var(--text-dim)">${directCount}</span>
+    <span class="attr-pct" style="color:var(--text-dim)">${((directCount / total) * 100).toFixed(0)}%</span>
+  </div>` : '';
   return `
     <div class="perf-section-title">Traffic Attribution (External)</div>
-    <div class="attr-section">${bars}</div>
+    <div class="attr-section">${bars}${directBar}</div>
   `;
 }
 
 function renderFunnel(d) {
   const f = d.funnel;
-  if (!f || (!f.challenges_402 && !f.payment_succeeded)) return '';
+  if (!f) return '';
+  if (!f.challenges_402 && !f.payment_succeeded && !f.payment_failed) {
+    return `
+      <div class="perf-section-title">x402 Payment Funnel</div>
+      <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">No x402 payment activity in this period. Funnel tracks: 402 challenge &rarr; payment attempt &rarr; paid.</div></div>
+    `;
+  }
   const c402 = f.challenges_402 || 0;
   const paid = f.payment_succeeded || 0;
   const failed = f.payment_failed || 0;
@@ -1706,7 +1722,10 @@ function renderFunnel(d) {
 
 function renderErrorSummary() {
   const ed = window._errorData;
-  if (!ed) return '';
+  if (!ed) return `
+    <div class="perf-section-title">Error Tracking (7d)</div>
+    <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">Loading error data...</div></div>
+  `;
   const api = ed.api_errors || {};
   const pay = ed.payment_errors || {};
   const recent = ed.recent_errors || [];
@@ -1714,7 +1733,6 @@ function renderErrorSummary() {
   const total4xx = api.total_4xx || 0;
   const payFail = pay.total_failures || 0;
   const errRate = api.error_rate_pct || 0;
-  if (total5xx === 0 && total4xx === 0 && payFail === 0 && recent.length === 0) return '';
 
   const badgeClass = (t) => {
     if (t === 'api_5xx') return 'e5xx';
@@ -1884,6 +1902,10 @@ function renderAnalytics() {
   content.innerHTML = `
     ${summaryCards}
 
+    ${renderAttribution(d)}
+    ${renderFunnel(d)}
+    ${renderErrorSummary()}
+
     <div class="perf-section-title">Client Type Breakdown</div>
     <div class="ua-breakdown">${typeCards}</div>
 
@@ -1913,10 +1935,6 @@ function renderAnalytics() {
         <tbody>${uaRows}</tbody>
       </table>
     ` : ''}
-
-    ${renderAttribution(d)}
-    ${renderFunnel(d)}
-    ${renderErrorSummary()}
 
     <div class="perf-methodology">
       <strong>Discovery Protocols Active:</strong><br>
