@@ -2120,8 +2120,27 @@ try:
 
     # --- Streamable HTTP transport (modern, Smithery-compatible) ---
     # Separate path to avoid conflicting with SSE at /mcp/sse + /mcp/messages.
-    # Smithery/modern clients use: https://...railway.app/mcp/stream
+    # Smithery/modern clients POST to: https://...railway.app/mcp/stream
     try:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        # Allow our production domain (default only allows localhost)
+        _prod_host = "web3-signals-api-production.up.railway.app"
+        mcp_server_instance.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[
+                "127.0.0.1:*", "localhost:*", "[::1]:*",
+                f"{_prod_host}:*", _prod_host,
+                "*.run.tools", "*.run.tools:*",   # Smithery gateway
+            ],
+            allowed_origins=[
+                "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
+                f"https://{_prod_host}", f"https://{_prod_host}:*",
+                "https://*.run.tools", "https://*.run.tools:*",
+            ],
+        )
+        # Set internal path to / so mounted path /mcp/stream IS the endpoint
+        mcp_server_instance.settings.streamable_http_path = "/"
         _streamable_app = mcp_server_instance.streamable_http_app()
         app.mount("/mcp/stream", _streamable_app)
         logger.info("MCP Streamable HTTP transport mounted at /mcp/stream")
