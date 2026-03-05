@@ -1460,6 +1460,8 @@ async def get_analytics(days: int = Query(7, ge=1, le=90, description="Number of
         "external_unique_clients": stats.get("external_unique_ips", 0),
         "external_requests_per_day": stats.get("external_requests_per_day", {}),
         "external_by_client_type": stats.get("external_by_client_type", {}),
+        "external_top_user_agents": stats.get("external_top_user_agents", []),
+        "external_by_endpoint": stats.get("external_by_endpoint", {}),
         "x402_payments": {
             "total_paid_calls": x402_stats["total_paid_calls"],
             "estimated_revenue_usdc": x402_stats["estimated_revenue_usdc"],

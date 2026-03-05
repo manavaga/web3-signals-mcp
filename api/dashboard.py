@@ -1647,34 +1647,95 @@ function renderPerformance() {
 
 // ===== ANALYTICS VIEW =====
 function renderAttribution(d) {
+  const extTypes = d.external_by_client_type || {};
+  const extUAs = d.external_top_user_agents || [];
+  const extEndpoints = d.external_by_endpoint || {};
+  const extTotal = Object.values(extTypes).reduce((s, v) => s + v, 0);
   const refSources = d.attribution?.external_by_referer_source || {};
-  const entries = Object.entries(refSources).filter(([k]) => k !== 'direct').sort((a,b) => b[1] - a[1]);
-  const directCount = refSources.direct || 0;
-  if (!entries.length && !directCount) return `
-    <div class="perf-section-title">Traffic Attribution (External)</div>
-    <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">No referrer data yet. Attribution data populates as external traffic arrives with referrer headers from directories, search engines, and social platforms.</div></div>
+  const aiTypes = ['claude', 'openai', 'gemini', 'langchain', 'crewai', 'mcp_client', 'autogpt'];
+
+  if (!extTotal) return `
+    <div class="perf-section-title">External Traffic Sources</div>
+    <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">No external traffic recorded yet.</div></div>
   `;
-  const maxVal = Math.max(...(entries.length ? entries.map(e => e[1]) : [1]), directCount || 1);
-  const total = entries.reduce((s, e) => s + e[1], 0) + directCount || 1;
-  const bars = entries.map(([src, count]) => {
-    const pct = ((count / maxVal) * 100).toFixed(0);
-    const share = ((count / total) * 100).toFixed(0);
+
+  // 1. External client type bars
+  const typeEntries = Object.entries(extTypes).sort((a,b) => b[1] - a[1]);
+  const maxType = Math.max(...typeEntries.map(e => e[1]), 1);
+  const typeBars = typeEntries.map(([type, count]) => {
+    const pct = ((count / maxType) * 100).toFixed(0);
+    const share = ((count / extTotal) * 100).toFixed(0);
+    const isAI = aiTypes.includes(type);
+    const barColor = isAI ? 'background:var(--green)' : '';
     return `<div class="attr-row">
-      <span class="attr-label">${src}</span>
-      <div class="attr-bar-bg"><div class="attr-bar" style="width:${pct}%"></div></div>
+      <span class="attr-label" style="${isAI ? 'color:var(--green)' : ''}">${type.replace(/_/g, ' ')}</span>
+      <div class="attr-bar-bg"><div class="attr-bar" style="width:${pct}%;${barColor}"></div></div>
       <span class="attr-count">${count}</span>
       <span class="attr-pct">${share}%</span>
     </div>`;
   }).join('');
-  const directBar = directCount > 0 ? `<div class="attr-row">
-    <span class="attr-label" style="color:var(--text-dim)">Direct / No Ref</span>
-    <div class="attr-bar-bg"><div class="attr-bar" style="width:${((directCount / maxVal) * 100).toFixed(0)}%;opacity:0.4"></div></div>
-    <span class="attr-count" style="color:var(--text-dim)">${directCount}</span>
-    <span class="attr-pct" style="color:var(--text-dim)">${((directCount / total) * 100).toFixed(0)}%</span>
-  </div>` : '';
+
+  // 2. External top user agents table
+  const uaRows = extUAs.slice(0, 10).map(ua => {
+    const isAI = aiTypes.includes(ua.type);
+    return `<tr>
+      <td style="font-size:12px;word-break:break-all;max-width:400px;${isAI ? 'color:var(--green)' : ''}">${ua.user_agent}</td>
+      <td><span class="dir-badge ${isAI ? 'bullish' : 'neutral'}">${ua.type.replace(/_/g, ' ').toUpperCase()}</span></td>
+      <td style="font-weight:700">${ua.requests}</td>
+    </tr>`;
+  }).join('');
+
+  // 3. External endpoints
+  const epEntries = Object.entries(extEndpoints).sort((a,b) => b[1] - a[1]);
+  const maxEp = Math.max(...epEntries.map(e => e[1]), 1);
+  const epRows = epEntries.map(([ep, count]) => {
+    const pct = (count / maxEp) * 100;
+    return `<tr>
+      <td><code>${ep}</code></td>
+      <td style="font-weight:700">${count}</td>
+      <td style="width:40%"><div class="ep-bar-bg"><div class="ep-bar" style="width:${pct}%"></div></div></td>
+    </tr>`;
+  }).join('');
+
+  // 4. Referrer sources (non-direct only)
+  const refEntries = Object.entries(refSources).filter(([k]) => k !== 'direct').sort((a,b) => b[1] - a[1]);
+  const refSection = refEntries.length ? `
+    <div style="margin-top:12px;font-size:13px;">
+      <strong style="color:var(--text-dim)">Referred by:</strong>
+      ${refEntries.map(([src, cnt]) => `<span style="margin-left:12px;color:var(--cyan)">${src}</span> <span style="color:var(--text-dim)">(${cnt})</span>`).join('')}
+    </div>
+  ` : '';
+
   return `
-    <div class="perf-section-title">Traffic Attribution (External)</div>
-    <div class="attr-section">${bars}${directBar}</div>
+    <div class="perf-section-title">External Traffic Sources (${extTotal} requests, ${d.external_unique_clients || '?'} unique clients)</div>
+    <div class="attr-section">
+      ${typeBars}
+      ${refSection}
+    </div>
+
+    ${uaRows ? `
+      <div class="perf-section-title">External User Agents</div>
+      <table class="endpoint-table">
+        <thead><tr>
+          <th>User Agent</th>
+          <th>Type</th>
+          <th>Requests</th>
+        </tr></thead>
+        <tbody>${uaRows}</tbody>
+      </table>
+    ` : ''}
+
+    ${epRows ? `
+      <div class="perf-section-title">What External Users Access</div>
+      <table class="endpoint-table">
+        <thead><tr>
+          <th>Endpoint</th>
+          <th>Requests</th>
+          <th>Volume</th>
+        </tr></thead>
+        <tbody>${epRows}</tbody>
+      </table>
+    ` : ''}
   `;
 }
 

@@ -1419,6 +1419,8 @@ class Storage:
             "external_unique_ips": 0,
             "external_requests_per_day": {},
             "external_by_client_type": {},
+            "external_top_user_agents": [],
+            "external_by_endpoint": {},
             "external_by_referer_source": {},
             "funnel": {
                 "challenges_402": 0,
@@ -1532,6 +1534,19 @@ class Storage:
                             result["external_by_client_type"][ua_type] = (
                                 result["external_by_client_type"].get(ua_type, 0) + row[1]
                             )
+                            result["external_top_user_agents"].append(
+                                {"user_agent": ua, "requests": row[1], "type": ua_type}
+                            )
+
+                        # --- External by endpoint ---
+                        cur.execute(
+                            f"SELECT endpoint, COUNT(*) FROM {table} "
+                            f"WHERE timestamp >= %s AND COALESCE(request_source, 'unknown') = 'external' "
+                            f"GROUP BY endpoint ORDER BY COUNT(*) DESC LIMIT 15",
+                            (since,),
+                        )
+                        for row in cur.fetchall():
+                            result["external_by_endpoint"][row[0]] = row[1]
 
                         # --- Attribution: referer source for external requests ---
                         cur.execute(
@@ -1658,6 +1673,19 @@ class Storage:
                         result["external_by_client_type"][ua_type] = (
                             result["external_by_client_type"].get(ua_type, 0) + row[1]
                         )
+                        result["external_top_user_agents"].append(
+                            {"user_agent": ua, "requests": row[1], "type": ua_type}
+                        )
+
+                    # --- External by endpoint ---
+                    rows = conn.execute(
+                        f"SELECT endpoint, COUNT(*) FROM {table} "
+                        f"WHERE timestamp >= ? AND COALESCE(request_source, 'unknown') = 'external' "
+                        f"GROUP BY endpoint ORDER BY COUNT(*) DESC LIMIT 15",
+                        (since,),
+                    ).fetchall()
+                    for row in rows:
+                        result["external_by_endpoint"][row[0]] = row[1]
 
                     # --- Attribution: referer source for external requests ---
                     rows = conn.execute(
