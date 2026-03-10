@@ -403,11 +403,17 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
 
 def _record_performance_snapshot(store: Storage) -> int:
     """
-    Record performance snapshots — one per asset.
-    Timing is controlled by the caller (unified 12h pipeline).
+    Record performance snapshots — one per asset per 12 hours.
     Returns the count of snapshots saved.
     """
     import re as _re
+
+    # Guard: only snapshot once per 12h (prevents duplicates on first pipeline run)
+    snapshot_interval = int(os.getenv("PERF_SNAPSHOT_INTERVAL_HOURS", "12"))
+    last_snapshot_ts = store.load_kv("perf_snapshot", "last_run")
+    now_ts = time.time()
+    if last_snapshot_ts is not None and (now_ts - last_snapshot_ts) < snapshot_interval * 3600:
+        return 0  # Too soon, skip
 
     market = store.load_latest("market_agent")
     fusion = store.load_latest("signal_fusion")
@@ -478,6 +484,7 @@ def _record_performance_snapshot(store: Storage) -> int:
         saved += 1
 
     if saved:
+        store.save_kv("perf_snapshot", "last_run", now_ts)
         logger.info("  [PIPELINE] Saved %s snapshots", saved)
 
     return saved
