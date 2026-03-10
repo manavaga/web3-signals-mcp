@@ -377,62 +377,19 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
         except Exception as exc:
             logger.error("  llm_cycle: %s", exc)
 
-        # Record performance snapshot for accuracy tracking
+        # --- Unified 12h Performance Pipeline ---
+        # Snapshot + Evaluate + IC + Optimize — all in one pass
         try:
-            _record_performance_snapshot(store)
-        except Exception as exc:
-            logger.error("  performance snapshot: %s", exc)
-
-        # Evaluate old snapshots for accuracy (every 4 hours)
-        try:
-            eval_interval_hours = int(os.getenv("PERF_EVAL_INTERVAL_HOURS", "4"))
-            last_eval = store.load_kv("perf_eval", "last_run")
+            pipeline_interval = int(os.getenv("PERF_PIPELINE_INTERVAL_HOURS", "12"))
+            last_pipeline = store.load_kv("perf_pipeline", "last_run")
             now_ts = time.time()
-            should_eval = False
-            if last_eval is None:
-                should_eval = True
-            elif (now_ts - last_eval) >= eval_interval_hours * 3600:
-                should_eval = True
 
-            if should_eval:
-                logger.info("  [PERF] Running accuracy evaluation...")
-                _evaluate_old_snapshots(store)
-                store.save_kv("perf_eval", "last_run", now_ts)
-
-                # Compute and cache IC (Information Coefficient) after accuracy eval
-                try:
-                    for wh in [24, 48]:
-                        ic_result = store.compute_ic(window_hours=wh, days=30)
-                        if ic_result.get("total_observations", 0) > 0:
-                            store.save_kv_json("ic_tracking", f"ic_{wh}h_30d", ic_result)
-                            logger.info("  [IC] %sh IC computed: overall=%.4f, %s observations",
-                                       wh, ic_result.get("overall_ic") or 0,
-                                       ic_result.get("total_observations", 0))
-                except Exception as ic_exc:
-                    logger.error("  IC computation: %s", ic_exc)
-
-                # Trigger weight optimizer after evaluation
-                try:
-                    from shared.profile_loader import load_profile
-                    from signal_fusion.optimizer import WeightOptimizer
-                    from pathlib import Path
-
-                    profile_path = Path(__file__).resolve().parent.parent / "signal_fusion" / "profiles" / "default.yaml"
-                    profile = load_profile(profile_path)
-                    optimizer = WeightOptimizer(store, profile)
-
-                    if optimizer.is_enabled() and optimizer.should_optimize():
-                        logger.info("  [LEARN] Running weight optimization...")
-                        new_weights = optimizer.compute_and_apply()
-                        if new_weights:
-                            logger.info("  [LEARN] Updated weights: %s", new_weights)
-                        else:
-                            logger.info("  [LEARN] Not enough data for optimization yet")
-                except Exception as opt_exc:
-                    logger.error("  weight optimizer: %s", opt_exc)
-
+            if last_pipeline is None or (now_ts - last_pipeline) >= pipeline_interval * 3600:
+                logger.info("  [PIPELINE] Running unified 12h performance pipeline...")
+                _run_perf_pipeline(store)
+                store.save_kv("perf_pipeline", "last_run", now_ts)
         except Exception as exc:
-            logger.error("  performance eval: %s", exc)
+            logger.error("  performance pipeline: %s", exc)
 
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         logger.info("[%s] Orchestrator: done. Sleeping %ss.", ts, interval)
@@ -444,26 +401,18 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
             time.sleep(1)
 
 
-def _record_performance_snapshot(store: Storage) -> None:
+def _record_performance_snapshot(store: Storage) -> int:
     """
-    Record performance snapshots — max 1 per asset per 12 hours.
-    This avoids inflating sample size with near-identical correlated snapshots.
-    Direction comes directly from the fusion engine output (which accounts for
-    abstain zones and YAML label thresholds).
+    Record performance snapshots — one per asset.
+    Timing is controlled by the caller (unified 12h pipeline).
+    Returns the count of snapshots saved.
     """
     import re as _re
-
-    # Check if we should snapshot (1 per 12 hours)
-    snapshot_interval = int(os.getenv("PERF_SNAPSHOT_INTERVAL_HOURS", "12"))
-    last_snapshot_ts = store.load_kv("perf_snapshot", "last_run")
-    now_ts = time.time()
-    if last_snapshot_ts is not None and (now_ts - last_snapshot_ts) < snapshot_interval * 3600:
-        return  # Too soon, skip
 
     market = store.load_latest("market_agent")
     fusion = store.load_latest("signal_fusion")
     if not market or not fusion:
-        return
+        return 0
 
     per_asset = market.get("data", {}).get("per_asset", {})
     signals = fusion.get("data", {}).get("signals", {})
@@ -529,8 +478,9 @@ def _record_performance_snapshot(store: Storage) -> None:
         saved += 1
 
     if saved:
-        store.save_kv("perf_snapshot", "last_run", now_ts)
-        logger.info("  performance: saved %s snapshots (next in %sh)", saved, snapshot_interval)
+        logger.info("  [PIPELINE] Saved %s snapshots", saved)
+
+    return saved
 
 
 def _calculate_gradient_score(
@@ -564,11 +514,12 @@ def _calculate_gradient_score(
         return float(gradient.get("wrong", 0.0))
 
 
-def _evaluate_old_snapshots(store: Storage) -> None:
+def _evaluate_old_snapshots(store: Storage) -> dict:
     """
     Check snapshots that are 24h/48h old and evaluate accuracy.
     Uses gradient scoring: 0.0-1.0 based on direction AND magnitude.
     Reuses prices already stored by the market agent (no extra API call).
+    Returns {"24h": count, "48h": count} of evaluated snapshots.
     """
     # Get current prices from the market agent's latest run (already in storage)
     market = store.load_latest("market_agent")
@@ -598,7 +549,7 @@ def _evaluate_old_snapshots(store: Storage) -> None:
 
     if not current_prices:
         logger.warning("  performance eval: no prices available from market agent (latest or history)")
-        return
+        return {"24h": 0, "48h": 0}
 
     # Load gradient scoring config from fusion profile
     accuracy_cfg = {}
@@ -608,6 +559,7 @@ def _evaluate_old_snapshots(store: Storage) -> None:
     # Evaluate each window: 24h, 48h
     windows = [(24, 24), (48, 48)]
     total_evaluated = 0
+    result = {}
 
     for window_hours, min_age in windows:
         snapshots = store.load_unevaluated_snapshots(window_hours, min_age)
@@ -651,6 +603,8 @@ def _evaluate_old_snapshots(store: Storage) -> None:
             window_evaluated += 1
             total_evaluated += 1
 
+        result[f"{window_hours}h"] = window_evaluated
+
         if skipped_no_price:
             logger.warning("  [PERF] %sh window: skipped %s snapshots — no price for: %s",
                           window_hours, len(skipped_no_price), sorted(skipped_no_price))
@@ -664,6 +618,62 @@ def _evaluate_old_snapshots(store: Storage) -> None:
     else:
         logger.info("  [PERF] No snapshots ready for evaluation yet (need 24h+ age, have prices for: %s)",
                     sorted(current_prices.keys()) if current_prices else "none")
+
+    return result
+
+
+def _run_perf_pipeline(store: Storage) -> None:
+    """Unified 12h performance pipeline: snapshot → evaluate → IC → optimize."""
+    t0 = time.time()
+
+    # Step 1: Save snapshots for all assets
+    snapshots_saved = _record_performance_snapshot(store)
+
+    # Step 2-3: Evaluate ALL pending 24h and 48h snapshots
+    eval_counts = _evaluate_old_snapshots(store)
+    eval_24h = eval_counts.get("24h", 0)
+    eval_48h = eval_counts.get("48h", 0)
+
+    # Step 4: Compute IC (Information Coefficient)
+    ic_status = "skipped"
+    for wh in [24, 48]:
+        try:
+            ic_result = store.compute_ic(window_hours=wh, days=30)
+            if ic_result.get("total_observations", 0) > 0:
+                store.save_kv_json("ic_tracking", f"ic_{wh}h_30d", ic_result)
+                ic_status = "computed"
+                logger.info("  [IC] %sh IC: overall=%.4f, %s observations",
+                           wh, ic_result.get("overall_ic") or 0,
+                           ic_result.get("total_observations", 0))
+        except Exception as ic_exc:
+            logger.error("  [IC] %sh computation error: %s", wh, ic_exc)
+            ic_status = "error"
+
+    # Step 5: Weight optimizer
+    try:
+        from shared.profile_loader import load_profile
+        from signal_fusion.optimizer import WeightOptimizer
+        from pathlib import Path
+
+        profile_path = Path(__file__).resolve().parent.parent / "signal_fusion" / "profiles" / "default.yaml"
+        profile = load_profile(profile_path)
+        optimizer = WeightOptimizer(store, profile)
+
+        if optimizer.is_enabled() and optimizer.should_optimize():
+            logger.info("  [LEARN] Running weight optimization...")
+            new_weights = optimizer.compute_and_apply()
+            if new_weights:
+                logger.info("  [LEARN] Updated weights: %s", new_weights)
+            else:
+                logger.info("  [LEARN] Not enough data for optimization yet")
+    except Exception as opt_exc:
+        logger.error("  weight optimizer: %s", opt_exc)
+
+    elapsed = round(time.time() - t0, 1)
+    logger.info(
+        "  [PIPELINE] 12h complete: %s snapshots, %s eval'd (24h), %s eval'd (48h), IC: %s [%.1fs]",
+        snapshots_saved, eval_24h, eval_48h, ic_status, elapsed,
+    )
 
 
 # ---------------------------------------------------------------------------

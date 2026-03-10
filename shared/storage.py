@@ -575,7 +575,7 @@ class Storage:
                             f"SELECT id, timestamp, asset, signal_score, signal_direction, "
                             f"price_at_signal FROM {table} "
                             f"WHERE {col} = FALSE AND timestamp <= %s "
-                            f"ORDER BY timestamp ASC LIMIT 100",
+                            f"ORDER BY timestamp ASC",
                             (cutoff,),
                         )
                         rows = cur.fetchall()
@@ -596,7 +596,7 @@ class Storage:
                         f"SELECT id, timestamp, asset, signal_score, signal_direction, "
                         f"price_at_signal FROM {table} "
                         f"WHERE {col} = ? AND timestamp <= ? "
-                        f"ORDER BY timestamp ASC LIMIT 100",
+                        f"ORDER BY timestamp ASC",
                         (false_val, cutoff),
                     ).fetchall()
                 return [
