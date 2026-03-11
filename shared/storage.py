@@ -1843,8 +1843,7 @@ class Storage:
                 with _pg_conn() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "SELECT key, value_json FROM kv_json "
-                            "WHERE namespace = 'error_log' "
+                            "SELECT key, value_json FROM kvj_error_log "
                             "ORDER BY id DESC LIMIT %s",
                             (limit,),
                         )
@@ -1856,8 +1855,7 @@ class Storage:
             else:
                 with sqlite3.connect(self.db_path) as conn:
                     rows = conn.execute(
-                        "SELECT key, value_json FROM kv_json "
-                        "WHERE namespace = 'error_log' "
+                        "SELECT key, value_json FROM kvj_error_log "
                         "ORDER BY ROWID DESC LIMIT ?",
                         (limit,),
                     ).fetchall()

@@ -688,9 +688,19 @@ class WeightOptimizer:
         self.store.save_kv_json(self.namespace, "change_log", log)
 
     def _get_eval_count(self) -> int:
-        """Get total evaluation count from dimension_accuracy stats."""
-        data = self.store.load_kv_json(self.namespace, "dimension_accuracy")
-        if not data:
+        """Get total evaluation count from performance_accuracy table."""
+        try:
+            if self.store.backend == "postgres":
+                import psycopg2
+                from shared.storage import _pg_conn
+                with _pg_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT COUNT(*) FROM performance_accuracy")
+                        return cur.fetchone()[0]
+            else:
+                import sqlite3
+                with sqlite3.connect(self.store.db_path) as conn:
+                    row = conn.execute("SELECT COUNT(*) FROM performance_accuracy").fetchone()
+                    return row[0] if row else 0
+        except Exception:
             return 0
-        counts = [d.get("count", 0) for d in data.values() if isinstance(d, dict)]
-        return max(counts) if counts else 0
