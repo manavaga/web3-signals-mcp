@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentmarketsignal"
+version = "0.1.0"
+description = "CLI wrapper for the Web3 Signals x402 crypto signals API — pipe-friendly JSON output for AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Web3 Signals Team" }]
+dependencies = [
+    "httpx>=0.27,<1",
+    "click>=8.1,<9",
+]
+
+[project.scripts]
+agentmarketsignal = "agentmarketsignal.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentmarketsignal"]

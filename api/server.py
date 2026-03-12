@@ -29,7 +29,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -1036,6 +1037,36 @@ def _make_fingerprint(ip: str, ua: str) -> str:
 # ---------------------------------------------------------------------------
 # Usage Tracking Middleware
 # ---------------------------------------------------------------------------
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """Sets Cache-Control headers for agent-friendly HTTP caching.
+
+    Signal endpoints refresh every 15 min, reputation hourly, health never cached.
+    """
+
+    # path → Cache-Control value
+    CACHE_RULES: dict = {
+        "/health": "no-cache",
+        "/signal": "public, max-age=900",            # 15 min — matches signal refresh
+        "/api/signal": "public, max-age=900",         # internal mirror
+        "/performance/reputation": "public, max-age=3600",  # 1 hour
+        "/api/performance/reputation": "public, max-age=3600",
+    }
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+
+        # Exact match first
+        if path in self.CACHE_RULES:
+            response.headers["Cache-Control"] = self.CACHE_RULES[path]
+        # Prefix match for /signal/{asset} (but not /signal/{asset}/trace)
+        elif path.startswith("/signal/") and not path.endswith("/trace"):
+            response.headers["Cache-Control"] = "public, max-age=900"
+
+        return response
+
+
+# ---------------------------------------------------------------------------
 class UsageTrackingMiddleware(BaseHTTPMiddleware):
     """Logs every API request for analytics — user-agent, endpoint, duration.
 
@@ -1136,8 +1167,19 @@ if _X402_ENABLED:
     app.add_middleware(PaymentMiddlewareASGI, routes=_x402_routes, server=_x402_server)
     logger.info("x402 payment gate enabled (facilitator=%s)", _X402_FACILITATOR_URL)
 
+# Cache-Control — agent-friendly caching hints per endpoint
+app.add_middleware(CacheControlMiddleware)
+
 # Usage tracking — added last so it runs OUTERMOST and sees ALL responses (incl. 402s)
 app.add_middleware(UsageTrackingMiddleware)
+
+# CORS — permissive for agent access (AI agents call from arbitrary origins)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
