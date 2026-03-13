@@ -92,6 +92,7 @@ _x402_server = None
 _x402_routes: dict = {}
 
 _x402_init_error: Optional[str] = None  # stored for /health diagnostics
+_x402_init_pending: bool = False  # True if facilitator init failed and retry is pending
 
 
 def _build_cdp_auth_provider():
@@ -156,16 +157,19 @@ if _X402_ENABLED:
         declare_discovery_extension = None
 
     # Eagerly initialize: connect to facilitator NOW, not on first request.
-    # If facilitator is unreachable, disable x402 gracefully (app stays up, routes free).
+    # If facilitator is unreachable, keep x402 enabled but mark as pending retry.
+    # A background task will retry initialization periodically.
+    _x402_init_pending = False
     try:
         _x402_server.initialize()
         logger.info("x402: facilitator OK (%s)", _X402_FACILITATOR_URL)
     except Exception as _init_exc:
         _x402_init_error = str(_init_exc)
         logger.error("x402: FACILITATOR INIT FAILED — %s", _init_exc)
-        logger.warning("x402: disabling payment gate — routes will be free until fixed")
-        _X402_ENABLED = False
-        _x402_server = None
+        logger.warning("x402: will retry facilitator init every 60s in background")
+        _x402_init_pending = True
+        # Keep _X402_ENABLED = True but mark pending so middleware knows
+        # The server still comes up, routes are gated, retry happens in background
 
 if _X402_ENABLED:
     # Route patterns: x402 uses glob syntax (* for wildcards, not {param})
@@ -926,6 +930,31 @@ def _run_perf_pipeline(store: Storage) -> bool:
 # ---------------------------------------------------------------------------
 # Lifespan — startup / shutdown
 # ---------------------------------------------------------------------------
+def _x402_retry_loop():
+    """Background thread that retries x402 facilitator initialization every 60s."""
+    global _X402_ENABLED, _x402_server, _x402_init_error, _x402_init_pending
+    import time as _time
+    retry_count = 0
+    max_retries = 30  # Give up after ~30 minutes
+    while _x402_init_pending and retry_count < max_retries:
+        _time.sleep(60)
+        retry_count += 1
+        try:
+            _x402_server.initialize()
+            _x402_init_error = None
+            _x402_init_pending = False
+            logger.info("x402: facilitator OK after %d retries (%s)", retry_count, _X402_FACILITATOR_URL)
+            return
+        except Exception as e:
+            _x402_init_error = str(e)
+            logger.warning("x402: retry %d/%d failed — %s", retry_count, max_retries, e)
+    if _x402_init_pending:
+        logger.error("x402: gave up after %d retries — disabling payment gate", max_retries)
+        _X402_ENABLED = False
+        _x402_server = None
+        _x402_init_pending = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store, _fusion, _boot_time, _orchestrator_thread, _orchestrator_running
@@ -945,6 +974,16 @@ async def lifespan(app: FastAPI):
     )
     _orchestrator_thread.start()
     logger.info("Orchestrator started (interval=%ss)", interval)
+
+    # Start x402 facilitator retry if init failed
+    if _X402_AVAILABLE and _x402_init_pending:
+        _x402_retry_thread = threading.Thread(
+            target=_x402_retry_loop,
+            daemon=True,
+            name="x402-retry",
+        )
+        _x402_retry_thread.start()
+        logger.info("x402: background retry thread started")
 
     # Start MCP Streamable HTTP session manager if available
     _mcp_session_ctx = None
