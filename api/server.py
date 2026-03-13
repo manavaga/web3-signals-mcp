@@ -19,6 +19,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import logging
 import os
@@ -96,6 +97,9 @@ _X402_FACILITATOR_URL = os.getenv("X402_FACILITATOR_URL", "https://api.cdp.coinb
 _CDP_API_KEY_ID = os.getenv("CDP_API_KEY_ID", "")
 _CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET", "")
 _X402_ENABLED = bool(_PAY_TO) and _X402_AVAILABLE
+
+_SIGNAL_PRICE_USDC = os.getenv("SIGNAL_PRICE_USDC", "0.001")
+_SIGNAL_PRICE_DISPLAY = f"${_SIGNAL_PRICE_USDC}"
 
 _x402_server = None
 _x402_routes: dict = {}
@@ -183,7 +187,7 @@ if _X402_ENABLED:
 if _X402_ENABLED:
     # Route patterns: x402 uses glob syntax (* for wildcards, not {param})
     _payment_option = PaymentOption(
-        scheme="exact", pay_to=_PAY_TO, price="$0.001",
+        scheme="exact", pay_to=_PAY_TO, price=_SIGNAL_PRICE_DISPLAY,
         network="eip155:8453",
     )
 
@@ -305,7 +309,7 @@ if _X402_ENABLED:
         return HTTPResponseBody(
             content_type="application/json",
             body={
-                "_notice": "Payment required ($0.001 USDC on Base). Sample data below.",
+                "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Sample data below.",
                 "_protocol": "x402",
                 "_docs": "https://web3-signals-api-production.up.railway.app/docs",
                 "_hint": "Decode the PAYMENT-REQUIRED response header (base64 JSON) for payment details.",
@@ -344,7 +348,7 @@ if _X402_ENABLED:
         return HTTPResponseBody(
             content_type="application/json",
             body={
-                "_notice": f"Payment required ($0.001 USDC on Base). Sample {asset} signal below.",
+                "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Sample {asset} signal below.",
                 "_protocol": "x402",
                 "_docs": "https://web3-signals-api-production.up.railway.app/docs",
                 "sample": {
@@ -372,7 +376,7 @@ if _X402_ENABLED:
         return HTTPResponseBody(
             content_type="application/json",
             body={
-                "_notice": "Payment required ($0.001 USDC on Base). Sample accuracy data below.",
+                "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Sample accuracy data below.",
                 "_protocol": "x402",
                 "_docs": "https://web3-signals-api-production.up.railway.app/docs",
                 "sample": {
@@ -1383,9 +1387,9 @@ async def root():
             "network": "Base (eip155:8453)",
             "currency": "USDC",
             "pricing": {
-                "/signal": "$0.001",
-                "/signal/{asset}": "$0.001",
-                "/performance/reputation": "$0.001",
+                "/signal": _SIGNAL_PRICE_DISPLAY,
+                "/signal/{asset}": _SIGNAL_PRICE_DISPLAY,
+                "/performance/reputation": _SIGNAL_PRICE_DISPLAY,
             },
             "free_endpoints": [
                 "/health", "/dashboard", "/analytics",
@@ -1457,7 +1461,7 @@ async def get_signal_internal():
          openapi_extra={
              "x-payment-info": {
                  "protocols": ["x402"],
-                 "price": "$0.001",
+                 "price": _SIGNAL_PRICE_DISPLAY,
                  "network": "eip155:8453",
                  "token": "USDC",
              },
@@ -1504,7 +1508,7 @@ async def get_signal():
          openapi_extra={
              "x-payment-info": {
                  "protocols": ["x402"],
-                 "price": "$0.001",
+                 "price": _SIGNAL_PRICE_DISPLAY,
                  "network": "eip155:8453",
                  "token": "USDC",
              },
@@ -1529,7 +1533,23 @@ async def get_asset_signal(asset: str):
     sig = signals[asset]
     portfolio = full.get("data", {}).get("portfolio_summary", {})
 
-    return {
+    # Enrich with price context from market agent (paid-only value-add)
+    price_context = None
+    if _store:
+        market = _store.load_latest("market_agent")
+        if market:
+            per_asset = market.get("data", {}).get("per_asset", {})
+            price_data = per_asset.get(asset, {})
+            if price_data:
+                price_context = {
+                    "price_usd": price_data.get("price"),
+                    "change_24h_pct": price_data.get("change_24h_pct"),
+                    "volume_24h_usd": price_data.get("volume_24h"),
+                    "market_cap_usd": price_data.get("market_cap"),
+                    "volume_status": price_data.get("volume_status"),
+                }
+
+    response = {
         "asset": asset,
         "timestamp": full.get("timestamp"),
         "signal": sig,
@@ -1539,6 +1559,10 @@ async def get_asset_signal(asset: str):
             "signal_momentum": portfolio.get("signal_momentum"),
         },
     }
+    if price_context:
+        response["price_context"] = price_context
+
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -1731,7 +1755,7 @@ async def get_reputation_internal():
          openapi_extra={
              "x-payment-info": {
                  "protocols": ["x402"],
-                 "price": "$0.001",
+                 "price": _SIGNAL_PRICE_DISPLAY,
                  "network": "eip155:8453",
                  "token": "USDC",
              },
@@ -1933,7 +1957,7 @@ async def get_x402_analytics(
         "status": "active",
         "window_days": days,
         "x402_enabled": _X402_ENABLED,
-        "price_per_call": "$0.001 USDC",
+        "price_per_call": f"{_SIGNAL_PRICE_DISPLAY} USDC",
         "network": "Base (eip155:8453)",
         "total_paid_calls": total_paid,
         "total_402_challenges": total_challenges,
@@ -2511,11 +2535,11 @@ async def agent_card():
             "protocol": "x402",
             "network": "Base (eip155:8453)",
             "token": "USDC",
-            "price_per_call": "$0.001",
+            "price_per_call": _SIGNAL_PRICE_DISPLAY,
             "facilitator": _X402_FACILITATOR_URL,
         }
         card["pricing"] = {
-            "paid": {"/signal": "$0.001", "/signal/{asset}": "$0.001", "/performance/reputation": "$0.001"},
+            "paid": {"/signal": _SIGNAL_PRICE_DISPLAY, "/signal/{asset}": _SIGNAL_PRICE_DISPLAY, "/performance/reputation": _SIGNAL_PRICE_DISPLAY},
             "free": ["/health", "/performance", "/performance/{asset}", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
         }
     else:
@@ -2557,7 +2581,7 @@ async def mcp_discovery():
         ],
         "pricing": {
             "mcp_tools": "free",
-            "rest_signal_endpoints": "$0.001 USDC via x402 (Base L2)",
+            "rest_signal_endpoints": f"{_SIGNAL_PRICE_DISPLAY} USDC via x402 (Base L2)",
         },
         "assets": [
             "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
@@ -2605,9 +2629,9 @@ async def x402_discovery():
         "facilitator": _X402_FACILITATOR_URL,
         "pay_to": _PAY_TO,
         "routes": {
-            "/signal": {"method": "GET", "price": "$0.001", "description": "Full 20-asset signal fusion with LLM insights"},
-            "/signal/{asset}": {"method": "GET", "price": "$0.001", "description": "Single asset signal (6 dimensions)"},
-            "/performance/reputation": {"method": "GET", "price": "$0.001", "description": "30-day rolling accuracy score"},
+            "/signal": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "Full 20-asset signal fusion with LLM insights"},
+            "/signal/{asset}": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "Single asset signal (6 dimensions)"},
+            "/performance/reputation": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "30-day rolling accuracy score"},
         },
         "free_routes": ["/health", "/performance", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
         "discovery": {
@@ -2662,7 +2686,7 @@ async def llms_txt():
 - GET {base_url}/performance/{{asset}} — Per-asset accuracy (e.g. /performance/BTC)
 - GET {base_url}/analytics — API usage analytics
 
-### Paid ($0.001 USDC on Base via x402 protocol)
+### Paid ({_SIGNAL_PRICE_DISPLAY} USDC on Base via x402 protocol)
 - GET {base_url}/signal — All 20 asset signals with portfolio summary
 - GET {base_url}/signal/{{asset}} — Single asset signal (e.g. /signal/BTC)
 - GET {base_url}/performance/reputation — Verified accuracy reputation score
@@ -2680,7 +2704,7 @@ BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR,
 - Each signal includes: composite_score, direction, label, 6 dimension scores, momentum, llm_insight
 
 ## Payment Protocol
-x402 (HTTP 402 Payment Required). Pay $0.001 USDC per call on Base L2.
+x402 (HTTP 402 Payment Required). Pay {_SIGNAL_PRICE_DISPLAY} USDC per call on Base L2.
 No API keys. No signup. Payment IS authentication.
 Agent needs: Base wallet + USDC + x402 SDK.
 
@@ -2787,17 +2811,48 @@ try:
 
     @app.get("/mcp/sse", include_in_schema=False)
     async def mcp_sse_endpoint(request: Request):
-        """MCP SSE endpoint — legacy transport for older clients."""
+        """MCP over SSE with 30-second heartbeat to prevent Railway connection timeout."""
         from starlette.responses import Response as StarletteResponse
 
-        async with _mcp_sse_transport.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await mcp_server_instance._mcp_server.run(
-                streams[0],
-                streams[1],
-                mcp_server_instance._mcp_server.create_initialization_options(),
-            )
+        _connection_active = True
+        _send = request._send  # raw ASGI send callable
+
+        async def heartbeat():
+            """Send SSE comment every 30s to keep Railway connection alive."""
+            nonlocal _connection_active
+            try:
+                while _connection_active:
+                    await asyncio.sleep(30)
+                    if _connection_active:
+                        try:
+                            await _send({
+                                "type": "http.response.body",
+                                "body": b": ping\n\n",
+                                "more_body": True,
+                            })
+                        except Exception:
+                            break
+            except asyncio.CancelledError:
+                pass
+
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            async with _mcp_sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await mcp_server_instance._mcp_server.run(
+                    streams[0],
+                    streams[1],
+                    mcp_server_instance._mcp_server.create_initialization_options(),
+                )
+        finally:
+            _connection_active = False
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
         return StarletteResponse()
 
     from starlette.routing import Mount
@@ -2861,7 +2916,7 @@ def custom_openapi():
                 if isinstance(method_data, dict):
                     method_data.setdefault("x-agentcash-auth", {
                         "mode": "x402",
-                        "price": "$0.001",
+                        "price": _SIGNAL_PRICE_DISPLAY,
                         "network": "eip155:8453",
                         "token": "USDC",
                     })

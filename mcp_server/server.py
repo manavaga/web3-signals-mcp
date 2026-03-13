@@ -6,9 +6,10 @@ and other MCP-compatible AI assistants.
 
 Tools:
     get_market_briefing   Executive summary — regime, risk, top movers, actionable calls
-    get_all_signals       Full fusion: portfolio + 20 scored signals + LLM insights
-    get_asset_signal      Single asset signal with 6-dimension breakdown
-    compare_assets        Side-by-side comparison of 2-5 assets
+    get_crypto_price      Live crypto price from market_agent data
+    get_all_signals       Teaser signals for top/bottom assets (free tier)
+    get_asset_signal      Single asset score + direction (free tier)
+    compare_assets        Side-by-side comparison of 2-5 assets (free tier)
     get_health            Agent status, last run, uptime
     get_performance       Signal accuracy tracking (30-day rolling)
     get_asset_performance Per-asset accuracy breakdown
@@ -43,26 +44,16 @@ from signal_fusion.engine import SignalFusion
 mcp = FastMCP(
     "Web3 Signals — AgentMarketSignal",
     instructions=(
-        "AgentMarketSignal: Production AI-powered crypto signal intelligence. "
-        "6 specialized AI agents analyze 20 assets every 15 minutes across "
-        "whale activity, derivatives positioning, technical analysis, narrative "
-        "momentum, market sentiment, and trend direction. Signals are fused "
-        "into composite scores (0-100) with regime-aware weighting and "
-        "accuracy-scaled dimension influence.\n\n"
-        "QUICK START:\n"
-        "- Market overview? → get_market_briefing (executive summary with actionable calls)\n"
-        "- Specific asset? → get_asset_signal('BTC') (6-dimension breakdown)\n"
-        "- Compare assets? → compare_assets('BTC,ETH,SOL') (side-by-side)\n"
-        "- Full raw data? → get_all_signals (complete JSON for all 20 assets)\n"
-        "- How accurate? → get_performance (30-day rolling accuracy)\n"
-        "- Who's using this? → get_analytics (request stats, client types)\n"
-        "- Payment revenue? → get_x402_stats (micropayment analytics)\n"
-        "- System healthy? → get_health (agent status, uptime)\n\n"
-        "SCORING: 0-30 = bearish, 30-40 = weak sell, 40-60 = neutral, "
-        "60-70 = weak buy, 70-100 = bullish. Signals below 38 or above 62 "
-        "are high-conviction (outside abstain zone).\n\n"
-        "DATA FRESHNESS: Signals update every 15 min. Narrative LLM analysis "
-        "runs every 12 hours. Accuracy uses 30-day rolling gradient scoring."
+        "AgentMarketSignal: AI-powered crypto signal intelligence for 20 assets.\n\n"
+        "WHAT YOU CAN DO:\n"
+        "• Check crypto prices → get_crypto_price('BTC')\n"
+        "• Get buy/sell recommendation → get_asset_signal('BTC')\n"
+        "• See what's hot right now → get_market_briefing()\n"
+        "• Compare assets → compare_assets('BTC,ETH,SOL')\n"
+        "• Check signal accuracy → get_performance()\n\n"
+        "Signals scored 0-100: above 62 = buy, below 38 = sell. "
+        "Based on whale tracking, technical analysis, derivatives data, "
+        "social sentiment, and market trends. Updated every 15 minutes."
     ),
 )
 
@@ -90,7 +81,7 @@ def _get_fusion() -> SignalFusion:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_market_briefing() -> str:
-    """Get executive market intelligence briefing with top buy/sell signals and regime context. Returns market regime (TRENDING/RANGING), risk level, top 3 bullish and bearish signals ranked by composite score, high-conviction positions outside the 38-62 abstain zone, and regime-specific trading context. Best starting point for portfolio decisions. For raw per-asset data, use get_all_signals."""
+    """What should I buy or sell in crypto right now? Returns the top 3 buy and top 3 sell recommendations from 20 cryptocurrencies, plus market regime (trending/ranging), risk level, and momentum. Best starting point for portfolio decisions. Scores range 0-100: above 62 is a buy signal, below 38 is a sell signal."""
     fusion = _get_fusion()
     result = fusion.fuse()
 
@@ -175,14 +166,91 @@ def get_market_briefing() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tool: get_crypto_price — Live price from market_agent data
+# ---------------------------------------------------------------------------
+@mcp.tool(annotations={"readOnlyHint": True})
+def get_crypto_price(asset: str) -> str:
+    """What is the current price of Bitcoin, Ethereum, or any major crypto? Returns the latest USD price, 24-hour price change percentage, trading volume, and market cap. Updated every 15 minutes from CoinGecko and Binance. Supports 20 assets: BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI. Example: get_crypto_price('BTC')"""
+    asset = asset.upper().strip()
+    valid = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
+             "MATIC", "LINK", "UNI", "ATOM", "LTC", "FIL", "NEAR",
+             "APT", "ARB", "OP", "INJ", "SUI"]
+    if asset not in valid:
+        return json.dumps({"error": f"Unknown asset '{asset}'. Valid: {', '.join(valid)}"})
+
+    store = _get_store()
+    market = store.load_latest("market_agent")
+    if not market:
+        return json.dumps({"error": "Market data not yet available. The pipeline runs every 15 minutes — try again shortly."})
+
+    per_asset = market.get("data", {}).get("per_asset", {})
+    data = per_asset.get(asset, {})
+    if not data:
+        return json.dumps({"error": f"No price data for {asset}. Data pipeline may still be initializing."})
+
+    return json.dumps({
+        "asset": asset,
+        "price_usd": data.get("price"),
+        "change_24h_pct": data.get("change_24h_pct"),
+        "volume_24h_usd": data.get("volume_24h"),
+        "market_cap_usd": data.get("market_cap"),
+        "volume_status": data.get("volume_status", "unknown"),
+        "volume_spike_ratio": data.get("volume_spike_ratio"),
+        "timestamp": market.get("timestamp"),
+        "_tip": f"For a buy/sell signal with AI analysis, try get_asset_signal('{asset}')",
+    }, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Tool: get_all_signals
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_all_signals() -> str:
-    """Export complete signal fusion for all 20 crypto assets (BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI). Returns portfolio_summary (regime, risk, top_buys, top_sells), per-asset composite_score (0-100) with 6-dimension breakdown (whale/technical/derivatives/narrative/market/trend), momentum deltas, and LLM cross-dimensional insights. Refreshes every 15 minutes. Use get_asset_signal for single-asset queries."""
+    """Get buy/sell signals for all 20 major cryptocurrencies including Bitcoin, Ethereum, Solana, and more. Returns a 0-100 composite score and direction (bullish/bearish/neutral) for each asset, plus portfolio summary with market regime and risk level. Updated every 15 minutes. For full dimension breakdown and AI insights, use the paid REST API."""
     fusion = _get_fusion()
     result = fusion.fuse()
-    return json.dumps(result, indent=2)
+
+    portfolio = result.get("data", {}).get("portfolio_summary", {})
+    signals = result.get("data", {}).get("signals", {})
+
+    # Sort assets by composite_score
+    scored = []
+    for asset, sig in signals.items():
+        score = sig.get("composite_score", 50)
+        scored.append((asset, score, sig))
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    # Top 3 bullish (highest) + bottom 3 bearish (lowest)
+    top_bullish = scored[:3]
+    top_bearish = scored[-3:]
+    top_bearish.reverse()  # lowest first
+
+    def _teaser(asset, score, sig):
+        return {
+            "asset": asset,
+            "composite_score": score,
+            "direction": sig.get("direction", "?"),
+            "label": sig.get("label", "?"),
+        }
+
+    return json.dumps({
+        "timestamp": result.get("timestamp"),
+        "portfolio_summary": {
+            "market_regime": portfolio.get("market_regime"),
+            "risk_level": portfolio.get("risk_level"),
+            "signal_momentum": portfolio.get("signal_momentum"),
+        },
+        "top_bullish": [_teaser(*x) for x in top_bullish],
+        "top_bearish": [_teaser(*x) for x in top_bearish],
+        "total_assets_tracked": 20,
+        "_upgrade": (
+            "Full 20-asset data with 6-dimension breakdown "
+            "(whale, technical, derivatives, narrative, market, trend) "
+            "and LLM insights available via paid REST API at "
+            "https://web3-signals-api-production.up.railway.app/signal "
+            "($0.001 USDC on Base via x402 protocol)"
+        ),
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +265,7 @@ VALID_ASSETS = [
 
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_asset_signal(asset: str) -> str:
-    """Get composite signal for a single cryptocurrency. Takes one ticker (case-insensitive) and returns composite_score (0-100), direction label (STRONG BUY to STRONG SELL), all 6 dimension scores with labels, momentum vs previous cycle, and market context (regime/risk). Valid: BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI. Invalid tickers return error with valid list."""
+    """Is BTC bullish or bearish right now? Get a 0-100 buy/sell score for any cryptocurrency. Returns composite score, direction (bullish/bearish/neutral), signal label (STRONG BUY to STRONG SELL), and momentum. Supports: BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR, APT, ARB, OP, INJ, SUI. For the full 6-dimension breakdown with whale, technical, and derivatives analysis, use the paid REST API."""
     asset = asset.upper().strip()
     if asset not in VALID_ASSETS:
         return json.dumps({
@@ -211,15 +279,26 @@ def get_asset_signal(asset: str) -> str:
     sig = signals.get(asset, {})
     portfolio = result.get("data", {}).get("portfolio_summary", {})
 
+    # Extract momentum direction only (not full dict)
+    momentum = sig.get("momentum", {})
+    momentum_direction = momentum.get("direction", "unknown") if isinstance(momentum, dict) else "unknown"
+
     return json.dumps({
         "asset": asset,
         "timestamp": result.get("timestamp"),
-        "signal": sig,
+        "composite_score": sig.get("composite_score"),
+        "direction": sig.get("direction"),
+        "label": sig.get("label"),
+        "momentum": momentum_direction,
         "market_context": {
             "regime": portfolio.get("market_regime"),
             "risk_level": portfolio.get("risk_level"),
-            "signal_momentum": portfolio.get("signal_momentum"),
         },
+        "_upgrade": (
+            f"Full 6-dimension breakdown for {asset} with LLM analysis: "
+            f"GET https://web3-signals-api-production.up.railway.app/signal/{asset} "
+            f"($0.001 USDC on Base via x402)"
+        ),
     }, indent=2)
 
 
@@ -228,7 +307,7 @@ def get_asset_signal(asset: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def compare_assets(assets: str) -> str:
-    """Rank and compare 2-5 crypto assets side-by-side. Input: comma-separated tickers (e.g. "BTC,ETH,SOL"). Returns ranked comparison with composite_score, direction, all 6 dimensions, momentum, and verdict (strongest/weakest). Sorted by score descending. Use for portfolio rebalancing or multi-asset conviction comparison. Constraints: 2-5 assets; invalid tickers return error with valid list."""
+    """Which crypto should I buy — BTC, ETH, or SOL? Compare 2-5 cryptocurrencies ranked by signal strength. Input: comma-separated tickers (e.g. 'BTC,ETH,SOL'). Returns ranked comparison with scores, direction, and verdict. Use for portfolio allocation decisions."""
     asset_list = [a.strip().upper() for a in assets.split(",") if a.strip()]
     if len(asset_list) < 2:
         return json.dumps({"error": "Need at least 2 assets to compare. Example: 'BTC,ETH,SOL'"})
@@ -248,22 +327,14 @@ def compare_assets(assets: str) -> str:
     for asset in asset_list:
         sig = signals.get(asset, {})
         score = sig.get("composite_score", 50)
-        dims = sig.get("dimensions", {})
-        dim_summary = {}
-        for dim_name, dim_data in dims.items():
-            if isinstance(dim_data, dict):
-                dim_summary[dim_name] = {
-                    "score": dim_data.get("score", 50),
-                    "label": dim_data.get("label", "?"),
-                }
+        momentum = sig.get("momentum", {})
+        momentum_direction = momentum.get("direction", "unknown") if isinstance(momentum, dict) else "unknown"
         comparison.append({
             "asset": asset,
             "composite_score": score,
             "direction": sig.get("direction", "?"),
             "label": sig.get("label", "?"),
-            "dimensions": dim_summary,
-            "momentum": sig.get("momentum", {}),
-            "confidence": sig.get("confidence", {}),
+            "momentum": momentum_direction,
         })
 
     # Rank by score
@@ -284,6 +355,12 @@ def compare_assets(assets: str) -> str:
             f"Weakest: {comparison[-1]['asset']} ({comparison[-1]['composite_score']}/100 — "
             f"{comparison[-1]['direction']})."
         ),
+        "_upgrade": (
+            "Full 6-dimension breakdown (whale, technical, derivatives, narrative, "
+            "market, trend) and LLM insights available via paid REST API at "
+            "https://web3-signals-api-production.up.railway.app/signal "
+            "($0.001 USDC on Base via x402 protocol)"
+        ),
     }, indent=2)
 
 
@@ -292,7 +369,7 @@ def compare_assets(assets: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_health() -> str:
-    """Check real-time health of all 5 signal agents and fusion pipeline. Returns per-agent (whale, technical, derivatives, narrative, market) status, last_run timestamp, duration_ms, error count, plus fusion status and storage backend type. Use to diagnose pipeline issues, verify data freshness, or detect stuck agents."""
+    """Is AgentMarketSignal working? Check the real-time status of all 5 AI data pipelines (whale tracking, technical analysis, derivatives, narrative sentiment, market data) and the signal fusion engine. Returns last run times, durations, and any errors."""
     store = _get_store()
     agent_names = [
         "technical_agent", "derivatives_agent", "market_agent",
@@ -331,7 +408,7 @@ def get_health() -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_performance() -> str:
-    """Get rolling 30-day signal accuracy and reputation score. Returns reputation_score (0-100), accuracy_30d (%), signals_evaluated, breakdown by timeframe (24h/48h) and per-asset, plus scoring methodology. If <24h of history: returns status="collecting_data". Use to assess signal reliability and track improvement over time."""
+    """How accurate are these crypto signals? Returns 30-day rolling accuracy metrics showing how often buy/sell predictions were correct. Includes overall accuracy percentage, reputation score (0-100), and breakdowns by asset and timeframe (24h/48h)."""
     store = _get_store()
 
     stats = store.load_accuracy_stats(days=30)
@@ -372,7 +449,7 @@ def get_performance() -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_asset_performance(asset: str) -> str:
-    """Get accuracy metrics for a specific asset over the rolling 30-day window. Takes one ticker (case-insensitive). Returns asset accuracy_30d (%), overall_accuracy_30d, reputation_score, and last_updated. If no data: returns status="collecting_data". Invalid asset returns error with valid list. Use to identify which assets have strongest signal accuracy."""
+    """How accurate are the signals for BTC specifically? Get per-asset accuracy metrics for any cryptocurrency. Returns 30-day rolling accuracy, total signals evaluated, and comparison to overall accuracy."""
     asset = asset.upper().strip()
     if asset not in VALID_ASSETS:
         return json.dumps({
@@ -408,7 +485,7 @@ def get_asset_performance(asset: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_analytics(days: int = 7) -> str:
-    """Monitor API usage patterns over configurable window (1-90 days, default 7). Returns total_requests, unique_clients, avg_response_ms, breakdowns by endpoint and client_type (Claude, OpenAI, Python, browser), requests_per_day, and top_user_agents. Use for adoption monitoring, AI agent pattern analysis, or performance regression detection."""
+    """Who is using AgentMarketSignal? See API usage statistics including total requests, unique clients, response times, breakdowns by endpoint and client type (AI agents, browsers, scripts). Useful for understanding adoption."""
     if days < 1:
         days = 1
     if days > 90:
@@ -434,7 +511,7 @@ def get_analytics(days: int = 7) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_x402_stats(days: int = 30) -> str:
-    """Get x402 HTTP 402 micropayment analytics (1-90 days, default 30). Returns total_paid_calls, estimated_revenue_usdc ($0.001/call on Base L2), total_402_challenges, payment_failures, conversion_rate_pct, breakdown by endpoint and client_type, paid_per_day timeline, avg_paid_latency_ms. x402 is Coinbase's HTTP micropayment protocol for agent-to-agent commerce."""
+    """How much revenue has AgentMarketSignal generated? View x402 micropayment analytics including total paid calls, revenue in USDC, payment conversion rate, and daily payment timeline."""
     if days < 1:
         days = 1
     if days > 90:
