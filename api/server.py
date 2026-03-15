@@ -409,14 +409,11 @@ if _X402_ENABLED:
             },
         )
 
-    # Force HTTPS in resource URLs — Railway proxies HTTPS→HTTP internally,
-    # so x402 SDK would infer http:// URLs. Bazaar-indexed services use https://.
-    _PUBLIC_BASE = "https://web3-signals-api-production.up.railway.app"
-
+    # Resource URLs are inferred from the request URL by the x402 SDK.
+    # ProxySchemeMiddleware (below) ensures the scheme is HTTPS behind Railway's proxy.
     _x402_routes = {
         "GET /signal": X402RouteConfig(
             accepts=[_payment_option],
-            resource=f"{_PUBLIC_BASE}/signal",
             description=(
                 "Full crypto signal fusion: 20 assets scored 0-100 with whale, "
                 "derivatives, technical, narrative, and market dimensions. "
@@ -428,7 +425,6 @@ if _X402_ENABLED:
         ),
         "GET /signal/*": X402RouteConfig(
             accepts=[_payment_option],
-            resource=f"{_PUBLIC_BASE}/signal/{{asset}}",
             description=(
                 "Single asset crypto signal: 6-dimension composite score (0-100), "
                 "direction, momentum, and market context."
@@ -439,7 +435,6 @@ if _X402_ENABLED:
         ),
         "GET /performance/reputation": X402RouteConfig(
             accepts=[_payment_option],
-            resource=f"{_PUBLIC_BASE}/performance/reputation",
             description=(
                 "30-day rolling signal accuracy at 24h/48h windows, "
                 "per-asset breakdown. Verifiable reputation score."
@@ -1355,6 +1350,20 @@ app.add_middleware(
         "Mcp-Session-Id",
     ],
 )
+
+
+# Proxy scheme rewrite — Railway proxies HTTPS→HTTP internally.
+# Without this, x402 SDK infers http:// resource URLs from request.url.
+# This middleware rewrites the request scheme to HTTPS when X-Forwarded-Proto
+# is set, so all downstream middleware (including x402) see the correct URL.
+class ProxySchemeMiddleware(BaseHTTPMiddleware):
+    """Rewrite request scheme to HTTPS when behind a reverse proxy."""
+    async def dispatch(self, request, call_next):
+        if request.headers.get("x-forwarded-proto") == "https":
+            request.scope["scheme"] = "https"
+        return await call_next(request)
+
+app.add_middleware(ProxySchemeMiddleware)
 
 
 # ---------------------------------------------------------------------------
