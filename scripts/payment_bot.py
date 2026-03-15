@@ -50,8 +50,8 @@ ENDPOINTS = [
     f"{API_BASE}/performance/reputation",
 ]
 
-# Default test wallet (different from pay-to wallet 0xdf0C4a88...)
-DEFAULT_KEY = "***REMOVED***"
+# Wallet private key — NEVER hardcode. Use env var or CLI arg.
+DEFAULT_KEY = os.getenv("AGENT_WALLET_KEY", "")
 
 
 def make_paid_call(http: httpx.Client, x402_client, url: str) -> dict:
