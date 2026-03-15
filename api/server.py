@@ -194,7 +194,10 @@ if _X402_ENABLED:
     # Build Bazaar discovery extensions with rich schemas for agent discovery
     from x402.extensions.bazaar.resource_service import OutputConfig
 
-    _bazaar_signal = (
+    # Bazaar discovery metadata: discoverable + category + tags (matching indexed services like x402.twit.sh)
+    _bazaar_tags = ["crypto", "signal", "market", "trading", "whale", "ai", "agent", "x402", "defi", "web3"]
+
+    _bazaar_signal_raw = (
         declare_discovery_extension(
             input={"method": "GET"},
             input_schema={
@@ -237,7 +240,9 @@ if _X402_ENABLED:
         )
         if declare_discovery_extension else {}
     )
-    _bazaar_signal_asset = (
+    # Inject discoverable/category/tags into bazaar extension (required for Bazaar indexing)
+    _bazaar_signal = {**_bazaar_signal_raw, "discoverable": True, "category": "api", "tags": _bazaar_tags} if _bazaar_signal_raw else {}
+    _bazaar_signal_asset_raw = (
         declare_discovery_extension(
             input={"method": "GET", "path_params": {"asset": "BTC"}},
             input_schema={
@@ -276,7 +281,8 @@ if _X402_ENABLED:
         )
         if declare_discovery_extension else {}
     )
-    _bazaar_reputation = (
+    _bazaar_signal_asset = {**_bazaar_signal_asset_raw, "discoverable": True, "category": "api", "tags": _bazaar_tags} if _bazaar_signal_asset_raw else {}
+    _bazaar_reputation_raw = (
         declare_discovery_extension(
             input={"method": "GET"},
             input_schema={
@@ -300,6 +306,7 @@ if _X402_ENABLED:
         )
         if declare_discovery_extension else {}
     )
+    _bazaar_reputation = {**_bazaar_reputation_raw, "discoverable": True, "category": "api", "tags": _bazaar_tags} if _bazaar_reputation_raw else {}
 
     # --- unpaid_response_body callbacks: return rich SAMPLE data in 402 ---
     # This is critical for agent discovery. Competitors like tick.hugen.tokyo
@@ -392,9 +399,14 @@ if _X402_ENABLED:
             },
         )
 
+    # Force HTTPS in resource URLs — Railway proxies HTTPS→HTTP internally,
+    # so x402 SDK would infer http:// URLs. Bazaar-indexed services use https://.
+    _PUBLIC_BASE = "https://web3-signals-api-production.up.railway.app"
+
     _x402_routes = {
         "GET /signal": X402RouteConfig(
             accepts=[_payment_option],
+            resource=f"{_PUBLIC_BASE}/signal",
             description=(
                 "Full crypto signal fusion: 20 assets scored 0-100 with whale, "
                 "derivatives, technical, narrative, and market dimensions. "
@@ -406,6 +418,7 @@ if _X402_ENABLED:
         ),
         "GET /signal/*": X402RouteConfig(
             accepts=[_payment_option],
+            resource=f"{_PUBLIC_BASE}/signal/{{asset}}",
             description=(
                 "Single asset crypto signal: 6-dimension composite score (0-100), "
                 "direction, momentum, and market context."
@@ -416,6 +429,7 @@ if _X402_ENABLED:
         ),
         "GET /performance/reputation": X402RouteConfig(
             accepts=[_payment_option],
+            resource=f"{_PUBLIC_BASE}/performance/reputation",
             description=(
                 "30-day rolling signal accuracy at 24h/48h windows, "
                 "per-asset breakdown. Verifiable reputation score."
