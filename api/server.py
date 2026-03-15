@@ -251,7 +251,7 @@ if _X402_ENABLED:
         result["bazaar"]["tags"] = _bazaar_tags
         return result
 
-    _bazaar_signal = _inject_bazaar_metadata(_bazaar_signal_raw) if _bazaar_signal_raw else {}
+    _bazaar_signal = _bazaar_signal_raw  # TEMP: skip metadata injection to test settlement
     _bazaar_signal_asset_raw = (
         declare_discovery_extension(
             input={"method": "GET", "path_params": {"asset": "BTC"}},
@@ -291,7 +291,7 @@ if _X402_ENABLED:
         )
         if declare_discovery_extension else {}
     )
-    _bazaar_signal_asset = _inject_bazaar_metadata(_bazaar_signal_asset_raw) if _bazaar_signal_asset_raw else {}
+    _bazaar_signal_asset = _bazaar_signal_asset_raw  # TEMP: skip metadata injection to test settlement
     _bazaar_reputation_raw = (
         declare_discovery_extension(
             input={"method": "GET"},
@@ -316,7 +316,7 @@ if _X402_ENABLED:
         )
         if declare_discovery_extension else {}
     )
-    _bazaar_reputation = _inject_bazaar_metadata(_bazaar_reputation_raw) if _bazaar_reputation_raw else {}
+    _bazaar_reputation = _bazaar_reputation_raw  # TEMP: skip metadata injection to test settlement
 
     # --- unpaid_response_body callbacks: return rich SAMPLE data in 402 ---
     # This is critical for agent discovery. Competitors like tick.hugen.tokyo
