@@ -235,6 +235,40 @@ if _X402_ENABLED:
                 schema={
                     "type": "object",
                     "description": "20-asset portfolio signal fusion with 6 scoring dimensions, market regime, and LLM insights",
+                    "properties": {
+                        "portfolio_summary": {
+                            "type": "object",
+                            "description": "Market regime (TRENDING/RANGING/VOLATILE), risk level, top buys/sells",
+                        },
+                        "signals": {
+                            "type": "object",
+                            "description": "Per-asset signal objects keyed by ticker (BTC, ETH, SOL, ...)",
+                            "additionalProperties": {
+                                "type": "object",
+                                "properties": {
+                                    "composite_score": {"type": "integer", "description": "0-100 conviction score (>62 bullish, <38 bearish)"},
+                                    "direction": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
+                                    "label": {"type": "string", "description": "Human-readable label (BUY, SELL, HOLD, ABSTAIN)"},
+                                    "dimensions": {
+                                        "type": "object",
+                                        "description": "6 independent scoring dimensions",
+                                        "properties": {
+                                            "whale": {"description": "On-chain whale accumulation/distribution signals"},
+                                            "technical": {"description": "Multi-timeframe technical analysis indicators"},
+                                            "derivatives": {"description": "Funding rates, open interest, liquidation clustering"},
+                                            "narrative": {"description": "Social sentiment and narrative momentum"},
+                                            "market": {"description": "Market microstructure and regime signals"},
+                                            "trend": {"description": "Trend strength and velocity overlay"},
+                                        },
+                                    },
+                                    "llm_insight": {"type": "string", "description": "AI-generated natural language summary"},
+                                    "predicted_move": {"type": "object", "description": "Calibrated 24h/48h price move prediction with probability"},
+                                    "conviction": {"type": "string", "description": "Signal confidence level (high/medium/low)"},
+                                    "signal_strength": {"type": "string", "description": "Relative strength vs historical signals"},
+                                },
+                            },
+                        },
+                    },
                 },
             ),
         )
@@ -286,6 +320,21 @@ if _X402_ENABLED:
                 schema={
                     "type": "object",
                     "description": "Single asset signal with 6-dimension breakdown, momentum, and market context",
+                    "properties": {
+                        "asset": {"type": "string", "description": "Ticker symbol (e.g. BTC)"},
+                        "signal": {
+                            "type": "object",
+                            "properties": {
+                                "composite_score": {"type": "integer", "description": "0-100 conviction score"},
+                                "direction": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
+                                "dimensions": {"type": "object", "description": "whale, technical, derivatives, narrative, market, trend scores"},
+                                "momentum": {"type": "object", "description": "Score velocity and direction over time"},
+                                "llm_insight": {"type": "string", "description": "AI-generated analysis summary"},
+                                "predicted_move": {"type": "object", "description": "Calibrated 24h/48h price prediction"},
+                            },
+                        },
+                        "market_context": {"type": "object", "description": "Current regime, risk level, fear & greed"},
+                    },
                 },
             ),
         )
@@ -311,6 +360,19 @@ if _X402_ENABLED:
                 schema={
                     "type": "object",
                     "description": "30-day rolling signal accuracy with per-asset and per-timeframe breakdown",
+                    "properties": {
+                        "reputation_score": {"type": "number", "description": "Composite reputation 0-100"},
+                        "accuracy_30d": {"type": "number", "description": "Overall accuracy percentage (30-day rolling)"},
+                        "signals_evaluated": {"type": "integer", "description": "Total signals evaluated in window"},
+                        "by_timeframe": {
+                            "type": "object",
+                            "description": "Accuracy split by 24h and 48h evaluation windows",
+                        },
+                        "by_asset": {
+                            "type": "object",
+                            "description": "Per-asset accuracy breakdown (BTC, ETH, SOL, ...)",
+                        },
+                    },
                 },
             ),
         )
@@ -321,72 +383,92 @@ if _X402_ENABLED:
     # --- unpaid_response_body callbacks: return rich SAMPLE data in 402 ---
     # This is critical for agent discovery. Competitors like tick.hugen.tokyo
     # return sample data showing what the paid response looks like.
-    def _unpaid_signal_body(ctx):
-        """Return sample signal data in the 402 body so agents know what they'll get."""
-        return HTTPResponseBody(
-            content_type="application/json",
-            body={
-                "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Sample data below.",
-                "_protocol": "x402",
-                "_docs": "https://web3-signals-api-production.up.railway.app/docs",
-                "_hint": "Decode the PAYMENT-REQUIRED response header (base64 JSON) for payment details.",
-                "sample": {
-                    "portfolio_summary": {
-                        "market_regime": "TRENDING",
-                        "risk_level": "moderate",
-                        "top_buys": ["SOL", "ETH"],
-                        "top_sells": ["XRP"],
-                        "total_assets": 20,
-                    },
-                    "signals": {
-                        "BTC": {
-                            "composite_score": 62,
-                            "direction": "bullish",
-                            "label": "MODERATE BUY",
-                            "dimensions": {
-                                "whale": {"score": 68, "label": "bullish"},
-                                "technical": {"score": 55, "label": "neutral"},
-                                "derivatives": {"score": 70, "label": "bullish"},
-                                "narrative": {"score": 58, "label": "neutral"},
-                                "market": {"score": 65, "label": "bullish"},
-                                "trend": {"score": 60, "label": "neutral"},
-                            },
-                            "llm_insight": "Whale accumulation supports upside bias...",
-                        },
-                        "_truncated": "... 19 more assets in paid response",
-                    },
-                },
+    # --- Static fallback sample data (used when cache is empty) ---
+    _FALLBACK_SIGNAL_SAMPLE = {
+        "portfolio_summary": {
+            "market_regime": "TRENDING", "risk_level": "moderate",
+            "top_buys": ["SOL", "ETH"], "top_sells": ["XRP"], "total_assets": 20,
+        },
+        "signals": {
+            "BTC": {
+                "composite_score": 62, "direction": "bullish", "label": "MODERATE BUY",
+                "_dimensions": "6 dimensions (whale, technical, derivatives, narrative, market, trend) in paid response",
             },
-        )
+            "_truncated": "... 19 more assets in paid response",
+        },
+    }
+
+    def _unpaid_signal_body(ctx):
+        """Return LIVE teaser data in 402 body — shows freshness and builds trust."""
+        base = {
+            "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Live preview below.",
+            "_protocol": "x402",
+            "_docs": "https://web3-signals-api-production.up.railway.app/docs",
+            "_hint": "Decode the PAYMENT-REQUIRED response header (base64 JSON) for payment details.",
+        }
+        # Use live cached data if available
+        if _cached_result:
+            data = _cached_result.get("data", {})
+            signals = data.get("signals", {})
+            summary = data.get("portfolio_summary", {})
+            # Show real summary + top 2 assets (score + direction only, no dimensions/LLM)
+            preview_signals = {}
+            for asset, s in list(signals.items())[:2]:
+                if isinstance(s, dict):
+                    preview_signals[asset] = {
+                        "composite_score": s.get("composite_score"),
+                        "direction": s.get("direction"),
+                        "label": s.get("label", ""),
+                        "_dimensions": "6 dimensions in paid response",
+                        "_llm_insight": "AI analysis in paid response",
+                    }
+            base["sample"] = {
+                "portfolio_summary": summary,
+                "signals": preview_signals,
+                "_truncated": f"... {max(0, len(signals) - 2)} more assets with full 6-dimension breakdown in paid response",
+                "_last_updated": _cached_result.get("timestamp", ""),
+            }
+        else:
+            base["sample"] = _FALLBACK_SIGNAL_SAMPLE
+        return HTTPResponseBody(content_type="application/json", body=base)
 
     def _unpaid_signal_asset_body(ctx):
-        """Return sample single-asset data in the 402 body."""
+        """Return LIVE single-asset teaser in 402 body."""
         asset = ctx.path.split("/")[-1].upper() if "/" in ctx.path else "BTC"
-        return HTTPResponseBody(
-            content_type="application/json",
-            body={
-                "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Sample {asset} signal below.",
-                "_protocol": "x402",
-                "_docs": "https://web3-signals-api-production.up.railway.app/docs",
-                "sample": {
+        base = {
+            "_notice": f"Payment required ({_SIGNAL_PRICE_DISPLAY} USDC on Base). Live {asset} preview below.",
+            "_protocol": "x402",
+            "_docs": "https://web3-signals-api-production.up.railway.app/docs",
+        }
+        # Use live cached data if available
+        if _cached_result:
+            signals = _cached_result.get("data", {}).get("signals", {})
+            s = signals.get(asset, {})
+            if isinstance(s, dict) and s:
+                base["sample"] = {
                     "asset": asset,
                     "signal": {
-                        "composite_score": 62,
-                        "direction": "bullish",
-                        "label": "MODERATE BUY",
-                        "dimensions": {
-                            "whale": {"score": 68, "label": "bullish"},
-                            "technical": {"score": 55, "label": "neutral"},
-                            "derivatives": {"score": 70, "label": "bullish"},
-                        },
-                        "momentum": {"direction": "rising", "delta": 3.2},
-                        "llm_insight": "Whale accumulation pattern detected...",
+                        "composite_score": s.get("composite_score"),
+                        "direction": s.get("direction"),
+                        "label": s.get("label", ""),
+                        "_dimensions": "6 dimensions (whale, technical, derivatives, narrative, market, trend) in paid response",
+                        "_llm_insight": "AI-generated analysis in paid response",
+                        "_predicted_move": "Calibrated price prediction in paid response",
                     },
-                    "market_context": {"regime": "TRENDING", "risk_level": "moderate"},
-                    "_truncated": "Full 6-dimension breakdown in paid response",
+                    "_last_updated": _cached_result.get("timestamp", ""),
+                }
+            else:
+                base["sample"] = {"asset": asset, "error": f"{asset} not found — supported: BTC, ETH, SOL, ..."}
+        else:
+            base["sample"] = {
+                "asset": asset,
+                "signal": {
+                    "composite_score": 62, "direction": "bullish", "label": "MODERATE BUY",
+                    "_dimensions": "6 dimensions in paid response",
                 },
-            },
-        )
+                "_truncated": "Full breakdown in paid response",
+            }
+        return HTTPResponseBody(content_type="application/json", body=base)
 
     def _unpaid_reputation_body(ctx):
         """Return sample reputation data in the 402 body."""
@@ -1064,6 +1146,26 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 _INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 
+# Hosts that identify same-origin dashboard requests
+_OUR_HOSTS = {"web3-signals-api-production.up.railway.app", "localhost", "127.0.0.1"}
+
+
+def _require_internal(request: Request):
+    """Block external access to internal dashboard endpoints.
+
+    Allows:
+    - Requests with matching INTERNAL_API_KEY header
+    - Same-origin requests (referer/origin from our own hosts)
+    Rejects everything else with 403.
+    """
+    if _INTERNAL_API_KEY and request.headers.get("x-internal-key") == _INTERNAL_API_KEY:
+        return
+    referer = (request.headers.get("referer", "") or "").lower()
+    origin = (request.headers.get("origin", "") or "").lower()
+    if any(h in referer or h in origin for h in _OUR_HOSTS):
+        return
+    raise HTTPException(403, detail="Internal endpoint — use /signal with x402 payment")
+
 
 def _get_real_ip(request: Request) -> str:
     """Extract real client IP from reverse proxy headers.
@@ -1482,8 +1584,9 @@ async def health():
 # GET /api/signal — Internal (free) signal endpoint for dashboard
 # ---------------------------------------------------------------------------
 @app.get("/api/signal", tags=["internal"], include_in_schema=False)
-async def get_signal_internal():
+async def get_signal_internal(request: Request):
     """Same data as /signal but free — used by the dashboard UI."""
+    _require_internal(request)
     return await get_signal()
 
 
@@ -1615,14 +1718,15 @@ async def get_asset_signal(asset: str):
 # ---------------------------------------------------------------------------
 # GET /signal/{asset}/trace — Pipeline trace for debugging & transparency
 # ---------------------------------------------------------------------------
-@app.get("/signal/{asset}/trace", tags=["signals"])
-async def get_signal_trace(asset: str):
+@app.get("/signal/{asset}/trace", tags=["signals"], include_in_schema=False)
+async def get_signal_trace(asset: str, request: Request):
     """Full pipeline trace showing how an asset's score was computed step-by-step.
 
     Shows: raw agent data → dimension scores → regime → weights → composite →
     velocity dampening → abstain check → final label.
-    Free endpoint — intended for debugging and transparency.
+    Internal only — exposes dimension weights and IC values.
     """
+    _require_internal(request)
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
 
@@ -1790,8 +1894,9 @@ async def get_signal_trace(asset: str):
 # GET /api/performance/reputation — Internal (free) for dashboard
 # ---------------------------------------------------------------------------
 @app.get("/api/performance/reputation", tags=["internal"], include_in_schema=False)
-async def get_reputation_internal():
+async def get_reputation_internal(request: Request):
     """Same data as /performance/reputation but free — used by dashboard UI."""
+    _require_internal(request)
     return await get_reputation()
 
 
@@ -2786,6 +2891,9 @@ Allow: /llms.txt
 Disallow: /api/
 Disallow: /admin/
 Disallow: /mcp/messages
+Disallow: /signal
+Disallow: /signal/
+Disallow: /performance/reputation
 
 # AI Agent Discovery
 # MCP Server: /.well-known/mcp.json

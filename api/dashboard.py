@@ -1970,6 +1970,13 @@ function renderFunnel(d) {
   const attemptRate = c402 > 0 ? ((attempted / c402) * 100).toFixed(0) : '0';
   const successRate = attempted > 0 ? ((paid / attempted) * 100).toFixed(0) : '0';
 
+  // Bot-filtered stats
+  const ff = d.funnel_filtered || {};
+  const fc402 = ff.challenges_402 || 0;
+  const fAttempted = (ff.payment_succeeded || 0) + (ff.payment_failed || 0);
+  const fAttemptRate = fc402 > 0 ? ((fAttempted / fc402) * 100).toFixed(0) : '0';
+  const botCount = c402 - fc402;
+
   // Funnel visualization
   let html = `
     <div class="perf-section-title">x402 Conversion Funnel</div>
@@ -1978,8 +1985,9 @@ function renderFunnel(d) {
         <div class="funnel-stage">
           <div class="funnel-value" style="color:var(--yellow)">${c402}</div>
           <div class="funnel-label">402 Challenges</div>
+          ${botCount > 0 ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">${fc402} agents / ${botCount} bots</div>` : ''}
         </div>
-        <div class="funnel-rate">${attemptRate}% &rarr;</div>
+        <div class="funnel-rate">${attemptRate}% &rarr;${fc402 > 0 && fAttemptRate !== attemptRate ? `<div style="font-size:10px;color:var(--green);">${fAttemptRate}% filtered</div>` : ''}</div>
         <div class="funnel-stage">
           <div class="funnel-value" style="color:var(--cyan)">${attempted}</div>
           <div class="funnel-label">Payment Attempts</div>

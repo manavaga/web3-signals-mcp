@@ -2049,6 +2049,35 @@ class Storage:
                             result["funnel"]["payment_succeeded"] + result["funnel"]["payment_failed"]
                         )
 
+                        # --- Bot-filtered conversion funnel ---
+                        _BOT_PATTERN = (
+                            "%(googlebot|bingbot|gptbot|claudebot|meta-externalagent"
+                            "|bytespider|ccbot|ahrefsbot|semrushbot|yandexbot"
+                            "|baiduspider|duckduckbot|facebookexternalhit"
+                            "|petalbot|applebot|mj12bot|dotbot|slurp)%"
+                        )
+                        result["funnel_filtered"] = {
+                            "challenges_402": 0, "payment_succeeded": 0,
+                            "payment_failed": 0, "payment_attempted": 0,
+                        }
+                        cur.execute(
+                            f"SELECT payment_status, COUNT(*) FROM {table} "
+                            f"WHERE timestamp >= %s AND payment_status IS NOT NULL "
+                            f"AND LOWER(COALESCE(user_agent, '')) NOT SIMILAR TO %s "
+                            f"GROUP BY payment_status",
+                            (since, _BOT_PATTERN),
+                        )
+                        for row in cur.fetchall():
+                            if row[0] == "payment_required":
+                                result["funnel_filtered"]["challenges_402"] = row[1]
+                            elif row[0] == "paid":
+                                result["funnel_filtered"]["payment_succeeded"] = row[1]
+                            elif row[0] == "payment_failed":
+                                result["funnel_filtered"]["payment_failed"] = row[1]
+                        result["funnel_filtered"]["payment_attempted"] = (
+                            result["funnel_filtered"]["payment_succeeded"] + result["funnel_filtered"]["payment_failed"]
+                        )
+
             except Exception:
                 logger.error("load_api_analytics (postgres) failed: %s", traceback.format_exc(limit=1))
         else:
@@ -2186,6 +2215,40 @@ class Storage:
                             result["funnel"]["payment_failed"] = row[1]
                     result["funnel"]["payment_attempted"] = (
                         result["funnel"]["payment_succeeded"] + result["funnel"]["payment_failed"]
+                    )
+
+                    # --- Bot-filtered conversion funnel (SQLite uses LIKE) ---
+                    _BOT_KEYWORDS = [
+                        "googlebot", "bingbot", "gptbot", "claudebot",
+                        "meta-externalagent", "bytespider", "ccbot",
+                        "ahrefsbot", "semrushbot", "yandexbot", "baiduspider",
+                        "duckduckbot", "facebookexternalhit", "petalbot",
+                        "applebot", "mj12bot", "dotbot", "slurp",
+                    ]
+                    bot_where = " AND ".join(
+                        f"LOWER(COALESCE(user_agent, '')) NOT LIKE '%{kw}%'"
+                        for kw in _BOT_KEYWORDS
+                    )
+                    result["funnel_filtered"] = {
+                        "challenges_402": 0, "payment_succeeded": 0,
+                        "payment_failed": 0, "payment_attempted": 0,
+                    }
+                    rows = conn.execute(
+                        f"SELECT payment_status, COUNT(*) FROM {table} "
+                        f"WHERE timestamp >= ? AND payment_status IS NOT NULL "
+                        f"AND {bot_where} "
+                        f"GROUP BY payment_status",
+                        (since,),
+                    ).fetchall()
+                    for row in rows:
+                        if row[0] == "payment_required":
+                            result["funnel_filtered"]["challenges_402"] = row[1]
+                        elif row[0] == "paid":
+                            result["funnel_filtered"]["payment_succeeded"] = row[1]
+                        elif row[0] == "payment_failed":
+                            result["funnel_filtered"]["payment_failed"] = row[1]
+                    result["funnel_filtered"]["payment_attempted"] = (
+                        result["funnel_filtered"]["payment_succeeded"] + result["funnel_filtered"]["payment_failed"]
                     )
 
             except Exception:
