@@ -1,0 +1,380 @@
+================================================================================
+BACKTEST: Re-scoring historical data with CURRENT YAML config
+Profile: signal_fusion_default
+Conviction: enabled
+Abstain: enabled
+Reweighting: enabled
+Asymmetric weights: ENABLED
+================================================================================
+  Loading exchange_flow_agent...   API error on /api/history?agent=exchange_flow_agent&limit=200&offset=0: HTTP Error 400: 
+0 snapshots
+  Loading technical_agent... 3130 snapshots
+  Loading derivatives_agent... 3118 snapshots
+  Loading narrative_agent... 1125 snapshots
+  Loading market_agent... 1977 snapshots
+
+  Building price timeline... 20 assets
+  Aligning agent snapshots... 1977 aligned time points
+
+  Date range: 2026-02-22 13:57 → 2026-03-31 22:55 (37.4 days)
+
+  Re-scoring 1977 time points × 20 assets...
+  Asset blacklist: excluding {'APT', 'OP', 'MATIC', 'ADA', 'INJ', 'ATOM', 'DOT'} → 13 assets remaining
+
+  Train/Test split: 60%/40%
+    Train: 2026-02-22 13:57 → 2026-03-13 14:36 (1186 points)
+    Test:  2026-03-13 14:36 → 2026-03-31 22:55 (791 points)
+  Generated 25701 re-scored signals
+
+================================================================================
+PART 1: SIGNAL DISTRIBUTION (RE-SCORED)
+================================================================================
+
+  Total re-scored signals: 25701
+  Neutral:   12923 (50.3%)
+  Bullish:   3629 (14.1%)
+  Bearish:   9149 (35.6%)
+  Abstained: 12767 (49.7%)
+
+  Score distribution (buckets of 5):
+     20- 25:   140 (  0.5%) 
+     25- 30:   181 (  0.7%) 
+     30- 35:   587 (  2.3%) ██
+     35- 40:  2510 (  9.8%) █████████
+     40- 45:  4454 ( 17.3%) █████████████████
+     45- 50:  6454 ( 25.1%) █████████████████████████
+     50- 55:  6592 ( 25.6%) █████████████████████████
+     55- 60:  3619 ( 14.1%) ██████████████
+     60- 65:   966 (  3.8%) ███
+     65- 70:   113 (  0.4%) 
+     70- 75:     5 (  0.0%) 
+
+  Mean:   48.2  |  Median: 48.8  |  Min: 13.2  |  Max: 71.9
+
+  Asymmetric weighting: ENABLED
+    Default:  whale=0, technical=0.3, derivatives=0.25, narrative=0.13, market=0.22, trend=0
+    Bullish:  whale=0, technical=0.26, derivatives=0.28, narrative=0.08, market=0.3, trend=0
+    Bearish:  whale=0, technical=0.35, derivatives=0.18, narrative=0.15, market=0.22, trend=0
+
+================================================================================
+PART 2: FORWARD-LOOKING ACCURACY (RE-SCORED)
+================================================================================
+For each directional signal, look up actual price N hours later.
+
+  Unique signals (deduped to 1/asset/12h): 975
+  Directional signals (non-neutral):       458
+  Test-only unique: 468, test directional: 182
+
+  ┌─── 24h WINDOW (n=174) ───┐
+  │  Gradient accuracy:  30.7%
+  │  Binary accuracy:    43.7%
+  │  Avg |price move|:   2.63%
+  │  Bullish signals:   n= 83  gradient=28.1%
+  │  Bearish signals:   n= 91  gradient=33.1%
+  └───────────────────────────────────┘
+
+  ┌─── 48h WINDOW (n=172) ───┐
+  │  Gradient accuracy:  38.0%
+  │  Binary accuracy:    46.5%
+  │  Avg |price move|:   4.17%
+  │  Bullish signals:   n= 81  gradient=32.6%
+  │  Bearish signals:   n= 91  gradient=42.7%
+  └───────────────────────────────────┘
+
+================================================================================
+PART 3: ACCURACY BY ASSET
+================================================================================
+
+   Asset  Gradient  Avg Move  Signals
+  ──────  ────────  ────────  ───────
+  🟡  BTC     46.7%     2.71%       24
+  🟡  FIL     46.0%     3.87%       20
+  🟡  BNB     40.0%     2.11%       26
+  🔴  UNI     37.5%     3.26%       36
+  🔴  ARB     37.1%     3.50%       34
+  🔴  LTC     35.0%     2.05%       28
+  🔴 AVAX     33.6%     3.92%       28
+  🔴  ETH     32.7%     4.48%       26
+  🔴 LINK     32.3%     3.86%       26
+  🔴  SOL     31.7%     3.87%       18
+  🔴  XRP     26.1%     3.29%       28
+  🔴  SUI     25.3%     3.82%       32
+  🔴 NEAR     23.0%     3.71%       20
+
+================================================================================
+PART 4: CONVICTION ANALYSIS
+================================================================================
+              high (|Δ|>15): gradient= 10.0%  avg_move= 2.43%  n=2
+         medium (|Δ| 10-15): gradient= 37.6%  avg_move= 3.28%  n=96
+             low (|Δ| 5-10): gradient= 32.4%  avg_move= 3.40%  n=220
+         very low (|Δ| 0-5): gradient= 40.0%  avg_move= 3.84%  n=28
+
+  Conviction boosted:    gradient=24.4%  n=59
+  Not boosted:           gradient=36.3%  n=287
+
+================================================================================
+PART 5: GRADIENT SCORE DISTRIBUTION
+================================================================================
+       1.0 (strong correct):   34 (  9.8%) ████
+              0.7 (correct):   73 ( 21.1%) ██████████
+         0.4 (weak correct):   54 ( 15.6%) ███████
+           0.2 (weak wrong):   60 ( 17.3%) ████████
+                0.0 (wrong):  125 ( 36.1%) ██████████████████
+
+================================================================================
+PART 6: PER-DIMENSION SIGNAL QUALITY
+================================================================================
+When a specific dimension scores bullish/bearish, how accurate is the composite?
+
+         whale: insufficient data
+     technical: bullish=31% (n=148), bearish=26% (n=56)
+   derivatives: bullish=28% (n=157), bearish=43% (n=78)
+     narrative: bearish=38% (n=144)
+        market: bullish=43% (n=81)
+         trend: bullish=34% (n=214), bearish=35% (n=116)
+
+================================================================================
+PART 7: SPEARMAN IC (INFORMATION COEFFICIENT)
+================================================================================
+Rank correlation between dimension/composite scores and future returns.
+
+IC > +0.05 = STRONG predictor | IC > 0 = OK | IC < 0 = ANTI-PREDICTIVE
+
+  Cross-asset slices: 21 (need ≥3 assets each)
+
+     Dimension  IC (avg)  IC (med)  Slices        Status
+  ────────────  ────────  ────────  ──────  ────────────
+         whale       N/A       N/A       0  ⚪ NO DATA
+     technical   +0.1026   +0.2143      21  🟢 STRONG
+   derivatives   -0.0546   +0.0000      21  🔴 ANTI-PRED
+     narrative   +0.0152   +0.0182       7  🟡 OK
+        market   +0.1034   +0.0476      16  🟢 STRONG
+         trend   -0.0269   +0.0240      21  🔴 ANTI-PRED
+
+     COMPOSITE   -0.0037   -0.0319      21  🔴 ANTI-PRED
+          ICIR   -0.0093  (IC/std — >0.5 is good)
+
+================================================================================
+PART 8: SIGNAL FLOW TIMELINE (per 12h bucket)
+================================================================================
+Shows buy/sell/neutral signal counts per 12-hour window.
+
+            Bucket  Split   Buy  Sell  Neut  AvgSc  Buy Assets
+  ────────────────  ─────  ────  ────  ────  ─────  ──────────────────────────────
+     2026-02-22 PM  TRAIN    23    58   361   50.0  ETH, SOL, ARB | Sell: BNB, BTC, ETH, LINK, UNI, LTC, NEAR, XRP, SOL, AVAX, FIL, ARB, SUI
+     2026-02-23 AM  TRAIN    35   121   390   46.7  ETH, NEAR, ARB | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, SUI, ARB
+     2026-02-23 PM  TRAIN    21   243   282   42.3  NEAR, ARB, BTC, BNB, SUI | Sell: BNB, XRP, AVAX, LINK, UNI, FIL, SUI, BTC, ETH, SOL, LTC, NEAR, ARB
+     2026-02-24 AM  TRAIN   101   202   204   42.8  ARB, ETH, AVAX, BTC, SUI, BNB +1 | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-02-24 PM  TRAIN   257    21   268   55.1  BTC, ETH, BNB, ARB, SUI, FIL +6 | Sell: BTC, SOL, ETH, BNB, XRP, NEAR, AVAX, LINK
+     2026-02-25 AM  TRAIN    66   102   300   50.7  AVAX, LINK, UNI, LTC, ARB, SUI +3 | Sell: BTC, SOL, ETH, BNB, XRP, LINK, UNI, LTC, NEAR, ARB
+     2026-02-25 PM  TRAIN     4   442    61   41.2  ARB, LTC | Sell: BTC, ETH, SOL, BNB, FIL, XRP, LINK, UNI, NEAR, SUI, LTC, ARB, AVAX
+     2026-02-26 AM  TRAIN     0   462     6   38.6   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-02-26 PM  TRAIN     0   410    58   40.4   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, NEAR, ARB, SUI, FIL, LTC
+     2026-02-27 AM  TRAIN     0   399    69   41.1   | Sell: SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, ETH, SUI, BTC
+     2026-02-27 PM  TRAIN     0   407    61   40.5   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-02-28 AM  TRAIN     4   261   229   44.8  ARB | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, FIL, NEAR, ARB, LTC, SUI
+     2026-02-28 PM  TRAIN     4   215   288   46.1  ARB | Sell: ETH, BNB, XRP, UNI, LTC, NEAR, FIL, LINK, ARB, AVAX, SOL
+     2026-03-01 AM  TRAIN     0   334   160   44.0   | Sell: BNB, AVAX, LINK, UNI, FIL, ARB, BTC, LTC, ETH, SOL, XRP, NEAR, SUI
+     2026-03-01 PM  TRAIN     0   331   150   43.9   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, LTC, NEAR, ARB, SUI, FIL, UNI
+     2026-03-02 AM  TRAIN     6   258   204   45.2  BTC | Sell: SOL, BNB, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI, XRP, ETH
+     2026-03-02 PM  TRAIN     7   248   239   45.8  XRP, ARB | Sell: SOL, BNB, LINK, UNI, FIL, LTC, SUI, ETH, BTC, XRP, AVAX, NEAR
+     2026-03-03 AM  TRAIN    21    72   414   50.4  BTC, ETH, LTC, FIL, ARB, XRP | Sell: ETH, SOL, BNB, XRP, AVAX, LINK, LTC, NEAR, SUI, BTC
+     2026-03-03 PM  TRAIN    35    32   466   50.7  XRP, AVAX, LTC, SUI, ARB, NEAR +1 | Sell: FIL, SOL, BNB, UNI, LTC, LINK
+     2026-03-04 AM  TRAIN    12   293   150   43.1  NEAR, BTC | Sell: SOL, LINK, LTC, FIL, UNI, BTC, ETH, BNB, XRP, AVAX, NEAR, ARB, SUI
+     2026-03-04 PM  TRAIN     0   487   137   40.5   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-03-05 AM  TRAIN     0   232   145   44.3   | Sell: SOL, BNB, XRP, AVAX, LINK, UNI, LTC, NEAR, SUI, ARB, BTC, FIL, ETH
+     2026-03-05 PM  TRAIN     0   142   157   46.1   | Sell: BTC, BNB, AVAX, LTC, FIL, LINK, ARB, SUI, NEAR, ETH, XRP, SOL, UNI
+     2026-03-06 AM  TRAIN     0    71   176   48.2   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-03-06 PM  TRAIN   116     2   142   54.2  BTC, ETH, XRP, AVAX, LTC, FIL +3 | Sell: BNB, UNI
+     2026-03-07 AM  TRAIN    85     1   174   53.5  ETH, XRP, LTC, FIL, SUI, SOL +4 | Sell: SUI
+     2026-03-07 PM  TRAIN   200     0    60   58.2  ETH, XRP, AVAX, LTC, SUI, BTC +5
+     2026-03-08 AM  TRAIN   119     3   151   55.1  BTC, ETH, SOL, XRP, AVAX, LINK +6 | Sell: UNI, LTC
+     2026-03-08 PM  TRAIN    94     3   176   54.4  AVAX, ETH, XRP, FIL, NEAR, ARB +5 | Sell: UNI
+     2026-03-09 AM  TRAIN    40    30   203   51.7  BTC, ETH, SOL, XRP, AVAX, LINK +6 | Sell: BNB, LTC, ETH, AVAX, LINK, FIL, UNI
+     2026-03-09 PM  TRAIN    21    52   187   49.4  NEAR, XRP, BTC, LTC, FIL | Sell: ETH, BNB, AVAX, UNI, LINK, SUI, SOL
+     2026-03-10 AM  TRAIN    31    93   136   48.1  BTC, XRP, FIL, NEAR, LTC | Sell: SOL, BNB, AVAX, UNI, SUI, LINK, BTC, ETH, LTC, XRP, ARB
+     2026-03-10 PM  TRAIN    28   151   159   47.1  ETH, UNI, FIL, NEAR, LTC, ARB +1 | Sell: BTC, SOL, BNB, XRP, AVAX, LINK, LTC, ARB, SUI, ETH, UNI, NEAR
+     2026-03-11 AM  TRAIN    32    99   168   49.1  ARB, BTC, ETH, SOL, XRP, LTC +3 | Sell: SOL, BNB, AVAX, UNI, SUI, LINK, NEAR, BTC, ETH, XRP, ARB
+     2026-03-11 PM  TRAIN    13   176    97   45.1  BTC, ETH, XRP, UNI, LTC, FIL +1 | Sell: BNB, AVAX, LINK, SUI, LTC, ETH, SOL, XRP, UNI, NEAR, BTC, ARB
+     2026-03-12 AM  TRAIN    65    72   149   50.1  BTC, XRP, FIL, NEAR, ARB, ETH +2 | Sell: BTC, ETH, SOL, BNB, AVAX, LINK, UNI, LTC, NEAR, ARB, SUI
+     2026-03-12 PM  TRAIN    22   160   130   46.2  FIL, ETH, NEAR, BTC, XRP, LTC +1 | Sell: SOL, BNB, UNI, SUI, AVAX, LINK, LTC, BTC, ETH, XRP, ARB
+     2026-03-13 AM  TRAIN     6   263    43   42.2  FIL | Sell: ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, SUI, ARB, BTC, NEAR
+     2026-03-13 PM  TRAIN     3   205    78   43.8  FIL | Sell: ETH, SOL, BNB, XRP, AVAX, LINK, LTC, ARB, SUI, UNI, NEAR, BTC
+     2026-03-14 AM   TEST    14   150   122   45.9  FIL, ARB | Sell: ETH, BNB, LINK, UNI, LTC, ARB, BTC, AVAX, NEAR, SUI, SOL
+     2026-03-14 PM   TEST     4   143   139   46.1  FIL, ARB | Sell: BTC, ETH, SOL, BNB, AVAX, LINK, UNI, LTC, NEAR, ARB, SUI, XRP
+     2026-03-15 AM   TEST     8   219    98   43.0  FIL | Sell: BTC, SOL, BNB, XRP, AVAX, LINK, UNI, NEAR, SUI, ETH, ARB, LTC, FIL
+     2026-03-15 PM   TEST     0   239    73   42.6   | Sell: ETH, BNB, XRP, AVAX, LINK, UNI, LTC, SOL, NEAR, ARB, SUI, BTC, FIL
+     2026-03-16 AM   TEST     0   230    56   42.7   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, ARB, SUI, FIL, NEAR
+     2026-03-16 PM   TEST     0   169   130   44.8   | Sell: BTC, ETH, SOL, BNB, XRP, AVAX, LINK, UNI, LTC, NEAR, ARB, SUI, FIL
+     2026-03-17 AM   TEST     3   130   140   46.1  AVAX, UNI | Sell: ETH, XRP, AVAX, UNI, FIL, ARB, SUI, BNB, NEAR, SOL, LTC, BTC, LINK
+     2026-03-17 PM   TEST    24    93   169   48.5  UNI, ARB, BTC, XRP, SUI, ETH +1 | Sell: BNB, XRP, LINK, LTC, ARB, SUI, ETH, SOL, UNI, FIL, NEAR, BTC, AVAX
+     2026-03-18 AM   TEST     5   155   126   45.5  BTC, AVAX, UNI, NEAR | Sell: BTC, ETH, BNB, XRP, AVAX, LINK, UNI, LTC, FIL, NEAR, ARB, SUI
+     2026-03-18 PM   TEST     7   136   130   46.9  UNI | Sell: ETH, BNB, LINK, SOL, XRP, AVAX, UNI, LTC, FIL, NEAR, ARB, SUI, BTC
+     2026-03-19 AM   TEST    29    79   178   49.0  UNI, AVAX, SUI, ETH, BNB, ARB +3 | Sell: LTC, ETH, SOL, BNB, XRP, AVAX, LINK, FIL, NEAR, ARB, SUI, BTC
+     2026-03-19 PM   TEST    59    24   203   51.7  BTC, ETH, BNB, UNI, LTC, FIL +5 | Sell: BTC, LINK, SUI, SOL, BNB, XRP, NEAR, LTC
+     2026-03-20 AM   TEST    99    11   176   53.8  XRP, AVAX, LINK, UNI, FIL, SUI +7 | Sell: SOL, LTC, ARB, ETH, NEAR
+     2026-03-20 PM   TEST    38    46   202   50.2  BTC, UNI, FIL, ARB, SUI, ETH +6 | Sell: LINK, LTC, SUI, BNB, ETH, SOL, ARB, XRP
+     2026-03-21 AM   TEST    54    52   167   51.4  SUI, LINK, FIL, BTC, AVAX, UNI +3 | Sell: ETH, SOL, BNB, XRP, LTC
+     2026-03-21 PM   TEST    56    26   204   51.8  XRP, AVAX, LINK, UNI, FIL, NEAR +3 | Sell: SOL, LTC, BNB, ETH, FIL, ARB
+     2026-03-22 AM   TEST   104     1   168   55.0  BTC, BNB, AVAX, LINK, UNI, FIL +7 | Sell: ETH
+     2026-03-22 PM   TEST   128     0   158   55.6  BTC, BNB, AVAX, UNI, LTC, FIL +7
+     2026-03-23 AM   TEST   136     0   137   56.4  BTC, SOL, AVAX, UNI, FIL, NEAR +7
+     2026-03-23 PM   TEST    54    19   213   52.4  BTC, UNI, FIL, NEAR, ARB, XRP +4 | Sell: LTC, BTC, ETH, SOL, BNB, XRP, AVAX, LINK
+     2026-03-24 AM   TEST    35    13   225   51.5  UNI, ARB, ETH, BNB, LINK, SUI +3 | Sell: SOL, FIL, LINK
+     2026-03-24 PM   TEST   113     2   158   55.1  ETH, XRP, AVAX, NEAR, ARB, SUI +6 | Sell: SOL, LINK
+     2026-03-25 AM   TEST    55     6   199   53.7  SOL, XRP, NEAR, ETH, ARB, UNI +1 | Sell: LTC, SOL, XRP
+     2026-03-25 PM   TEST    47    17   196   52.3  ETH, UNI, SUI, NEAR, ARB, XRP | Sell: LTC, BNB, FIL, SOL, LINK
+     2026-03-26 AM   TEST   100     5   155   55.0  XRP, NEAR, ARB, SUI, LTC, UNI +7 | Sell: SOL, LINK, LTC
+     2026-03-26 PM   TEST   161     0   112   56.6  BTC, ETH, SOL, BNB, XRP, AVAX +7
+     2026-03-27 AM   TEST   152     0   121   56.4  ETH, SOL, BNB, XRP, AVAX, LINK +7
+     2026-03-27 PM   TEST   105     0   155   55.2  AVAX, UNI, LTC, FIL, ARB, SUI +5
+     2026-03-28 AM   TEST    84     4   185   53.7  LINK, UNI, FIL, SUI, AVAX, ARB +6 | Sell: BNB
+     2026-03-28 PM   TEST    75     6   205   53.7  BTC, SOL, XRP, AVAX, LINK, UNI +6 | Sell: BNB, SUI
+     2026-03-29 AM   TEST    62     5   206   53.9  BTC, LINK, LTC, ARB, ETH, SOL +5 | Sell: BNB
+     2026-03-29 PM   TEST    22     6   258   51.2  ETH, SOL, XRP, AVAX, LINK, UNI +4 | Sell: BTC, BNB
+     2026-03-30 AM   TEST    59     3   224   53.7  SUI, BTC, FIL, ARB, ETH, XRP +7 | Sell: SOL, XRP, UNI
+     2026-03-30 PM   TEST    35     7   231   52.6  SUI, BNB, XRP, AVAX, LTC, FIL +4 | Sell: BNB, XRP, UNI, FIL
+     2026-03-31 AM   TEST   101     0   159   55.8  AVAX, FIL, NEAR, ARB, BTC, XRP +7
+     2026-03-31 PM   TEST   130     0   117   56.5  ETH, XRP, LTC, SUI, BTC, AVAX +6
+
+  Totals: 3629 buy (14%), 9149 sell (36%), 12923 neutral (50%)
+
+================================================================================
+PART 9: TARGET PRICE EVALUATION (test set only)
+================================================================================
+For each directional signal, replay 48h price path: TP hit / SL hit / expired.
+
+  Total target evaluations: 461
+  TP Hit:    10 (  2.2%)  avg P&L: +8.81%  avg time: 38.2h
+  SL Hit:    66 ( 14.3%)  avg P&L: -6.15%  avg time: 31.3h
+  Expired:  385 ( 83.5%)  avg P&L: +0.79%
+
+  Expected Value per trade: -0.029%
+  Effective win rate (TP + profitable expires): 50.5%
+
+  Per-asset target accuracy:
+   Asset  Trades   WinR    AvgW    AvgL       EV
+  ──────  ──────  ─────  ──────  ──────  ───────
+  🔴  ARB      36     3%  +9.09  -6.67  -0.873%
+  🔴 AVAX      34     3%  +8.96  -5.98  -0.164%
+  🟢  BNB      36     0%  +0.00  +0.00  +0.297%
+  🟢  BTC      32     0%  +0.00  -4.50  +0.033%
+  🟢  ETH      37     8%  +6.75  -4.50  +0.415%
+  🟢  FIL      37     3%  +11.49  -7.77  +0.616%
+  🟢 LINK      35     3%  +8.98  -6.01  +0.747%
+  🟢  LTC      36     0%  +0.00  -6.00  +0.305%
+  🔴 NEAR      34     0%  +0.00  -7.67  -1.371%
+  🟢  SOL      36     6%  +9.00  -6.00  +0.226%
+  🔴  SUI      36     0%  +0.00  -6.99  -0.686%
+  🟢  UNI      36     3%  +11.35  -7.57  +0.954%
+  🔴  XRP      36     0%  +0.00  -6.01  -0.962%
+
+  Stop-loss tightness (SL hit rate by asset — high = SL too tight):
+      ARB: SL hit 17% of 36 trades
+     AVAX: SL hit 21% of 34 trades
+      BNB: SL hit 0% of 36 trades
+      BTC: SL hit 22% of 32 trades
+      ETH: SL hit 24% of 37 trades
+      FIL: SL hit 14% of 37 trades
+     LINK: SL hit 11% of 35 trades
+      LTC: SL hit 6% of 36 trades
+     NEAR: SL hit 21% of 34 trades
+      SOL: SL hit 11% of 36 trades
+      SUI: SL hit 17% of 36 trades
+      UNI: SL hit 6% of 36 trades
+      XRP: SL hit 19% of 36 trades
+
+================================================================================
+PART 10: PREDICTION QUALITY (test set only)
+================================================================================
+How accurate are predicted move percentages vs actual outcomes?
+
+  Prediction evaluations: 172
+  Mean Absolute Error:    4.19%
+  Directional accuracy:   46.5% (80/172)
+
+  Calibration (predicted bucket vs actual):
+   Predicted     n  Avg Pred  Avg Actual     MAE  DirAcc
+  ──────────  ────  ────────  ──────────  ──────  ──────
+        0-2%   172     0.37%       4.17%   4.19%   46.5%
+        2-5%     0         —           —       —       —
+         5%+     0         —           —       —       —
+
+================================================================================
+PART 11: INPUT DATA QUALITY AUDIT
+================================================================================
+Per-dimension score statistics and data completeness.
+
+     Dimension   Mean    Std    Min    Max  Spread  45-55%  Full%  None%
+  ────────────  ─────  ─────  ─────  ─────  ──────  ──────  ─────  ─────
+         whale   50.0    0.0   50.0   50.0      0 ⚠️  100.0 ⚠️     0%   100%
+     technical   55.3   10.6   10.0   73.5     64   35.1   100%     0%
+   derivatives   51.5   12.8    3.0   76.0     73   33.5   100%     0%
+     narrative   30.5   14.9    5.0   63.9     59   31.7    54%    31%
+        market   53.1    3.3   37.4   63.0     26   75.9 ⚠️    92%     0%
+         trend   45.2   22.8    5.0   95.0     90    8.6   100%     0%
+
+  Cross-dimension independence (low correlation = good, dimensions add independent info):
+           whale × technical   : r=+0.000
+           whale × derivatives : r=+0.000
+           whale × narrative   : r=+0.000
+           whale × market      : r=+0.000
+           whale × trend       : r=+0.000
+       technical × derivatives : r=+0.096
+       technical × narrative   : r=+0.143
+       technical × market      : r=+0.011
+       technical × trend       : r=-0.631
+     derivatives × narrative   : r=+0.047
+     derivatives × market      : r=-0.003
+     derivatives × trend       : r=-0.113
+       narrative × market      : r=+0.157
+       narrative × trend       : r=+0.085
+          market × trend       : r=+0.064
+
+================================================================================
+PART 12: REGIME ANALYSIS (test set only)
+================================================================================
+Accuracy split by market regime and Fear & Greed level.
+
+  Accuracy by market regime:
+        Regime     n  Gradient  Binary  Avg Move
+  ────────────  ────  ────────  ──────  ────────
+      trending    14     76.4%  100.0%     4.84%
+       ranging   121     26.5%   38.8%     3.22%
+       unknown   211     36.0%   45.0%     3.41%
+
+  Accuracy by Fear & Greed bucket:
+              F&G Bucket     n  Gradient  Binary  Avg Move
+  ──────────────────────  ────  ────────  ──────  ────────
+      extreme_fear (<25)   292     26.0%   34.9%     3.14%
+            fear (25-45)    54     79.4%  100.0%     4.80%
+         neutral (45-55)     0         —       —         —
+           greed (55-75)     0         —       —         —
+     extreme_greed (75+)     0         —       —         —
+
+================================================================================
+📊 SUMMARY
+================================================================================
+
+  Overall gradient accuracy: 34.3%
+  Overall binary accuracy:   45.1%
+  Average absolute move:     3.40%
+  Total evaluations:         346
+  Re-scored signals:         25701
+  Days of data:              37.4
+
+  Config: conviction=enabled
+          abstain=enabled
+          asymmetric_weights=ENABLED
+          weights_default={'exchange_flow': 0.1, 'technical': 0.3, 'derivatives': 0.25, 'narrative': 0.13, 'market': 0.22}
+
+  Baseline (old YAML): 25.6%
+  Previous best:       52.5%
+  Target:              >60%
+
+  Scale:
+    >60% = Good (beating random by 2x)
+    50%  = Mediocre (coin flip)
+    40%  = Below random (~30%)
+    <30% = Harmful (contrarian indicator)
+
