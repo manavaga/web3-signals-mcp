@@ -36,6 +36,8 @@ asset_blacklist:
     - OP      # 41.9% accuracy — below coin-flip, drags portfolio
     - ADA     # volatile mid-cap, unreliable during sentiment reversals
     - DOT     # volatile mid-cap, weak recovery from fear events
+    - APT     # small-cap, score overlaps correct buys but consistently wrong (-3.21%)
+    - MATIC   # mid-cap, marginal wrong buy during fear reversals (-0.97%)
 
 # ---------------------------------------------------------------------------
 # Agent names — must match agent_name used in storage
