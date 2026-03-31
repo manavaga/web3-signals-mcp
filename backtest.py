@@ -1397,21 +1397,103 @@ def run_backtest():
     else:
         assets_list = all_assets
 
+    # ================================================================
+    # TRAIN/TEST TEMPORAL SPLIT
+    # ================================================================
+    split_ratio = 0.60
+    split_idx = int(len(aligned) * split_ratio)
+    split_timestamp = aligned[split_idx][0] if split_idx < len(aligned) else aligned[-1][0]
+    print(f"\n  Train/Test split: {split_ratio:.0%}/{1-split_ratio:.0%}")
+    print(f"    Train: {aligned[0][0].strftime('%Y-%m-%d %H:%M')} → {split_timestamp.strftime('%Y-%m-%d %H:%M')} ({split_idx} points)")
+    print(f"    Test:  {split_timestamp.strftime('%Y-%m-%d %H:%M')} → {aligned[-1][0].strftime('%Y-%m-%d %H:%M')} ({len(aligned) - split_idx} points)")
+
+    from signal_fusion.target_calculator import ATR_SL_MULTIPLIERS
+
     all_signals: List[Dict] = []
     prev_dims_by_asset: Dict[str, Dict] = {}  # Track previous dimensions for delta scoring
     prev_oi_by_asset.clear()  # Reset OI state for clean backtest run
     prev_btc_dom_val.clear()  # Reset BTC dominance state for clean backtest run
-    for ts, snapshot in aligned:
+    for idx, (ts, snapshot) in enumerate(aligned):
         # Detect regime once per time point (global, based on BTC)
-        _, regime_shifts = detect_regime(snapshot)
+        detected_regime, regime_shifts = detect_regime(snapshot)
         for asset in assets_list:
             result = compute_composite(asset, snapshot, prev_dims_by_asset.get(asset), regime_shifts)
             # Store current dimensions as previous for next iteration
             prev_dims_by_asset[asset] = result.get("dimensions", {})
+
+            # Calculate target/SL for directional signals
+            target_data = {}
+            if result["direction"] in ("bullish", "bearish") and not result.get("abstain"):
+                market_snap = snapshot.get("market")
+                tech_snap = snapshot.get("technical")
+                entry_price = None
+                atr_14 = None
+
+                if market_snap:
+                    mkt_data = market_snap.get("data", {})
+                    pa = mkt_data.get("per_asset", {}).get(asset, {})
+                    entry_price = pa.get("price")
+                if entry_price is None and tech_snap:
+                    tech_data = tech_snap.get("data", {})
+                    entry_price = tech_data.get("by_asset", {}).get(asset, {}).get("price")
+                if tech_snap:
+                    tech_data = tech_snap.get("data", {})
+                    atr_14 = tech_data.get("by_asset", {}).get(asset, {}).get("atr_14")
+
+                if entry_price and float(entry_price) > 0:
+                    entry_price = float(entry_price)
+                    if atr_14 is None or float(atr_14) <= 0:
+                        atr_14 = entry_price * 0.03  # fallback
+                    else:
+                        atr_14 = float(atr_14)
+
+                    sl_mult = ATR_SL_MULTIPLIERS.get(asset, 2.0)
+                    direction_map = "buy" if result["direction"] == "bullish" else "sell"
+
+                    if direction_map == "buy":
+                        stop_loss = entry_price - (atr_14 * sl_mult)
+                        distance = result["composite_score"] - 50.0
+                        atr_pct = (atr_14 / entry_price) * 100
+                        move_fraction = distance / 35.0
+                        predicted_pct = move_fraction * atr_pct * 0.5
+                        predicted_pct = max(0.1, min(atr_pct * 2.0, predicted_pct))
+                        target_price = entry_price * (1 + predicted_pct / 100)
+                        risk = entry_price - stop_loss
+                        if target_price - entry_price < risk * 1.5:
+                            target_price = entry_price + risk * 1.5
+                    else:
+                        stop_loss = entry_price + (atr_14 * sl_mult)
+                        distance = 50.0 - result["composite_score"]
+                        atr_pct = (atr_14 / entry_price) * 100
+                        move_fraction = distance / 35.0
+                        predicted_pct = move_fraction * atr_pct * 0.5
+                        predicted_pct = max(0.1, min(atr_pct * 2.0, predicted_pct))
+                        target_price = entry_price * (1 - predicted_pct / 100)
+                        risk = stop_loss - entry_price
+                        if entry_price - target_price < risk * 1.5:
+                            target_price = entry_price - risk * 1.5
+
+                    target_data = {
+                        "entry_price": round(entry_price, 2),
+                        "target_price": round(target_price, 2),
+                        "stop_loss": round(stop_loss, 2),
+                        "predicted_move_pct": round(predicted_pct, 2),
+                    }
+
+            # Get F&G value for regime analysis
+            fg_for_tag = None
+            market_snap_data = snapshot.get("market")
+            if market_snap_data:
+                fg_for_tag = market_snap_data.get("data", {}).get("sentiment", {}).get("fear_greed_index")
+
             all_signals.append({
                 "timestamp": ts,
                 "asset": asset,
+                "split": "train" if idx < split_idx else "test",
+                "regime": detected_regime,
+                "fg_value": float(fg_for_tag) if fg_for_tag is not None else None,
                 **result,
+                **target_data,
             })
 
     print(f"  Generated {len(all_signals)} re-scored signals")
@@ -1486,16 +1568,21 @@ def run_backtest():
             unique_signals.append(sig)
 
     directional = [s for s in unique_signals if s["direction"] != "neutral"]
+    # Test-only subsets for accuracy evaluation
+    test_unique = [s for s in unique_signals if s["split"] == "test"]
+    test_directional = [s for s in test_unique if s["direction"] != "neutral"]
     print(f"  Unique signals (deduped to 1/asset/12h): {len(unique_signals)}")
     print(f"  Directional signals (non-neutral):       {len(directional)}")
+    print(f"  Test-only unique: {len(test_unique)}, test directional: {len(test_directional)}")
 
     all_evals = []
+    now_ts = datetime.now(timezone.utc).timestamp()
 
     for wh in windows:
         label = window_labels[wh]
         evals = []
 
-        for sig in directional:
+        for sig in test_directional:
             asset = sig["asset"]
             tl = price_timeline.get(asset, [])
             if not tl:
@@ -1504,10 +1591,6 @@ def run_backtest():
             target_time = sig["timestamp"] + timedelta(hours=wh)
 
             # Phase B3: Temporal gating — prevent look-ahead bias
-            # Only score signals whose target evaluation time is in the past.
-            # I5 audit found backtest.py lacked this check that retroactive_accuracy.py
-            # correctly implements. Without this, future prices could leak into scoring.
-            now_ts = datetime.now(timezone.utc).timestamp()
             if target_time.timestamp() > now_ts:
                 continue
 
@@ -1537,6 +1620,10 @@ def run_backtest():
                 "conviction_boost": sig.get("conviction_boost", False),
                 "dimensions": sig.get("dimensions", {}),
                 "data_tiers": sig.get("data_tiers", {}),
+                "regime": sig.get("regime", "unknown"),
+                "fg_value": sig.get("fg_value"),
+                "split": sig.get("split", "test"),
+                "predicted_move_pct": sig.get("predicted_move_pct", 0),
             }
             evals.append(ev)
             all_evals.append(ev)
@@ -1830,6 +1917,415 @@ def run_backtest():
     else:
         print(f"  Only {len(ic_evals)} 24h evals with dimensions (need ≥10 for IC)")
         print("  Cannot compute Information Coefficient without more data.")
+
+    # ================================================================
+    # PART 8: SIGNAL FLOW TIMELINE (per 12h bucket)
+    # ================================================================
+    print(f"\n{'='*80}")
+    print("PART 8: SIGNAL FLOW TIMELINE (per 12h bucket)")
+    print(f"{'='*80}")
+    print("Shows buy/sell/neutral signal counts per 12-hour window.\n")
+
+    timeline_buckets: Dict[str, Dict[str, Any]] = {}
+    for sig in all_signals:
+        t = sig["timestamp"]
+        bucket = t.strftime("%Y-%m-%d") + (" AM" if t.hour < 12 else " PM")
+        if bucket not in timeline_buckets:
+            timeline_buckets[bucket] = {
+                "buy": 0, "sell": 0, "neutral": 0,
+                "buy_assets": [], "sell_assets": [],
+                "scores": [], "split": sig["split"],
+            }
+        b = timeline_buckets[bucket]
+        d = sig["direction"]
+        if d == "bullish":
+            b["buy"] += 1
+            if sig["asset"] not in b["buy_assets"]:
+                b["buy_assets"].append(sig["asset"])
+        elif d == "bearish":
+            b["sell"] += 1
+            if sig["asset"] not in b["sell_assets"]:
+                b["sell_assets"].append(sig["asset"])
+        else:
+            b["neutral"] += 1
+        b["scores"].append(sig["composite_score"])
+
+    print(f"  {'Bucket':>16s}  {'Split':>5s}  {'Buy':>4s}  {'Sell':>4s}  {'Neut':>4s}  {'AvgSc':>5s}  Buy Assets")
+    print(f"  {'─'*16}  {'─'*5}  {'─'*4}  {'─'*4}  {'─'*4}  {'─'*5}  {'─'*30}")
+    for bucket in sorted(timeline_buckets.keys()):
+        b = timeline_buckets[bucket]
+        avg_sc = sum(b["scores"]) / len(b["scores"]) if b["scores"] else 0
+        split_tag = "TRAIN" if b["split"] == "train" else "TEST"
+        buy_list = ", ".join(b["buy_assets"][:6])
+        if len(b["buy_assets"]) > 6:
+            buy_list += f" +{len(b['buy_assets'])-6}"
+        sell_note = f" | Sell: {', '.join(b['sell_assets'])}" if b["sell_assets"] else ""
+        print(f"  {bucket:>16s}  {split_tag:>5s}  {b['buy']:4d}  {b['sell']:4d}  {b['neutral']:4d}  {avg_sc:5.1f}  {buy_list}{sell_note}")
+
+    total_buy = sum(b["buy"] for b in timeline_buckets.values())
+    total_sell = sum(b["sell"] for b in timeline_buckets.values())
+    total_neutral = sum(b["neutral"] for b in timeline_buckets.values())
+    total_all = total_buy + total_sell + total_neutral
+    print(f"\n  Totals: {total_buy} buy ({total_buy/total_all*100:.0f}%), "
+          f"{total_sell} sell ({total_sell/total_all*100:.0f}%), "
+          f"{total_neutral} neutral ({total_neutral/total_all*100:.0f}%)")
+
+    # ================================================================
+    # PART 9: TARGET PRICE EVALUATION (test set only)
+    # ================================================================
+    print(f"\n{'='*80}")
+    print("PART 9: TARGET PRICE EVALUATION (test set only)")
+    print(f"{'='*80}")
+    print("For each directional signal, replay 48h price path: TP hit / SL hit / expired.\n")
+
+    target_signals = [s for s in all_signals
+                      if s["split"] == "test"
+                      and s.get("entry_price") is not None
+                      and s["direction"] != "neutral"]
+
+    # Deduplicate to 1 per asset per 12h
+    seen_target: set = set()
+    unique_target: List[Dict] = []
+    for sig in target_signals:
+        bk = (sig["asset"], sig["timestamp"].strftime("%Y-%m-%d") +
+              ("_AM" if sig["timestamp"].hour < 12 else "_PM"))
+        if bk not in seen_target:
+            seen_target.add(bk)
+            unique_target.append(sig)
+
+    outcomes: List[Dict] = []
+
+    for sig in unique_target:
+        asset = sig["asset"]
+        tl = price_timeline.get(asset, [])
+        if not tl:
+            continue
+
+        entry = sig["entry_price"]
+        tp = sig["target_price"]
+        sl = sig["stop_loss"]
+        direction = sig["direction"]
+        sig_time = sig["timestamp"]
+        end_time = sig_time + timedelta(hours=48)
+
+        # Walk price path
+        outcome = "EXPIRED"
+        final_price = entry
+        time_to_outcome = 48.0
+
+        for pt_time, pt_price in tl:
+            if pt_time <= sig_time:
+                continue
+            if pt_time > end_time:
+                break
+
+            final_price = pt_price
+
+            if direction == "bullish":
+                if pt_price >= tp:
+                    outcome = "TP_HIT"
+                    time_to_outcome = (pt_time - sig_time).total_seconds() / 3600
+                    final_price = tp
+                    break
+                elif pt_price <= sl:
+                    outcome = "SL_HIT"
+                    time_to_outcome = (pt_time - sig_time).total_seconds() / 3600
+                    final_price = sl
+                    break
+            else:  # bearish
+                if pt_price <= tp:
+                    outcome = "TP_HIT"
+                    time_to_outcome = (pt_time - sig_time).total_seconds() / 3600
+                    final_price = tp
+                    break
+                elif pt_price >= sl:
+                    outcome = "SL_HIT"
+                    time_to_outcome = (pt_time - sig_time).total_seconds() / 3600
+                    final_price = sl
+                    break
+
+        if direction == "bullish":
+            pnl_pct = (final_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - final_price) / entry * 100
+
+        outcomes.append({
+            "asset": asset,
+            "direction": direction,
+            "outcome": outcome,
+            "pnl_pct": round(pnl_pct, 2),
+            "time_to_outcome_hours": round(time_to_outcome, 1),
+            "entry": entry,
+            "target": tp,
+            "stop_loss": sl,
+            "predicted_move_pct": sig.get("predicted_move_pct", 0),
+            "composite_score": sig["composite_score"],
+            "timestamp": sig_time,
+        })
+
+    if outcomes:
+        tp_hits = [o for o in outcomes if o["outcome"] == "TP_HIT"]
+        sl_hits = [o for o in outcomes if o["outcome"] == "SL_HIT"]
+        expired = [o for o in outcomes if o["outcome"] == "EXPIRED"]
+
+        win_rate = len(tp_hits) / len(outcomes) * 100
+        loss_rate = len(sl_hits) / len(outcomes) * 100
+        expire_rate = len(expired) / len(outcomes) * 100
+
+        avg_win = sum(o["pnl_pct"] for o in tp_hits) / len(tp_hits) if tp_hits else 0
+        avg_loss = sum(o["pnl_pct"] for o in sl_hits) / len(sl_hits) if sl_hits else 0
+        avg_expired_pnl = sum(o["pnl_pct"] for o in expired) / len(expired) if expired else 0
+
+        ev_per_trade = (len(tp_hits) * avg_win + len(sl_hits) * avg_loss +
+                        len(expired) * avg_expired_pnl) / len(outcomes)
+
+        avg_time_tp = sum(o["time_to_outcome_hours"] for o in tp_hits) / len(tp_hits) if tp_hits else 0
+        avg_time_sl = sum(o["time_to_outcome_hours"] for o in sl_hits) / len(sl_hits) if sl_hits else 0
+
+        print(f"  Total target evaluations: {len(outcomes)}")
+        print(f"  TP Hit:   {len(tp_hits):3d} ({win_rate:5.1f}%)  avg P&L: {avg_win:+.2f}%  avg time: {avg_time_tp:.1f}h")
+        print(f"  SL Hit:   {len(sl_hits):3d} ({loss_rate:5.1f}%)  avg P&L: {avg_loss:+.2f}%  avg time: {avg_time_sl:.1f}h")
+        print(f"  Expired:  {len(expired):3d} ({expire_rate:5.1f}%)  avg P&L: {avg_expired_pnl:+.2f}%")
+        print(f"\n  Expected Value per trade: {ev_per_trade:+.3f}%")
+        print(f"  Effective win rate (TP + profitable expires): "
+              f"{(len(tp_hits) + sum(1 for o in expired if o['pnl_pct'] > 0)) / len(outcomes) * 100:.1f}%")
+
+        # Per-asset breakdown
+        print(f"\n  Per-asset target accuracy:")
+        print(f"  {'Asset':>6s}  {'Trades':>6s}  {'WinR':>5s}  {'AvgW':>6s}  {'AvgL':>6s}  {'EV':>7s}")
+        print(f"  {'─'*6}  {'─'*6}  {'─'*5}  {'─'*6}  {'─'*6}  {'─'*7}")
+        asset_outcomes: Dict[str, List[Dict]] = defaultdict(list)
+        for o in outcomes:
+            asset_outcomes[o["asset"]].append(o)
+        for asset in sorted(asset_outcomes.keys()):
+            ao = asset_outcomes[asset]
+            a_tp = [o for o in ao if o["outcome"] == "TP_HIT"]
+            a_sl = [o for o in ao if o["outcome"] == "SL_HIT"]
+            a_wr = len(a_tp) / len(ao) * 100 if ao else 0
+            a_avgw = sum(o["pnl_pct"] for o in a_tp) / len(a_tp) if a_tp else 0
+            a_avgl = sum(o["pnl_pct"] for o in a_sl) / len(a_sl) if a_sl else 0
+            a_ev = sum(o["pnl_pct"] for o in ao) / len(ao) if ao else 0
+            marker = "🟢" if a_ev > 0 else "🔴"
+            print(f"  {marker}{asset:>5s}  {len(ao):6d}  {a_wr:4.0f}%  {a_avgw:+5.2f}  {a_avgl:+5.2f}  {a_ev:+6.3f}%")
+
+        # SL tightness analysis
+        print(f"\n  Stop-loss tightness (SL hit rate by asset — high = SL too tight):")
+        for asset in sorted(asset_outcomes.keys()):
+            ao = asset_outcomes[asset]
+            sl_rate = sum(1 for o in ao if o["outcome"] == "SL_HIT") / len(ao) * 100
+            marker = "⚠️ " if sl_rate > 50 else "  "
+            print(f"  {marker}{asset:>5s}: SL hit {sl_rate:.0f}% of {len(ao)} trades")
+    else:
+        print("  No target evaluations possible (no directional signals with price data)")
+
+    # ================================================================
+    # PART 10: PREDICTION QUALITY (test set only)
+    # ================================================================
+    print(f"\n{'='*80}")
+    print("PART 10: PREDICTION QUALITY (test set only)")
+    print(f"{'='*80}")
+    print("How accurate are predicted move percentages vs actual outcomes?\n")
+
+    pred_evals: List[Dict] = []
+    for sig in test_directional:
+        asset = sig["asset"]
+        tl = price_timeline.get(asset, [])
+        if not tl:
+            continue
+        target_time = sig["timestamp"] + timedelta(hours=48)
+        if target_time.timestamp() > now_ts:
+            continue
+        future_price = find_price_at_offset(tl, target_time, max_tolerance_hours=6.0)
+        signal_price = find_price_at_offset(tl, sig["timestamp"], max_tolerance_hours=2.0)
+        if future_price is None or signal_price is None or signal_price <= 0:
+            continue
+        actual_pct = (future_price - signal_price) / signal_price * 100
+        predicted = sig.get("predicted_move_pct", 0)
+        if sig["direction"] == "bearish":
+            actual_for_comparison = -actual_pct
+        else:
+            actual_for_comparison = actual_pct
+
+        pred_evals.append({
+            "asset": asset,
+            "direction": sig["direction"],
+            "predicted_pct": predicted,
+            "actual_pct": round(actual_pct, 2),
+            "actual_directional": round(actual_for_comparison, 2),
+            "error": round(abs(predicted - actual_for_comparison), 2),
+            "direction_correct": actual_for_comparison > 0,
+        })
+
+    if pred_evals:
+        mae = sum(e["error"] for e in pred_evals) / len(pred_evals)
+        dir_correct = sum(1 for e in pred_evals if e["direction_correct"])
+        dir_acc = dir_correct / len(pred_evals) * 100
+
+        print(f"  Prediction evaluations: {len(pred_evals)}")
+        print(f"  Mean Absolute Error:    {mae:.2f}%")
+        print(f"  Directional accuracy:   {dir_acc:.1f}% ({dir_correct}/{len(pred_evals)})")
+
+        # Calibration buckets
+        cal_buckets: Dict[str, List[Dict]] = {"0-2%": [], "2-5%": [], "5%+": []}
+        for e in pred_evals:
+            p = abs(e["predicted_pct"])
+            if p < 2:
+                cal_buckets["0-2%"].append(e)
+            elif p < 5:
+                cal_buckets["2-5%"].append(e)
+            else:
+                cal_buckets["5%+"].append(e)
+
+        print(f"\n  Calibration (predicted bucket vs actual):")
+        print(f"  {'Predicted':>10s}  {'n':>4s}  {'Avg Pred':>8s}  {'Avg Actual':>10s}  {'MAE':>6s}  {'DirAcc':>6s}")
+        print(f"  {'─'*10}  {'─'*4}  {'─'*8}  {'─'*10}  {'─'*6}  {'─'*6}")
+        for cal_label, entries in cal_buckets.items():
+            if entries:
+                ap = sum(abs(e["predicted_pct"]) for e in entries) / len(entries)
+                aa = sum(abs(e["actual_directional"]) for e in entries) / len(entries)
+                am = sum(e["error"] for e in entries) / len(entries)
+                da = sum(1 for e in entries if e["direction_correct"]) / len(entries) * 100
+                print(f"  {cal_label:>10s}  {len(entries):4d}  {ap:7.2f}%  {aa:9.2f}%  {am:5.2f}%  {da:5.1f}%")
+            else:
+                print(f"  {cal_label:>10s}  {0:4d}  {'—':>8s}  {'—':>10s}  {'—':>6s}  {'—':>6s}")
+    else:
+        print("  No prediction evaluations possible")
+
+    # ================================================================
+    # PART 11: INPUT DATA QUALITY AUDIT
+    # ================================================================
+    print(f"\n{'='*80}")
+    print("PART 11: INPUT DATA QUALITY AUDIT")
+    print(f"{'='*80}")
+    print("Per-dimension score statistics and data completeness.\n")
+
+    dim_stats: Dict[str, Dict[str, Any]] = {}
+    for dim_name in ALL_ROLES:
+        scores_list: List[float] = []
+        no_data_count = 0
+        full_count_d = 0
+        partial_count_d = 0
+
+        for sig in all_signals:
+            dim = sig.get("dimensions", {}).get(dim_name, {})
+            ds = dim.get("score")
+            tier = dim.get("data_tier", "unknown")
+            if ds is not None:
+                scores_list.append(ds)
+            if tier == "none":
+                no_data_count += 1
+            elif tier == "full":
+                full_count_d += 1
+            elif tier == "partial":
+                partial_count_d += 1
+
+        if scores_list:
+            mean_s = sum(scores_list) / len(scores_list)
+            sorted_s = sorted(scores_list)
+            median_s = sorted_s[len(sorted_s) // 2]
+            min_s = min(scores_list)
+            max_s = max(scores_list)
+            std_s = (sum((x - mean_s) ** 2 for x in scores_list) / len(scores_list)) ** 0.5
+            cluster_pct = sum(1 for s in scores_list if 45 <= s <= 55) / len(scores_list) * 100
+            spread = max_s - min_s
+
+            dim_stats[dim_name] = {
+                "mean": mean_s, "median": median_s, "min": min_s, "max": max_s,
+                "std": std_s, "spread": spread, "cluster_pct": cluster_pct,
+                "full": full_count_d, "partial": partial_count_d, "none": no_data_count,
+                "total": len(scores_list),
+            }
+
+    print(f"  {'Dimension':>12s}  {'Mean':>5s}  {'Std':>5s}  {'Min':>5s}  {'Max':>5s}  {'Spread':>6s}  {'45-55%':>6s}  {'Full%':>5s}  {'None%':>5s}")
+    print(f"  {'─'*12}  {'─'*5}  {'─'*5}  {'─'*5}  {'─'*5}  {'─'*6}  {'─'*6}  {'─'*5}  {'─'*5}")
+    for dim_name in ALL_ROLES:
+        ds_stat = dim_stats.get(dim_name)
+        if ds_stat:
+            full_pct = ds_stat["full"] / ds_stat["total"] * 100 if ds_stat["total"] > 0 else 0
+            none_pct = ds_stat["none"] / ds_stat["total"] * 100 if ds_stat["total"] > 0 else 0
+            cluster_warn = " ⚠️" if ds_stat["cluster_pct"] > 70 else ""
+            spread_warn = " ⚠️" if ds_stat["spread"] < 20 else ""
+            print(f"  {dim_name:>12s}  {ds_stat['mean']:5.1f}  {ds_stat['std']:5.1f}  {ds_stat['min']:5.1f}  {ds_stat['max']:5.1f}  {ds_stat['spread']:5.0f}{spread_warn}  {ds_stat['cluster_pct']:5.1f}{cluster_warn}  {full_pct:4.0f}%  {none_pct:4.0f}%")
+        else:
+            print(f"  {dim_name:>12s}  no data")
+
+    # Cross-dimension correlation check
+    print(f"\n  Cross-dimension independence (low correlation = good, dimensions add independent info):")
+    dim_arrays: Dict[str, List[float]] = {}
+    for dim_name in ALL_ROLES:
+        dim_arrays[dim_name] = [
+            sig.get("dimensions", {}).get(dim_name, {}).get("score", 50.0)
+            for sig in all_signals
+        ]
+
+    for i, d1 in enumerate(ALL_ROLES):
+        for d2 in ALL_ROLES[i+1:]:
+            a1, a2 = dim_arrays[d1], dim_arrays[d2]
+            n = len(a1)
+            if n == 0:
+                continue
+            m1, m2 = sum(a1)/n, sum(a2)/n
+            cov = sum((x-m1)*(y-m2) for x, y in zip(a1, a2)) / n
+            s1 = (sum((x-m1)**2 for x in a1) / n) ** 0.5
+            s2 = (sum((y-m2)**2 for y in a2) / n) ** 0.5
+            corr = cov / (s1 * s2) if s1 > 0 and s2 > 0 else 0
+            flag = " ⚠️ REDUNDANT" if abs(corr) > 0.7 else ""
+            print(f"    {d1:>12s} × {d2:<12s}: r={corr:+.3f}{flag}")
+
+    # ================================================================
+    # PART 12: REGIME ANALYSIS (test set only)
+    # ================================================================
+    print(f"\n{'='*80}")
+    print("PART 12: REGIME ANALYSIS (test set only)")
+    print(f"{'='*80}")
+    print("Accuracy split by market regime and Fear & Greed level.\n")
+
+    regime_evals: Dict[str, List] = defaultdict(list)
+    fg_bucket_evals: Dict[str, List] = defaultdict(list)
+
+    for ev in all_evals:
+        regime = ev.get("regime", "unknown")
+        regime_evals[regime].append(ev)
+
+        fg = ev.get("fg_value")
+        if fg is not None:
+            if fg < 25:
+                fg_bucket_evals["extreme_fear (<25)"].append(ev)
+            elif fg < 45:
+                fg_bucket_evals["fear (25-45)"].append(ev)
+            elif fg < 55:
+                fg_bucket_evals["neutral (45-55)"].append(ev)
+            elif fg < 75:
+                fg_bucket_evals["greed (55-75)"].append(ev)
+            else:
+                fg_bucket_evals["extreme_greed (75+)"].append(ev)
+
+    print(f"  Accuracy by market regime:")
+    print(f"  {'Regime':>12s}  {'n':>4s}  {'Gradient':>8s}  {'Binary':>6s}  {'Avg Move':>8s}")
+    print(f"  {'─'*12}  {'─'*4}  {'─'*8}  {'─'*6}  {'─'*8}")
+    for regime in ["trending", "ranging", "unknown"]:
+        r_evals = regime_evals.get(regime, [])
+        if r_evals:
+            g = sum(e["gradient_score"] for e in r_evals) / len(r_evals)
+            b = sum(1 for e in r_evals if e["binary_correct"]) / len(r_evals)
+            m = sum(abs(e["pct_change"]) for e in r_evals) / len(r_evals)
+            print(f"  {regime:>12s}  {len(r_evals):4d}  {g*100:7.1f}%  {b*100:5.1f}%  {m:7.2f}%")
+        else:
+            print(f"  {regime:>12s}  {0:4d}  {'—':>8s}  {'—':>6s}  {'—':>8s}")
+
+    print(f"\n  Accuracy by Fear & Greed bucket:")
+    print(f"  {'F&G Bucket':>22s}  {'n':>4s}  {'Gradient':>8s}  {'Binary':>6s}  {'Avg Move':>8s}")
+    print(f"  {'─'*22}  {'─'*4}  {'─'*8}  {'─'*6}  {'─'*8}")
+    for fg_label in ["extreme_fear (<25)", "fear (25-45)", "neutral (45-55)",
+                    "greed (55-75)", "extreme_greed (75+)"]:
+        fg_evals = fg_bucket_evals.get(fg_label, [])
+        if fg_evals:
+            g = sum(e["gradient_score"] for e in fg_evals) / len(fg_evals)
+            b = sum(1 for e in fg_evals if e["binary_correct"]) / len(fg_evals)
+            m = sum(abs(e["pct_change"]) for e in fg_evals) / len(fg_evals)
+            print(f"  {fg_label:>22s}  {len(fg_evals):4d}  {g*100:7.1f}%  {b*100:5.1f}%  {m:7.2f}%")
+        else:
+            print(f"  {fg_label:>22s}  {0:4d}  {'—':>8s}  {'—':>6s}  {'—':>8s}")
 
     # ================================================================
     # SUMMARY

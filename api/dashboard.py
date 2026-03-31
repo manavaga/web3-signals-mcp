@@ -1599,6 +1599,63 @@ function renderModalPrediction(s) {
     </div>`;
 }
 
+function renderTradingLevels(s) {
+  if (!s.entry_price || s.direction === 'neutral') return '';
+
+  const entry = s.entry_price;
+  const target = s.target_price;
+  const sl = s.stop_loss;
+  const rr = s.risk_reward_ratio || 0;
+  const conf = s.confidence || 'low';
+  const predMove = s.predicted_move_pct || 0;
+  const isBuy = s.direction === 'buy';
+
+  const fmt = (v) => v >= 1000 ? v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+    : v >= 1 ? v.toFixed(4) : v.toFixed(6);
+
+  const confColor = conf === 'high' ? 'green' : conf === 'medium' ? 'blue' : 'yellow';
+  const moveColor = predMove > 0 ? 'green' : predMove < 0 ? 'red' : 'dim';
+  const moveStr = predMove !== 0 ? `${predMove > 0 ? '+' : ''}${predMove.toFixed(2)}%` : '\u2014';
+
+  const riskPct = isBuy
+    ? ((entry - sl) / entry * 100).toFixed(2)
+    : ((sl - entry) / entry * 100).toFixed(2);
+  const rewardPct = isBuy
+    ? ((target - entry) / entry * 100).toFixed(2)
+    : ((entry - target) / entry * 100).toFixed(2);
+
+  return `
+    <div class="modal-prediction">
+      <div class="section-title">Trading Levels (48h)</div>
+      <div class="pred-grid">
+        <div class="pred-item">
+          <span class="pred-label">Entry Price</span>
+          <span class="pred-value dim">$${fmt(entry)}</span>
+        </div>
+        <div class="pred-item">
+          <span class="pred-label">Target Price</span>
+          <span class="pred-value green">$${fmt(target)} (+${rewardPct}%)</span>
+        </div>
+        <div class="pred-item">
+          <span class="pred-label">Stop Loss</span>
+          <span class="pred-value red">$${fmt(sl)} (-${riskPct}%)</span>
+        </div>
+        <div class="pred-item">
+          <span class="pred-label">Risk:Reward</span>
+          <span class="pred-value ${rr >= 2 ? 'green' : rr >= 1.5 ? 'blue' : 'yellow'}">1:${rr.toFixed(1)}</span>
+        </div>
+        <div class="pred-item">
+          <span class="pred-label">Predicted Move</span>
+          <span class="pred-value ${moveColor}">${moveStr}</span>
+        </div>
+        <div class="pred-item">
+          <span class="pred-label">Confidence</span>
+          <span class="pred-value ${confColor}" style="text-transform:capitalize">${conf}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
 function openModal(asset) {
   const signals = signalData?.data?.signals;
   const s = signals?.[asset];
@@ -1625,6 +1682,7 @@ function openModal(asset) {
       ${s.prev_score != null ? ' | Prev: ' + s.prev_score : ''}
     </div>
     ${renderModalPrediction(s)}
+    ${renderTradingLevels(s)}
     <div class="modal-dim-detail">
       ${dimOrder.map(d => {
         const dim = dims[d] || {};
