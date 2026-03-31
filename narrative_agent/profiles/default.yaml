@@ -355,3 +355,28 @@ llm_sentiment:
     short_headline_penalty: -2.0   # headlines < 20 chars are usually low quality
     short_headline_threshold: 20
     number_bonus: 1.0              # headlines with numbers = specific data = better
+
+# ---------------------------------------------------------------------------
+# Source 7: LunarCrush Social Metrics (FREE tier — 1000 calls/day)
+# ---------------------------------------------------------------------------
+lunarcrush:
+  enabled: true
+  base_url: "https://lunarcrush.com/api/v2"
+  api_key_env: "LUNARCRUSH_API_KEY"
+  rate_limit_sleep: 0.5
+
+# ---------------------------------------------------------------------------
+# Composite narrative_score weighting (0-100)
+# ---------------------------------------------------------------------------
+scoring:
+  weights:
+    mentions: 0.25
+    keyword_sentiment: 0.20
+    lunarcrush: 0.25
+    community: 0.10
+    llm_sentiment: 0.20
+  no_lunarcrush_redistribution:
+    mentions: 0.35
+    keyword_sentiment: 0.30
+    community: 0.15
+    llm_sentiment: 0.20

@@ -28,10 +28,6 @@ assets:
 # ---------------------------------------------------------------------------
 # Asset blacklist — exclude anti-predictive assets (Phase A2, 2026-03-16)
 # ---------------------------------------------------------------------------
-# I7 research: INJ (20.7% accuracy), ATOM (24.5%), OP (41.9%) are
-# anti-predictive and drag overall accuracy down by 6.3 percentage points.
-# These assets generate lots of signals but the fusion scoring doesn't
-# map their agent outputs correctly to price moves.
 asset_blacklist:
   enabled: true
   assets:
@@ -43,7 +39,7 @@ asset_blacklist:
 # Agent names — must match agent_name used in storage
 # ---------------------------------------------------------------------------
 agent_names:
-  whale: "whale_agent"
+  exchange_flow: "exchange_flow_agent"
   narrative: "narrative_agent"
   technical: "technical_agent"
   market: "market_agent"
@@ -53,285 +49,131 @@ agent_names:
 # Composite score weights
 # ---------------------------------------------------------------------------
 # Direction-aware asymmetric weighting: different weights for bullish vs bearish
-# leans, based on per-dimension accuracy data:
-#   whale:       bullish=27%, bearish=61%  → trust bearish only
-#   technical:   bullish=46%, bearish=64%  → trust bearish more
-#   derivatives: bullish=53%, bearish=42%  → trust bullish more
-#   narrative:   bullish=43%, bearish=52%  → weak everywhere
-#   market:      bullish=65%, bearish=51%  → trust bullish strongly
+# leans. exchange_flow replaces whale (IC=-0.08, anti-predictive).
+# exchange_flow starts with neutral weights until IC is established.
 #
 # How it works:
-#   1. Score all 5 dimensions (unchanged)
+#   1. Score 5 dimensions: exchange_flow, technical, derivatives, narrative, market
 #   2. Compute unweighted average of raw scores → "directional lean"
-#   3. If lean > 50 → use weights_bullish (optimised for bullish accuracy)
-#      If lean < 50 → use weights_bearish (optimised for bearish accuracy)
-#      If lean = 50 → use weights_default (fallback)
+#   3. If lean > 50 → use weights_bullish
+#      If lean < 50 → use weights_bearish
+#      If lean = 50 → use weights_default
 #   4. Compute weighted composite with the selected weight set
 # ---------------------------------------------------------------------------
 weights_asymmetric:
   enabled: true
 
   # Default weights (fallback when lean is exactly neutral, or if disabled)
-  # IC-TUNED 2026-03-15: suppress whale (IC=-0.08) and trend (IC=-0.13),
-  # redistribute to market (IC=+0.31), technical (IC=+0.19), derivatives (IC=+0.10)
+  # exchange_flow starts at 0.10 (neutral until IC established)
+  # trend dimension removed (IC=-0.13, anti-predictive, redundant with technical)
   default:
-    whale: 0.05
+    exchange_flow: 0.10
     technical: 0.30
     derivatives: 0.25
     narrative: 0.13
     market: 0.22
-    trend: 0.05
 
   # Weights when raw dimension average leans BULLISH (>50)
-  # IC-TUNED 2026-03-15: suppress whale (IC=-0.08) and trend (IC=-0.13),
-  # boost market (IC=+0.31) as strongest bullish predictor
+  # exchange_flow given moderate weight (order book demand = bullish signal)
   bullish:
-    whale: 0.02          # IC=-0.08, 27% bullish accuracy — near-zero
-    technical: 0.24      # IC=+0.19, 46% — solid
-    derivatives: 0.28    # IC=+0.10, 53% — best bullish dimension
-    narrative: 0.08      # IC=+0.16, 43% — keep low
-    market: 0.33         # IC=+0.31, 65% — strongest bullish predictor
-    trend: 0.05          # IC=-0.13 — suppress anti-predictive
+    exchange_flow: 0.08
+    technical: 0.26
+    derivatives: 0.28
+    narrative: 0.08
+    market: 0.30
 
   # Weights when raw dimension average leans BEARISH (<50)
-  # IC-TUNED 2026-03-15: despite whale having 61% bearish accuracy,
-  # its IC=-0.08 means it's anti-predictive overall. Suppress it.
+  # exchange_flow given moderate weight (selling pressure detection)
   bearish:
-    whale: 0.05          # IC=-0.08 — suppress despite 61% bearish accuracy
-    technical: 0.35      # IC=+0.19, 64% — strongest bearish predictor
-    derivatives: 0.18    # IC=+0.10, 42% — moderate
-    narrative: 0.17      # IC=+0.16, 52% — decent for bearish
-    market: 0.20         # IC=+0.31, 51% — strong IC even if bearish acc moderate
-    trend: 0.05          # IC=-0.13 — suppress anti-predictive
+    exchange_flow: 0.10
+    technical: 0.35
+    derivatives: 0.18
+    narrative: 0.15
+    market: 0.22
 
 # ---------------------------------------------------------------------------
-# Accuracy scaling — multiply weights by historical directional accuracy
+# Per-asset weight profiles — different assets respond to different dimensions
 # ---------------------------------------------------------------------------
-# Instead of binary gating (0 or 1), scale each dimension's weight by its
-# measured accuracy for the current direction. This preserves partial signal
-# from dimensions that are somewhat useful in a given direction.
-#
-# Example: whale bullish accuracy=0.27 → weight × 0.27 (not weight × 0.0)
-# This keeps 27% of whale's contribution when bullish, instead of zero.
-# ---------------------------------------------------------------------------
-accuracy_scaling:
-  # PHASE A4 (2026-03-16): DISABLED — I2 research found double-penalty:
-  # contrarian scoring + accuracy scaling together crush bullish signals.
-  # Technical bullish: ×0.46, Whale bullish: ×0.27 → signals near-zero.
-  # Can't have BOTH contrarian scoring AND accuracy scaling. Pick one.
-  # Keeping contrarian scoring (proven for bearish), removing scaling.
-  enabled: false
-  # Per-dimension per-direction accuracy multipliers (0.0-1.0)
-  # These come from retroactive accuracy analysis
-  multipliers:
-    whale:
-      bullish: 0.27           # 27% bullish accuracy
-      bearish: 0.61           # 61% bearish accuracy
-    technical:
-      bullish: 0.46           # 46% bullish accuracy
-      bearish: 0.64           # 64% bearish accuracy
-    derivatives:
-      bullish: 0.53           # 53% bullish accuracy
-      bearish: 0.42           # 42% bearish accuracy (was gated to 0)
-    narrative:
-      bullish: 0.43           # 43% bullish accuracy
-      bearish: 0.52           # 52% bearish accuracy (was gated to 0)
-    market:
-      bullish: 0.65           # 65% bullish accuracy
-      bearish: 0.51           # 51% bearish accuracy
-    trend:
-      # IC-TUNED 2026-03-15: trend IC=-0.13, floor accuracy scaling
-      bullish: 0.15           # was 0.50 — suppress anti-predictive
-      bearish: 0.15           # was 0.50 — suppress anti-predictive
-  # Floor: never scale below this (prevents near-zero weights)
-  min_multiplier: 0.15
+per_asset_weights:
+  enabled: true
+
+  # Large caps respond more to macro/derivatives (institutional flows)
+  large_cap:
+    assets: [BTC, ETH]
+    weights_bullish:
+      exchange_flow: 0.05
+      technical: 0.22
+      derivatives: 0.30
+      narrative: 0.08
+      market: 0.35
+    weights_bearish:
+      exchange_flow: 0.08
+      technical: 0.30
+      derivatives: 0.22
+      narrative: 0.12
+      market: 0.28
+
+  # Mid caps — balanced, use global defaults
+  mid_cap:
+    assets: [SOL, BNB, XRP, ADA, LINK, LTC, DOT, AVAX]
+    # Uses global weights (no override)
+
+  # Small caps respond more to technical/derivatives (thinner liquidity)
+  small_cap:
+    assets: [MATIC, UNI, FIL, NEAR, APT, ARB, SUI]
+    weights_bullish:
+      exchange_flow: 0.05
+      technical: 0.32
+      derivatives: 0.30
+      narrative: 0.05
+      market: 0.28
+    weights_bearish:
+      exchange_flow: 0.05
+      technical: 0.38
+      derivatives: 0.25
+      narrative: 0.05
+      market: 0.27
+
+  # Blacklisted — shadow only (INJ, ATOM, OP)
+  blacklisted:
+    assets: [INJ, ATOM, OP]
+    # Uses global weights, but signals are suppressed by asset_blacklist
 
 # ---------------------------------------------------------------------------
 # Regime-aware weighting — shift dimension weights based on market regime
-# ---------------------------------------------------------------------------
-# Detect whether market is TRENDING or RANGING, then adjust weights:
-#   TRENDING: boost directional dims (trend, technical), reduce contrarian
-#   RANGING: boost contrarian dims (whale, narrative, market), reduce directional
-#
-# Detection uses BTC price distance from MA30 + MA7 alignment as proxy.
-# Applied AFTER accuracy scaling, BEFORE tier multipliers.
 # ---------------------------------------------------------------------------
 regime_weighting:
   enabled: true
 
   # Regime detection (uses BTC as market proxy)
   detection:
-    # How far BTC must be from MA30 to be considered trending (as decimal)
     trending_threshold: 0.08    # BTC >8% from MA30 = trending
     ranging_threshold: 0.03     # BTC <3% from MA30 = ranging
-    # Also check MA alignment (MA7 must be on same side of MA30 as price)
     require_ma_alignment: true
 
   # Weight shift multipliers when TRENDING is detected
-  # IC-TUNED 2026-03-15: suppress anti-predictive dims even in trends
   trending:
-    trend: 0.5          # IC=-0.13 — was 1.5x boost, now SUPPRESS
-    technical: 1.2      # IC=+0.19 — mild boost (good)
-    whale: 0.3          # IC=-0.08 — suppress harder
-    derivatives: 0.9    # IC=+0.10 — slight reduction
-    narrative: 0.7      # IC=+0.16 — reduce contrarian narrative
-    market: 1.1         # IC=+0.31 — slight boost (strongest IC)
+    technical: 1.2
+    exchange_flow: 0.8   # order book less reliable in trends
+    derivatives: 0.9
+    narrative: 0.7
+    market: 1.1
 
   # Weight shift multipliers when RANGING is detected
   ranging:
-    trend: 0.5          # heavy reduction of trend following
-    technical: 0.9      # slight reduction
-    whale: 1.3          # boost contrarian whale
-    derivatives: 1.1    # slight boost
-    narrative: 1.2      # boost contrarian narrative
-    market: 1.3         # boost contrarian market
-
-# ---------------------------------------------------------------------------
-# Fear & Greed Regime-First Scoring — THE FIX for the abstain problem
-# ---------------------------------------------------------------------------
-# Problem: 4 contrarian dimensions say "BUY" in fear markets while 2 pro-trend
-#          dimensions say "SELL" → they cancel out → composite ~50 → ABSTAIN.
-# Solution: Let the F&G regime determine the scoring philosophy.
-#   - In fear: BOOST pro-trend dims, SUPPRESS contrarian dims, dampen
-#     contrarian scores above 50 toward neutral.
-#   - In greed: BOOST contrarian dims (their edge is proven in greed).
-#
-# Applied AFTER accuracy scaling + trending/ranging shifts. Weight shifts are
-# multipliers (>1.0 = boost, <1.0 = suppress). Score dampening pulls above-50
-# scores toward 50, reducing false contrarian "buy" signals in fear markets.
-# ---------------------------------------------------------------------------
-fg_regime_scoring:
-  # PHASE A3 (2026-03-16): DISABLED — E5 research shows F&G is quadruple-counted
-  # (scoring, regime shifts, dampening, abstain threshold), partially canceling itself.
-  # Quant funds use parallel combination, not sequential cascading.
-  # Disable this layer to simplify pipeline and measure baseline accuracy.
-  enabled: false
-
-  extreme_fear:                         # F&G 0-20
-    weight_shifts:
-      # IC-TUNED 2026-03-15: kill boosts for anti-predictive dims
-      whale: 0.15                       # IC=-0.08 — suppress hard in fear
-      technical: 0.6                    # dip-buying less reliable, but keep some signal
-      derivatives: 0.7                  # shorts stay overcrowded in crashes
-      narrative: 0.5                    # silence ≠ opportunity in crashes
-      market: 1.3                       # IC=+0.31 — trust market dim
-      trend: 0.15                       # IC=-0.13 — was 1.8x (!), now suppress
-    abstain_distance: 5                 # tight: extreme conditions have more edge
-    score_dampening:
-      enabled: true
-      factor: 0.6                       # keep 60% of distance from 50 (was 40%)
-      dimensions: [whale, narrative]    # only dampen least reliable dims
-
-  fear:                                 # F&G 20-40
-    weight_shifts:
-      # IC-TUNED 2026-03-15: suppress anti-predictive dims
-      whale: 0.2                        # IC=-0.08 — suppress
-      technical: 0.8
-      derivatives: 0.9
-      narrative: 0.6
-      market: 1.4
-      trend: 0.2                        # IC=-0.13 — was 1.5x, now suppress
-    abstain_distance: 8
-    score_dampening:
-      enabled: true
-      factor: 0.7
-      dimensions: [whale, narrative]
-
-  neutral:                              # F&G 40-60
-    weight_shifts: {}                   # no changes — balanced mode
-    abstain_distance: 12
-
-  greed:                                # F&G 60-80
-    weight_shifts:
-      whale: 1.3                        # 61% bearish accuracy = trust it
-      technical: 1.2                    # overbought signals work here
-      derivatives: 1.1
-      narrative: 1.3                    # buzz = sell signal works in greed
-      market: 0.7
-      trend: 0.6
-    abstain_distance: 8
-
-  extreme_greed:                        # F&G 80-100
-    weight_shifts:
-      whale: 1.4                        # contrarian signals strongest at tops
-      technical: 1.3                    # overbought very reliable at extremes
-      derivatives: 1.2
-      narrative: 1.4                    # crowd euphoria = sell signal
-      market: 0.5                       # pro-trend dangerous at tops
-      trend: 0.4                        # momentum chasing dangerous at tops
-    abstain_distance: 6
-    score_dampening:
-      enabled: true
-      factor: 0.6
-      dimensions: [market, trend]       # dampen "keep buying" signals
-
-# ---------------------------------------------------------------------------
-# Asset tier system — different scoring profiles for different asset classes
-# ---------------------------------------------------------------------------
-# Research (Baur 2018, Corbet 2019): BTC/ETH exhibit momentum, small-caps
-# exhibit mean reversion. Applying the same contrarian logic to all is wrong.
-#
-# Tiers override the base scoring.technical parameters per sub-component.
-# Only parameters that differ need to be specified; the rest inherit from base.
-# ---------------------------------------------------------------------------
-asset_tiers:
-  enabled: false                       # Disabled: 8-day bearish backtest window favours contrarian for all assets.
-                                       # Re-enable with regime detection or longer backtest data.
-
-  tiers:
-    momentum:                          # Tier 1: Large-cap momentum assets
-      assets: [BTC, ETH]
-    mild_contrarian:                   # Tier 2: Mid-cap mild contrarian
-      assets: [SOL, BNB, XRP, ADA, LINK, LTC, DOT]
-    contrarian:                        # Tier 3: Full contrarian (default)
-      assets: []                       # Everything not in other tiers
-
-  # Per-tier TECHNICAL scoring overrides (merged into base scoring.technical)
-  # NOTE: Full momentum flip worsened BTC/ETH in bearish market windows.
-  # Using NEUTRAL technical scoring for momentum tier: balanced, not contrarian.
-  technical_overrides:
-    momentum:
-      # NEUTRAL: balanced scoring — don't assume contrarian OR momentum
-      # In mixed/bearish markets, full momentum hurts. In bull markets, contrarian hurts.
-      # Split the difference: indicators score evenly in both directions.
-      rsi:
-        oversold_score: 25             # was 35 — dampened contrarian
-        overbought_score: 20           # was 10 — raised (not fully momentum either)
-        neutral_min_score: 20
-        neutral_max_score: 30
-      macd:
-        bullish_cross_points: 10       # was 5 — raised from contrarian
-        bearish_cross_points: 10       # was 15 — lowered, symmetric
-      ma:
-        above_ma7_points: 6            # was 3 — slightly raised
-        above_ma30_points: 6           # was 3
-        below_ma7_points: 6            # was 8 — slightly lowered
-        below_ma30_points: 6           # was 8
-      trend:
-        bullish_points: 10             # was 5 — raised, neutral
-        bearish_points: 10             # was 15 — lowered, neutral
-        neutral_points: 10
-
-    mild_contrarian:
-      # Dampened contrarian: less extreme than full contrarian
-      macd:
-        bullish_cross_points: 8        # was 5 — slightly raised
-        bearish_cross_points: 13       # was 15 — slightly lowered
-      trend:
-        bullish_points: 8              # was 5 — slightly raised
-        bearish_points: 13             # was 15 — slightly lowered
-        neutral_points: 10
-
-    # contrarian tier: no overrides — uses base scoring.technical as-is
+    technical: 0.9
+    exchange_flow: 1.3   # order book imbalance more meaningful in ranges
+    derivatives: 1.1
+    narrative: 1.2
+    market: 1.3
 
 # Legacy flat weights (used when weights_asymmetric.enabled=false)
 weights:
-  whale: 0.17
-  technical: 0.25
-  derivatives: 0.21
-  narrative: 0.09
-  market: 0.13
-  trend: 0.15
+  exchange_flow: 0.10
+  technical: 0.30
+  derivatives: 0.25
+  narrative: 0.13
+  market: 0.22
 
 # ---------------------------------------------------------------------------
 # Score labels — evaluated top-down, first match wins
@@ -341,10 +183,10 @@ labels:
     min_score: 70
     direction: "buy"
   - name: "MODERATE BUY"
-    min_score: 58             # aligned with abstain zone edge (50+8=58)
+    min_score: 56             # aligned with abstain bullish edge (50+6=56)
     direction: "buy"
   - name: "NEUTRAL"
-    min_score: 42             # aligned with abstain zone edge (50-8=42)
+    min_score: 46             # aligned with abstain zone edge (50-4=46)
     direction: "neutral"
   - name: "MODERATE SELL"
     min_score: 30
@@ -360,47 +202,14 @@ labels:
 
 scoring:
   # -----------------------------------------------------------------------
-  # WHALE scoring (per asset)
+  # EXCHANGE FLOW scoring (per asset) — replaces whale scoring
   # -----------------------------------------------------------------------
-  whale:
-    # -----------------------------------------------------------------------
-    # PHASE B2 (2026-03-16): Whale scoring overhaul
-    # -----------------------------------------------------------------------
-    # E3 research identified 7 root causes for whale IC=-0.53:
-    #   1. Count-based ratio ignores transaction magnitude ($100K = $500M)
-    #   2. No time-lag accounting (whale moves lead price by 2-7 days)
-    #   3. No entity filtering (market makers treated as directional signal)
-    #   4. Binary exchange flow scoring destroys gradient info
-    #   5. Only 7 exchange wallet addresses tracked (5-10% coverage)
-    #   6. No rate-of-change or trend analysis
-    #   7. Contrarian inversion conflicts
-    #
-    # This phase implements Fix 1 (volume-weighted) and Fix 3 (remove MMs).
-    # Fix 4 (continuous exchange flow) also applied.
-    # -----------------------------------------------------------------------
-
-    # --- Volume-weighted ratio scoring (0-60 points) ---
-    # CHANGED from "ratio" (count-based) to "volume_ratio" (USD-weighted).
-    # A $500M accumulation now dominates over twenty $100K transfers.
-    # Falls back to count-based ratio if USD amounts are unavailable.
-    scoring_mode: volume_ratio       # "volume_ratio" (new) or "ratio" (count-based) or "per_move" (legacy)
-    base_score: 50                   # base if no directional moves at all
-    ratio_max_points: 60             # max points from accumulate/sell ratio
-    ratio_center: 0.5               # ratio at which score = half of max
-    min_directional_moves: 2         # need at least 2 acc+sell moves to use ratio
-
-    # --- Exchange flow bonus/penalty (0-20 points) ---
-    exchange_outflow_bonus: 10       # net outflow = accumulation across exchanges
-    exchange_inflow_penalty: -10     # net inflow = selling across exchanges
-
-    # --- Whale wallet signals (0-20 points) ---
-    # NOTE: Market makers (Jump Trading, Cumberland, FalconX) removed from
-    # whale_agent/profiles/default.yaml — their balance changes reflect
-    # client orders, not directional conviction (E3 Fix 3).
-    whale_wallet_accumulating_bonus: 8
-    whale_wallet_reducing_penalty: -8
-
-    # Clamp range
+  # The exchange_flow_agent pre-computes a 0-100 score from:
+  #   - Order book bid/ask imbalance (40%)
+  #   - Volume momentum vs 7-day avg (35%)
+  #   - Trade intensity (25%)
+  # The fusion engine reads the pre-computed score directly.
+  exchange_flow:
     min_score: 0
     max_score: 100
 
@@ -408,13 +217,8 @@ scoring:
   # TECHNICAL scoring (per asset)
   # -----------------------------------------------------------------------
   # Contrarian technical scoring — buy dips, sell rallies
-  # Bearish indicators = buying opportunity, bullish = already priced in
-  # Max contrarian buy ≈ 83, max momentum sell ≈ 23, neutral ≈ 50
   technical:
     # RSI contribution (5-40 points) — FULL CONTINUOUS SCORING
-    # No more flat buckets. RSI=5 now scores differently from RSI=29.
-    # Extreme zones interpolate: RSI 0→30 maps extreme_oversold→oversold,
-    # RSI 70→100 maps overbought→extreme_overbought.
     rsi:
       oversold_below: 30
       overbought_above: 70
@@ -446,13 +250,6 @@ scoring:
   # -----------------------------------------------------------------------
   # DERIVATIVES scoring (per asset) — with combo signals
   # -----------------------------------------------------------------------
-  # Key insight: overcrowded longs + high funding = crash incoming (not buy!)
-  # Contrarian shorts + negative funding = squeeze setup = buy
-  #
-  # RECENTERED (Phase 5): Default/neutral state now scores ~50 instead of 65.
-  # Old neutral: sweet_spot(25) + low_funding(25) + stable_OI(15) = 65 (15pts above center!)
-  # New neutral: sweet_spot(18) + low_funding(17) + stable_OI(15) = 50 (centered)
-  # This fixes the structural bullish floor that compressed scores toward 55-65.
   derivatives:
     # Long/short ratio contribution (3-40 points) — CONTINUOUS SCORING
     long_short:
@@ -469,7 +266,6 @@ scoring:
       default_score: 18          # was 25 — recentered
 
     # Funding rate contribution (5-40 points) — CONTINUOUS SCORING
-    # No more flat buckets. funding=-0.05 now scores differently from -0.0001.
     funding:
       low_threshold: 0.0002
       low_score: 17              # was 25 — recentered: low funding is neutral, not bullish
@@ -493,32 +289,19 @@ scoring:
     combo_contrarian_negative_funding_bonus: 10  # squeeze setup combo
 
     # --- LEAD INDICATOR: Funding rate CHANGE (delta) ---
-    # The REVERSAL of funding is the signal, not the absolute level.
-    # Funding rate falling (becoming more negative) = squeeze pressure building = bullish
-    # Funding rate rising (becoming more positive) = longs paying more = bearish
-    # Source: computed from derivatives_agent historical snapshots (zero new API)
     funding_rate_change:
       enabled: true
       threshold: 0.00005          # minimum absolute change to be considered significant
       max_points: 8               # max points added/subtracted
 
     # --- LEAD INDICATOR: OI-price divergence ---
-    # OI rising + price flat = conviction building without price following = breakout imminent
-    # OI falling + price rising = weak rally without conviction = bearish
-    # Source: OI from derivatives_agent, price from market_agent (zero new API)
     oi_price_divergence:
       enabled: true
       oi_threshold_pct: 3.0       # OI must change more than 3% to count
       price_threshold_pct: 2.0    # price must be within 2% to count as "flat"
       max_points: 10              # max points for divergence signal
 
-    # --- PHASE C1: Taker buy/sell ratio scoring ---
-    # E4 research: Taker ratio captures aggressive directional intent.
-    # Taker buy/sell ratio > 1 = buyers aggressive = bullish pressure
-    # Taker buy/sell ratio < 1 = sellers aggressive = bearish pressure
-    # This uses the same endpoint pattern as L/S ratio (trivially integrable).
-    # NOTE: Only scored when taker_buy_sell_ratio is present in data
-    # (i.e., after agent starts collecting it; won't appear in old backtests).
+    # --- Taker buy/sell ratio scoring ---
     taker_ratio:
       enabled: true
       bullish_threshold: 1.1      # ratio above this = aggressive buyers
@@ -531,18 +314,7 @@ scoring:
   # -----------------------------------------------------------------------
   # NARRATIVE scoring (per asset) — CONTRARIAN 6-component scoring
   # -----------------------------------------------------------------------
-  # Philosophy: High buzz = already pumped = SELL. Quiet = opportunity = BUY.
-  # volume_invert=true flips the volume component: high mentions → low score.
-  # quiet_bonus rewards assets nobody is talking about (mean reversion).
-  # trending_bonus is NEGATIVE: trending on CoinGecko = too late, sell signal.
-  # -----------------------------------------------------------------------
   narrative:
-    # Base score: start above zero so penalties have room to reduce
-    # RECENTERED (Phase 5): was 25 → 15. Old base created a structural floor
-    # where narrative could never go below ~40 in practice. With base=15,
-    # a quiet asset with no sentiment: 15+20+10+0+0+0+0+0 = 45 (below center).
-    # A hyped asset with bullish sentiment: 15+2+0+25+15-10+3+5 = 55 (mild bullish).
-    # This allows narrative to differentiate assets on BOTH sides of 50.
     narrative_base_score: 15         # was 25 — recentered
 
     # Component 1: Volume — INVERTED for contrarian
@@ -572,15 +344,10 @@ scoring:
     multi_source_threshold: 3        # need >= N sources with data
 
     # --- Component 7: LLM Event scoring ---
-    # Material events from LLM headline classification.
-    # One ETF approval matters more than 1000 Reddit mentions.
-    # Events are scored by type (regulatory > hack > adoption > partnership)
-    # and magnitude (critical > high > medium > low), capped at max_points.
     event_scoring:
       enabled: true
       max_points: 20                   # total cap from events (±20 from composite)
       max_events_scored: 3             # only score top N events by magnitude
-      # Points per event type (before magnitude multiplier)
       type_weights:
         regulatory: 15                 # SEC rulings, ETF decisions
         hack_exploit: 18               # hacks/exploits (always bearish, high impact)
@@ -590,7 +357,6 @@ scoring:
         upgrade: 6                     # protocol upgrades
         market_event: 5                # whale moves, liquidations
         general_sentiment: 2           # generic commentary (low signal)
-      # Magnitude scaling
       magnitude_multipliers:
         critical: 1.5
         high: 1.0
@@ -603,18 +369,10 @@ scoring:
   # -----------------------------------------------------------------------
   # MARKET scoring (per asset) — BIPOLAR, centered at 50
   # -----------------------------------------------------------------------
-  # Restructured: scoring starts at base_score=50, each component adds/subtracts.
-  # Contrarian logic is DAMPENED and a downtrend penalty prevents fear from
-  # automatically converting everything into bullish. In genuine downtrends
-  # (fear + price drop confirming each other), the score drops BELOW 50.
-  #
-  # Old system: additive from 0, range 23-100, center ~65 = always bullish
-  # New system: bipolar from 50, range ~30-75, center 50 = balanced
   market:
-    base_score: 50                     # NEW: start at neutral center
+    base_score: 50                     # start at neutral center
 
     # Price change (±10 pts from base) — DAMPENED CONTRARIAN
-    # Drops still give a small contrarian bump, rallies push bearish
     price_change:
       strong_positive_above: 5.0
       strong_positive_score: -5        # rally >5% = bearish (chase risk)
@@ -637,8 +395,6 @@ scoring:
       normal_score: 0                  # was 10; normal vol = no deviation
 
     # Fear & Greed (±5 pts from base) — DAMPENED CONTRARIAN
-    # Fear gives small bump (opportunity), greed pushes bearish (risk).
-    # Much reduced from original to prevent overwhelming directional signals.
     fear_greed:
       extreme_fear_below: 25
       extreme_fear_score: 3            # extreme fear = tiny contrarian bump
@@ -656,91 +412,22 @@ scoring:
     btc_dominance:
       enabled: true
       change_threshold_pct: 0.3
-
-      # For BTC: rising dominance = bullish
       btc_rising_score: 3              # was 15
       btc_falling_score: -3            # was 5
       btc_stable_score: 0              # was 10
-
-      # For altcoins: rising dominance = bearish
       alt_rising_score: -3             # was 5
       alt_falling_score: 3             # was 15
       alt_stable_score: 0              # was 10
 
     # Downtrend penalty — when fear AND price drop CONFIRM each other
-    # Key insight: contrarian works when fear CONTRADICTS price (fear + flat/up).
-    # When fear and price drop ALIGN, it's a genuine downtrend, not a dip.
-    # Penalty scales with fear intensity × drop intensity.
     trend_awareness:
       enabled: true
       fg_threshold: 35                 # F&G must be below this to trigger
       drop_threshold: -2.0             # price must be down more than this %
       max_penalty: -30                 # strong penalty to override contrarian scoring in downtrends
 
-  # -----------------------------------------------------------------------
-  # TREND scoring (per asset) — PRO-TREND (directional, non-contrarian)
-  # -----------------------------------------------------------------------
-  # This is the ONLY dimension that follows the trend instead of fighting it.
-  # Downtrend = bearish score (<50), Uptrend = bullish score (>50).
-  # Provides directional balance against the 5 contrarian dimensions.
-  # Data sources: technical_agent (MA, RSI, price) + market_agent (24h change)
-  # -----------------------------------------------------------------------
-  trend:
-    # Component 1: MA Alignment (±15 pts)
-    # Full bullish chain (price > MA7 > MA30) is the strongest trend signal
-    ma_alignment:
-      bullish_chain_score: 15       # price > MA7 > MA30
-      bearish_chain_score: -15      # price < MA7 < MA30
-      partial_bullish_score: 8      # above MA30 but not full chain
-      partial_bearish_score: -8     # below MA30 but not full chain
-
-    # Component 2: RSI Momentum (±12 pts) — PRO-TREND (not contrarian!)
-    # High RSI = strong momentum = bullish (opposite of contrarian technical)
-    rsi_momentum:
-      strong_bullish_above: 65
-      bullish_above: 55
-      bearish_below: 45
-      strong_bearish_below: 35
-      strong_bullish_score: 12
-      bullish_score: 6
-      strong_bearish_score: -12
-      bearish_score: -6
-
-    # Component 3: Price Change Direction (±10 pts) — PRO-TREND
-    # Rising price = bullish (opposite of contrarian market)
-    price_change:
-      strong_positive_above: 5.0
-      positive_above: 1.0
-      negative_below: -1.0
-      strong_negative_below: -5.0
-      strong_positive_score: 10
-      positive_score: 5
-      strong_negative_score: -10
-      negative_score: -5
-
-    # Component 4: Trend Strength (±8 pts)
-    # How far price is from MA30 (as %) — further = stronger trend
-    trend_strength:
-      strong_above_pct: 10       # 10% above MA30 = maximum bullish strength
-      strong_below_pct: -10      # 10% below MA30 = maximum bearish strength
-      max_bonus: 8
-      max_penalty: -8
-
 # ---------------------------------------------------------------------------
 # Dynamic reweighting — adjust ALL agent weights based on data availability
-# ---------------------------------------------------------------------------
-# When any agent has missing/weak data for an asset, its weight is reduced
-# and redistributed proportionally to agents with full data.
-# This prevents fake-neutral scores (50.0) or zero scores (0.0)
-# from dragging the composite toward the center or toward bearish.
-#
-# Tiers per agent:
-#   full    — real, usable data → full weight
-#   partial — some data but incomplete → half weight
-#   none    — no useful data → zero weight, fully redistributed
-#
-# Detection is driven by the detail string and score from _score_dimension().
-# Rules are YAML-configurable per agent below.
 # ---------------------------------------------------------------------------
 reweighting:
   enabled: true
@@ -753,31 +440,24 @@ reweighting:
 
   # Per-agent tier detection rules
   agents:
-    # WHALE: existing 3-tier system (accumulate/sell = full, transfers = partial, none = none)
-    whale:
+    exchange_flow:
       no_data_keywords:
         - "no data"
-        - "no whale activity"
+        - "no exchange flow data"
         - "no scorer"
       full_data_keywords:
-        - "accumulate"
-        - "sell"
-      # Everything else (e.g. "exchange outflow", "transfer") → partial
+        - "bid/ask"
+        - "vol_chg"
 
-    # TECHNICAL: full when all indicators present, none when no data
     technical:
       no_data_keywords:
         - "no data"
-      # No full_data_keywords → defaults to "full" when data exists
 
-    # DERIVATIVES: none when no data, partial when only 1 of 3 metrics
     derivatives:
       no_data_keywords:
         - "no data"
         - "no deriv data"
-      # When data exists, defaults to "full"
 
-    # NARRATIVE: score-based detection — zero mentions = no data
     narrative:
       no_data_keywords:
         - "no data"
@@ -785,185 +465,42 @@ reweighting:
       none_if_score_below: 1.0      # score 0 = genuinely no data
       partial_if_score_below: 15    # very weak narrative signal
 
-    # MARKET: partial when only global F&G (not per-asset data)
     market:
       no_data_keywords:
         - "no market data"
       partial_keywords:
         - "F&G"                     # only global F&G, no per-asset data
 
-    # TREND: reads from technical + market agents (no dedicated agent)
-    trend:
-      no_data_keywords:
-        - "no data"
-        - "no trend data"
-      # When data exists, defaults to "full"
-
-# ---------------------------------------------------------------------------
-# Conviction multiplier — amplify composite when dimensions agree
 # ---------------------------------------------------------------------------
 # Abstain — suppress low-confidence signals
 # ---------------------------------------------------------------------------
-# When composite score is too close to 50 (no edge), emit neutral instead
-# of a weak directional signal. Prevents false conviction.
-#
-# Conviction multiplier — DISABLED after backtest showed it HURTS accuracy
-# (boosted=41.7% vs unboosted=51.1%). The boost amplifies noise.
-conviction:
-  enabled: false
-  min_agreeing_dimensions: 3
-  boost_factor: 1.25
-
-# DYNAMIC ABSTAIN (Phase 6): threshold adjusts based on Fear & Greed.
-# Extreme conditions create real contrarian edges → narrow the band → more signals.
-# Neutral/uncertain markets have less edge → widen the band → fewer (better) signals.
 abstain:
   enabled: true
-  # PHASE A1 (2026-03-16): Asymmetric abstain zones.
-  # E7 + I2 research: bullish signals have negative Kelly (f*=-0.308), bearish are 72.5% accurate.
-  # Bearish threshold tightened (8) to let more strong bearish signals through.
-  # Bullish threshold widened (25) to filter unreliable bullish signals.
   min_distance_from_center: 12   # legacy symmetric (used if asymmetric disabled)
   abstain_label: "INSUFFICIENT EDGE"
   asymmetric:
     enabled: true
-    bearish_min_distance: 10     # score < 40 (50-10) = bearish signal (Phase C: filter borderline)
-    bullish_min_distance: 25     # score > 75 (50+25) = bullish signal (very strict)
+    bearish_min_distance: 4      # score < 46 (50-4) = bearish signal
+    bullish_min_distance: 6      # score > 56 (50+6) = bullish signal
 
-  # Dynamic abstain: DISABLED.
-  # In sustained fear markets, dynamic zones collapse the band to 3 for ALL signals,
-  # letting through medium-conviction signals that are only 36% accurate.
-  # Flat distance of 12 produces 62%+ accuracy with good coverage.
-  dynamic:
-    enabled: false
-    zones:
-      - fg_min: 0
-        fg_max: 20
-        threshold: 3
-      - fg_min: 20
-        fg_max: 35
-        threshold: 3
-      - fg_min: 35
-        fg_max: 65
-        threshold: 5
-      - fg_min: 65
-        fg_max: 80
-        threshold: 3
-      - fg_min: 80
-        fg_max: 100
-        threshold: 3
 
 # ---------------------------------------------------------------------------
-# Trend override — dampen contrarian scoring in sustained downtrends
+# Contrarian override — boost market signal in extreme sentiment conditions
+# When F&G is extreme (<20 or >80), the market dimension becomes the primary
+# signal carrier. Technical indicators lag during reversals — contrarian
+# sentiment is a leading indicator.
 # ---------------------------------------------------------------------------
-# Problem: In a sustained downtrend, the contrarian system keeps saying "buy
-# the dip" because fear = opportunity. But in a real bear market, the dip
-# keeps dipping. This prevents bear signals from ever appearing.
-#
-# Solution: When BTC is below its 30-day MA AND the MA is falling (confirmed
-# downtrend), reduce the contrarian inversion boost on market + derivatives
-# dimensions. This lets bearish signals emerge naturally.
-#
-# Uses data already available: BTC price from market_agent, BTC ma_30d from
-# technical_agent.
-trend_override:
-  # PHASE A3 (2026-03-16): DISABLED — E5 research: sequential dampening layers
-  # can invert good signals. I1 confirmed: bullish signals dampened 84→49.
-  # Simplify pipeline to parallel combination.
-  enabled: false
-  # Contrarian dampening factor (0.0-1.0):
-  # 1.0 = full contrarian (no change), 0.0 = no contrarian at all
-  # 0.7 = 70% of contrarian boost remains (gentle dampening)
-  dampening_factor: 0.7
-  # How far below MA30 BTC must be to trigger (percentage)
-  # -5% = meaningful downtrend, not just noise
-  downtrend_threshold_pct: -5.0
-  # Which dimensions to dampen in confirmed downtrend
-  dampen_dimensions:
-    - market
-    - derivatives
-
-# ---------------------------------------------------------------------------
-# Velocity / rate-of-change overlay — dampen premature contrarian signals
-# ---------------------------------------------------------------------------
-# Problem: In sustained fear (F&G=14), the system screams BUY on 18/20 assets
-# because RSI=35 and contrarian says "fear=buy." But RSI was 50 three runs
-# ago → 42 last run → 35 now: it's ACCELERATING downward.
-# Buying into accelerating fear scores 0.0 on 24h/48h evaluation.
-#
-# Solution: Compute velocity (rate of change) of key indicators across runs.
-# When indicators are still accelerating in one direction, dampen the
-# contrarian signal. When stabilizing or reversing, keep the signal.
-#
-# Integration: Phase 4.5 — after composite is built, before abstain check.
-# Dampens the composite's distance from 50 by a factor of 0.3 to 1.0.
-# ---------------------------------------------------------------------------
-velocity:
-  # PHASE A3 (2026-03-16): DISABLED — E5 research: velocity dampening is the
-  # 3rd layer crushing bullish signals (I1 trace: 74→59.6). In a simplified
-  # Calibrate-Combine-Gate architecture, this layer is removed.
-  enabled: false
-
-  # History lookback (in days). 1 day ≈ 96 data points at 15-min intervals.
-  lookback_days: 1
-
-  # Minimum data points needed to compute velocity. Below this, skip.
-  # 8 points = 2 hours of 15-min data.
-  min_data_points: 8
-
-  # Velocity computation windows (name: number of data points)
-  # At 15-min intervals: 4 points = 1h, 16 = 4h, 96 = 24h
-  windows:
-    short: 4        # 1 hour
-    medium: 16      # 4 hours
-    long: 96        # 24 hours
-
-  # Weight of each window in the final velocity score.
-  # Recent windows weighted more (momentum is most visible short-term).
-  window_weights:
-    short: 0.50
-    medium: 0.30
-    long: 0.20
-
-  # Global dampening bounds
-  min_dampening_factor: 0.3    # never dampen below 30% of original signal
-  max_dampening_factor: 1.0    # 1.0 = no dampening
-
-  # Per-indicator configuration
-  # agent: which agent to pull history from
-  # field: dot-path within agent data (by_asset.{ASSET}.field or global path)
-  # threshold: minimum absolute velocity % to be considered significant
-  # weight: how much this indicator contributes to dampening decision
-  # global: true if same for all assets (e.g. F&G)
-  # invert: true if positive velocity = bearish (e.g. funding rising = bad)
-  indicators:
-    rsi:
-      agent: technical
-      field: rsi_14
-      threshold: 5.0          # RSI moving >5pts/window = significant
-      weight: 0.35            # RSI is the strongest timing signal
-    macd_histogram:
-      agent: technical
-      field: macd_histogram
-      threshold: 0.5
-      weight: 0.10
-    price_vs_ma30:
-      agent: technical
-      field: price_vs_30d_ma
-      threshold: 2.0          # % change threshold
-      weight: 0.15
-    fear_greed:
-      agent: market
-      field: sentiment.fear_greed_index
-      threshold: 5.0          # F&G moving >5 points/window = significant
-      weight: 0.25
-      global: true            # same for all assets
-    funding_rate:
-      agent: derivatives
-      field: funding_rate
-      threshold: 0.0002
-      weight: 0.15
-      invert: true            # rising funding = overheating = bearish
+contrarian_override:
+  enabled: true
+  extreme_fear_below: 25
+  extreme_greed_above: 75
+  market_boost: 2.0           # market weight *= 2.0 in extreme conditions
+  technical_dampen: 0.50      # technical weight *= 0.50 in extreme conditions
+  score_nudge_max: 12.0       # max points nudged toward contrarian direction
+  tier_nudge_scale:            # scale nudge by asset tier (large caps bounce more)
+    large_cap: 1.1
+    mid_cap: 1.0
+    small_cap: 0.90
 
 # ---------------------------------------------------------------------------
 # Momentum detection — compare current vs previous fusion run
@@ -1009,55 +546,25 @@ portfolio:
 # ---------------------------------------------------------------------------
 # Accuracy evaluation — gradient scoring
 # ---------------------------------------------------------------------------
-# Instead of binary hit/miss, every directional signal is scored 0.0-1.0
-# based on direction AND magnitude of the price move.
-#
-# Example (bullish signal):
-#   +8% move → 1.0 (strong correct call)
-#   +3% move → 0.7 (good directional call)
-#   +0.5% move → 0.4 (right direction but within noise)
-#   -0.5% move → 0.2 (wrong but within noise)
-#   -4% move → 0.0 (wrong call)
-#
-# Accuracy = average gradient score × 100
-# A system that nails big moves: 80-90%
-# A system that's directionally right on small moves: 50-60%
-# A random system: ~30%
-# ---------------------------------------------------------------------------
 accuracy:
-  # ---------------------------------------------------------------------------
-  # PHASE B1 (2026-03-16): Volatility-adjusted thresholds per asset
-  # ---------------------------------------------------------------------------
-  # E6 + I5 research: Fixed 2%/5% thresholds treat all assets identically,
-  # but BTC 2% = 0.8 std devs (meaningful) while INJ 2% = 0.25 std devs (noise).
-  # Per-asset thresholds calibrated to typical 24h volatility profiles.
-  # Expected impact: +8-12% gradient accuracy.
-  #
-  # Default thresholds (fallback for assets without per-asset config)
   noise_threshold_pct: 2.0
   strong_threshold_pct: 5.0
 
   # Per-asset volatility-adjusted thresholds
-  # Calibrated from typical 24h price ranges (ATR-based):
-  #   BTC: 1.5-4% daily range → noise=1.0%, strong=3.0%
-  #   ETH: 2-5% daily range → noise=1.5%, strong=4.0%
-  #   Large alts (SOL, BNB, XRP, ADA, LINK, LTC, DOT): 2-6% → noise=2.0%, strong=5.0%
-  #   Mid alts (AVAX, UNI, FIL, NEAR, APT, ARB, MATIC): 3-8% → noise=2.5%, strong=6.0%
-  #   Small/volatile alts (SUI): 4-12% → noise=3.0%, strong=7.0%
   per_asset_thresholds:
     enabled: true
     assets:
       BTC:
-        noise_threshold_pct: 1.0    # BTC: 2% is meaningful, 1% is noise
-        strong_threshold_pct: 3.0   # BTC: 3% is a strong move
+        noise_threshold_pct: 1.0
+        strong_threshold_pct: 3.0
       ETH:
-        noise_threshold_pct: 1.5    # ETH: slightly more volatile than BTC
+        noise_threshold_pct: 1.5
         strong_threshold_pct: 4.0
       SOL:
-        noise_threshold_pct: 2.0    # Large alt tier
+        noise_threshold_pct: 2.0
         strong_threshold_pct: 5.0
       BNB:
-        noise_threshold_pct: 1.5    # BNB relatively stable
+        noise_threshold_pct: 1.5
         strong_threshold_pct: 4.0
       XRP:
         noise_threshold_pct: 2.0
@@ -1066,7 +573,7 @@ accuracy:
         noise_threshold_pct: 2.0
         strong_threshold_pct: 5.0
       AVAX:
-        noise_threshold_pct: 2.5    # Mid alt tier — more volatile
+        noise_threshold_pct: 2.5
         strong_threshold_pct: 6.0
       DOT:
         noise_threshold_pct: 2.0
@@ -1096,201 +603,14 @@ accuracy:
         noise_threshold_pct: 2.5
         strong_threshold_pct: 6.0
       SUI:
-        noise_threshold_pct: 3.0    # High volatility tier
+        noise_threshold_pct: 3.0
         strong_threshold_pct: 7.0
 
-  # Gradient scores for each zone (bullish signal example):
-  #   pct_change > strong_pct     → strong_correct (1.0)
-  #   noise_pct < pct < strong    → correct (0.7)
-  #   0 < pct < noise_pct         → weak_correct (0.4)
-  #   -noise_pct < pct < 0        → weak_wrong (0.2)
-  #   pct < -noise_pct            → wrong (0.0)
+  # Gradient scores for each zone
   gradient:
     strong_correct: 1.0     # strong move in predicted direction
     correct: 0.7            # moderate move in predicted direction
     weak_correct: 0.4       # right direction but within noise
     weak_wrong: 0.2         # wrong direction but within noise
     wrong: 0.0              # clear wrong call
-
-# ---------------------------------------------------------------------------
-# PHASE C2 (2026-03-16): Cross-dimensional features
-# ---------------------------------------------------------------------------
-# I6 research: Combining signals across dimensions captures patterns that
-# individual dimensions miss. These are applied as composite score adjustments
-# AFTER individual dimensions are scored and BEFORE abstain check.
-#
-# Each feature detects a multi-dimensional pattern and applies a bonus/penalty
-# to the composite score. Only applied when ALL trigger conditions are met.
-# ---------------------------------------------------------------------------
-cross_dimensional:
-  enabled: false                       # Disabled: all-bearish penalties worsen bearish bias
-
-  # OI-Price Divergence: OI expanding while price drops → liquidation cascade risk
-  # I6 finding: 60-70% accuracy when OI rising + price falling together
-  oi_price_divergence:
-    enabled: true
-    # Detected when derivatives score indicates OI rising (high score)
-    # AND market agent shows price dropping
-    # In our contrarian scoring: high derivatives score (>60) = healthy/bullish setups
-    # But if market shows price is dropping (market score < 45), divergence exists
-    derivatives_high_threshold: 60    # derivatives score > this = OI/funding bullish setup
-    market_low_threshold: 45          # market score < this = price is dropping
-    penalty: -4                       # bearish penalty (strengthen bearish direction)
-
-  # Whale-Derivatives Confluence: whale selling + overcrowded longs → crash setup
-  whale_derivatives_bearish:
-    enabled: true
-    whale_low_threshold: 35           # whale score < this = net selling
-    derivatives_low_threshold: 35     # derivatives score < this = overcrowded/high funding
-    penalty: -5                       # strong bearish penalty
-
-  # Multi-Dimension Bearish Agreement: 4+ dimensions agree bearish → high confidence
-  multi_dim_bearish:
-    enabled: true
-    bearish_threshold: 45             # score < this = bearish for a dimension
-    min_agreeing: 4                   # require 4 of 6 dimensions to agree
-    penalty: -6                       # strong bearish penalty
-
-  # Technical-Market Alignment: both technical and market bearish → strong signal
-  tech_market_bearish:
-    enabled: true
-    technical_threshold: 40           # technical score < this
-    market_threshold: 42              # market score < this
-    penalty: -3                       # additional bearish conviction
-
-# ---------------------------------------------------------------------------
-# PHASE C3 (2026-03-16): Data quality gating
-# ---------------------------------------------------------------------------
-# I3 research: "No data = 50" silent failures mask agent failures as neutral.
-# When dimensions return 50 with "no data" detail, they should be excluded
-# from the composite rather than counted as neutral.
-#
-# This config gates signal quality: if too few dimensions have real data,
-# the signal is abstained regardless of composite score.
-# ---------------------------------------------------------------------------
-data_quality_gating:
-  enabled: false                       # Disabled: disrupts weight distribution in backtest
-  # Minimum number of dimensions with real data (not "no data" tier)
-  # to emit a directional signal. Below this, always abstain.
-  min_dimensions_with_data: 3         # need at least 3 of 6 dims with real data
-  # Score adjustment: reduce no-data dimension influence
-  # When a dimension has "no data" (score=50, tier=none), reduce its weight
-  # to prevent artificial neutral clustering
-  no_data_weight_penalty: 0.3         # multiply weight by 0.3 for no-data dims
-
-# ---------------------------------------------------------------------------
-# LLM insights (Claude Haiku)
-# ---------------------------------------------------------------------------
-llm_insights:
-  enabled: false               # DISABLED — costs ~$0.65/day but doesn't enhance scores.
-                                # These generate decorative text summaries only.
-                                # Re-enable if you want LLM-written insights on dashboard.
-
-  # Model to use
-  model: "claude-haiku-4-5-20251001"
-
-  # Max tokens per insight call
-  max_tokens: 1024
-
-  # System prompt for the LLM
-  system_prompt: >
-    You are a crypto market analyst. Given structured signal data, provide
-    concise actionable insights. Focus on cross-dimensional patterns
-    (e.g. whale accumulation during fear = opportunity). Compare with
-    previous data when available to identify trend shifts. Be direct,
-    no disclaimers. Max 3 sentences per asset, 5 sentences for portfolio.
-
-  # What to include in LLM context
-  include_previous_run: true
-
-  # Generate per-asset insights
-  per_asset: true
-
-  # Generate portfolio-level summary
-  portfolio_summary: true
-
-# ---------------------------------------------------------------------------
-# Self-learning weight optimizer (IC-based)
-# ---------------------------------------------------------------------------
-# Phase 2: Uses Information Coefficient (Spearman rank correlation) to adjust
-# dimension weights. Falls back to accuracy-proportional if IC data unavailable.
-#
-# Auto-promote: IC > ic_promote_threshold → boost weight × promote_boost
-# Auto-demote:  IC < ic_demote_threshold  → reduce weight × demote_factor
-# Auto-disable: IC < ic_disable_threshold → minimize weight × disable_factor
-# Decay alert:  IC drops >50% from previous → log warning
-learning:
-  # TEMPORARILY DISABLED 2026-03-15: prevent old bad weights from persisting
-  # via EMA blending. Re-enable after 48h of clean data accumulation.
-  enabled: false
-  optimize_every_n_evals: 8      # run after this many new evaluations
-  min_evaluations: 20            # don't optimize until this many evals exist (accuracy fallback)
-  min_ic_slices: 10              # don't use IC until this many cross-asset slices exist
-  min_weight: 0.05               # no dimension below 5%
-  max_weight: 0.40               # no dimension above 40%
-  learning_rate: 0.3             # EMA: 30% new weights + 70% old weights
-  state_namespace: "learning_optimizer"
-
-  # IC-based promote/demote thresholds
-  ic_promote_threshold: 0.03     # IC above this = signal is working → boost
-  ic_demote_threshold: 0.01      # IC below this = signal is weak → reduce
-  ic_disable_threshold: -0.02    # IC below this = signal is harmful → minimize
-  promote_boost: 1.3             # multiplier for strong dimensions
-  demote_factor: 0.5             # multiplier for weak dimensions
-  disable_factor: 0.15           # multiplier for negative-IC dimensions
-
-  # Decay detection
-  decay_threshold_pct: 50        # alert if IC drops >50% from previous run
-
-  # Composite IC Guard — prevents optimizer from applying weights that
-  # produce negative composite IC. If composite IC < threshold, force-suppress
-  # all negative-IC dimensions. If severely negative, bypass EMA blending
-  # entirely (don't preserve 70% of old bad weights).
-  composite_ic_guard:
-    enabled: true
-    # PHASE A5 (2026-03-16): Tightened thresholds per I4 research.
-    # Old thresholds (-0.05/-0.10) too conservative — took 8+ cycles to respond.
-    # New thresholds catch degradation earlier and respond faster.
-    threshold: -0.03             # was -0.05 — trigger guard earlier
-    bypass_ema_threshold: -0.05  # was -0.10 — bypass EMA blending sooner
-
-  # Fallback weights (used before first optimization or when IC unavailable)
-  # IC-TUNED 2026-03-15: aligned with new weight sets
-  fallback_weights:
-    whale: 0.05
-    technical: 0.30
-    derivatives: 0.25
-    narrative: 0.13
-    market: 0.22
-    trend: 0.05
-
-# ---------------------------------------------------------------------------
-# Phase D: Calibrated Pipeline (2026-03-16)
-# ---------------------------------------------------------------------------
-# Adds Platt-calibrated confidence, LightGBM meta-learner, meta-labeling,
-# predicted price moves, and conviction/signal_strength to each signal.
-# All components are additive — they enrich the output without changing
-# the core composite scoring logic that achieved 59.3% gradient accuracy.
-phase_d:
-  # Platt-scaled calibrated confidence (probability of correct direction)
-  calibration:
-    enabled: true
-
-  # LightGBM meta-learner (ML-based composite prediction)
-  meta_learner:
-    enabled: true
-
-  # Meta-labeling (signal quality predictor)
-  meta_labeling:
-    enabled: true
-    threshold: 0.55   # P(correct) must exceed this to approve signal
-
-  # Predicted price move (uses per-asset volatility thresholds)
-  predicted_move:
-    enabled: true
-    horizon_hours: 24
-    # Conviction thresholds (composite distance from 50)
-    high_conviction_distance: 15
-    medium_conviction_distance: 10
-    low_conviction_distance: 5
 

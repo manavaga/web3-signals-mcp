@@ -863,9 +863,9 @@ function renderAgents() {
   const agents = healthData?.agents;
   if (!agents) return;
 
-  const order = ['whale_agent', 'technical_agent', 'derivatives_agent', 'narrative_agent', 'market_agent'];
-  const names = { whale_agent: 'Whale', technical_agent: 'Technical', derivatives_agent: 'Derivatives', narrative_agent: 'Narrative', market_agent: 'Market' };
-  const weights = { whale_agent: '30%', technical_agent: '25%', derivatives_agent: '20%', narrative_agent: '15%', market_agent: '10%' };
+  const order = ['exchange_flow_agent', 'technical_agent', 'derivatives_agent', 'narrative_agent', 'market_agent'];
+  const names = { exchange_flow_agent: 'Exchange Flow', technical_agent: 'Technical', derivatives_agent: 'Derivatives', narrative_agent: 'Narrative', market_agent: 'Market' };
+  const weights = { exchange_flow_agent: '30%', technical_agent: '25%', derivatives_agent: '20%', narrative_agent: '15%', market_agent: '10%' };
 
   document.getElementById('agentsStrip').innerHTML = order.map(key => {
     const a = agents[key] || {};
@@ -1379,7 +1379,7 @@ function renderHistory(data) {
         <option value="technical_agent" ${historyAgent==='technical_agent'?'selected':''}>Technical Agent</option>
         <option value="derivatives_agent" ${historyAgent==='derivatives_agent'?'selected':''}>Derivatives Agent</option>
         <option value="market_agent" ${historyAgent==='market_agent'?'selected':''}>Market Agent</option>
-        <option value="whale_agent" ${historyAgent==='whale_agent'?'selected':''}>Whale Agent</option>
+        <option value="exchange_flow_agent" ${historyAgent==='exchange_flow_agent'?'selected':''}>Exchange Flow Agent</option>
         <option value="narrative_agent" ${historyAgent==='narrative_agent'?'selected':''}>Narrative Agent</option>
       </select>
       <span class="page-info">${historyTotal} total runs &middot; Page ${currentPage} of ${totalPages || 1}</span>

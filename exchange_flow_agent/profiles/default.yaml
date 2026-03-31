@@ -1,0 +1,128 @@
+# =============================================================================
+# Exchange Flow Agent Profile — Order Book & Volume Intelligence
+# =============================================================================
+# Tracks exchange order book depth, volume momentum, and trade intensity
+# across 20 assets using free Binance and CoinGecko APIs.
+# All free APIs — no API keys required.
+# =============================================================================
+
+name: exchange_flow_default
+http_timeout_sec: 20
+
+# ---------------------------------------------------------------------------
+# Assets to track (all 20)
+# ---------------------------------------------------------------------------
+assets:
+  - BTC
+  - ETH
+  - SOL
+  - BNB
+  - XRP
+  - ADA
+  - AVAX
+  - DOT
+  - MATIC
+  - LINK
+  - UNI
+  - ATOM
+  - LTC
+  - FIL
+  - NEAR
+  - APT
+  - ARB
+  - OP
+  - INJ
+  - SUI
+
+# ---------------------------------------------------------------------------
+# Data sources (all enabled by default)
+# ---------------------------------------------------------------------------
+sources:
+  binance_depth:
+    enabled: true
+    base_url: "https://api.binance.com/api/v3"
+    order_book_limit: 20
+    rate_limit_sec: 0.1
+  binance_ticker:
+    enabled: true
+    base_url: "https://api.binance.com/api/v3"
+    rate_limit_sec: 0.1
+  coingecko_chart:
+    enabled: true
+    base_url: "https://api.coingecko.com/api/v3"
+    volume_days: 7
+    rate_limit_sec: 1.5
+
+# ---------------------------------------------------------------------------
+# Binance symbol mapping
+# ---------------------------------------------------------------------------
+binance_symbol_map:
+  BTC: BTCUSDT
+  ETH: ETHUSDT
+  SOL: SOLUSDT
+  BNB: BNBUSDT
+  XRP: XRPUSDT
+  ADA: ADAUSDT
+  AVAX: AVAXUSDT
+  DOT: DOTUSDT
+  MATIC: POLUSDT
+  LINK: LINKUSDT
+  UNI: UNIUSDT
+  ATOM: ATOMUSDT
+  LTC: LTCUSDT
+  FIL: FILUSDT
+  NEAR: NEARUSDT
+  APT: APTUSDT
+  ARB: ARBUSDT
+  OP: OPUSDT
+  INJ: INJUSDT
+  SUI: SUIUSDT
+
+# ---------------------------------------------------------------------------
+# CoinGecko ID mapping
+# ---------------------------------------------------------------------------
+coingecko_id_map:
+  BTC: bitcoin
+  ETH: ethereum
+  SOL: solana
+  BNB: binancecoin
+  XRP: ripple
+  ADA: cardano
+  AVAX: avalanche-2
+  DOT: polkadot
+  MATIC: matic-network
+  LINK: chainlink
+  UNI: uniswap
+  ATOM: cosmos
+  LTC: litecoin
+  FIL: filecoin
+  NEAR: near
+  APT: aptos
+  ARB: arbitrum
+  OP: optimism
+  INJ: injective-protocol
+  SUI: sui
+
+# ---------------------------------------------------------------------------
+# Scoring weights
+# ---------------------------------------------------------------------------
+scoring:
+  order_book_weight: 0.40
+  volume_momentum_weight: 0.35
+  trade_intensity_weight: 0.25
+
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+thresholds:
+  bid_ask_strong_bullish: 2.0
+  bid_ask_bullish: 1.5
+  bid_ask_mild_bullish: 1.2
+  bid_ask_mild_bearish: 0.8
+  bid_ask_bearish: 0.5
+  volume_spike_pct: 100
+  volume_high_pct: 50
+  volume_declining_pct: -30
+  volume_drying_pct: -50
+  flow_bullish_threshold: 60
+  flow_bearish_threshold: 40

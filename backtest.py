@@ -1346,7 +1346,7 @@ def run_backtest():
     # Map role names to agent storage names
     agent_names_cfg = PROFILE.get("agent_names", {})
     role_to_agent = {
-        "whale": agent_names_cfg.get("whale", "whale_agent"),
+        "exchange_flow": agent_names_cfg.get("exchange_flow", "exchange_flow_agent"),
         "technical": agent_names_cfg.get("technical", "technical_agent"),
         "derivatives": agent_names_cfg.get("derivatives", "derivatives_agent"),
         "narrative": agent_names_cfg.get("narrative", "narrative_agent"),

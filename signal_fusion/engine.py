@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.request import Request, urlopen
-
 from shared.profile_loader import load_profile
 from shared.storage import Storage
-
-# Phase D: Calibrated pipeline components
-from signal_fusion.calibrator import SignalCalibrator
-from signal_fusion.meta_learner import MetaLearner
-from signal_fusion.meta_labeler import MetaLabeler
 
 
 def _fg_regime(fg_value: Optional[float]) -> str:
@@ -53,7 +44,7 @@ class SignalFusion:
         else:
             self.assets: List[str] = all_assets
         self.store = Storage(db_path)
-        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        self._target_calculator = None  # lazy-loaded TargetCalculator
 
         # Config versioning: SHA256 hash of the scoring YAML for signal attribution
         yaml_path = Path(profile_path) if profile_path else default
@@ -61,180 +52,6 @@ class SignalFusion:
             self.config_hash = hashlib.sha256(yaml_path.read_bytes()).hexdigest()[:12]
         except Exception:
             self.config_hash = "unknown"
-
-        # Phase D: Load calibrated pipeline models
-        self._load_phase_d_models()
-
-    def _load_phase_d_models(self) -> None:
-        """Load Phase D models: Platt calibrator, meta-learner, meta-labeler."""
-        models_dir = Path(__file__).resolve().parent / "models"
-
-        self.calibrator = SignalCalibrator()
-        self.meta_learner = MetaLearner()
-        self.meta_labeler = MetaLabeler()
-
-        # Load Platt calibrator
-        cal_path = models_dir / "platt_calibrators.json"
-        if not self.calibrator.load(str(cal_path)):
-            pass  # Will use fallback linear mapping
-
-        # Load meta-learner
-        if not self.meta_learner.load():
-            pass  # Will use fallback weighted average
-
-        # Load meta-labeler
-        if not self.meta_labeler.load():
-            pass  # Will use fallback distance-from-center
-
-    # ================================================================ #
-    #  Predicted move + conviction helpers (Phase D)
-    # ================================================================ #
-
-    def _compute_predicted_move(
-        self, asset: str, composite: float, direction: str
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Compute expected price move based on composite score and asset volatility.
-
-        Uses per-asset volatility thresholds from YAML to map composite score
-        distance-from-center to an expected % move with range.
-        """
-        accuracy_cfg = self.profile.get("accuracy", {})
-        pat_cfg = accuracy_cfg.get("per_asset_thresholds", {})
-
-        if not pat_cfg.get("enabled", False):
-            return None
-
-        asset_thresholds = pat_cfg.get("assets", {}).get(asset)
-        if not asset_thresholds:
-            # Default thresholds for unknown assets
-            noise_pct = 2.0
-            strong_pct = 5.0
-        else:
-            noise_pct = float(asset_thresholds.get("noise_threshold_pct", 2.0))
-            strong_pct = float(asset_thresholds.get("strong_threshold_pct", 5.0))
-
-        distance = abs(composite - 50)
-
-        # Map distance to expected move range
-        if distance > 15:
-            # High conviction: expect strong move
-            expected_pct = strong_pct
-            range_low = noise_pct
-            range_high = strong_pct * 1.5
-            conf = "high"
-        elif distance > 10:
-            # Medium conviction: noise to strong
-            expected_pct = (noise_pct + strong_pct) / 2
-            range_low = noise_pct * 0.5
-            range_high = strong_pct
-            conf = "medium"
-        elif distance > 5:
-            # Low conviction: 0 to noise
-            expected_pct = noise_pct * 0.5
-            range_low = 0.0
-            range_high = noise_pct
-            conf = "low"
-        else:
-            # Negligible — too close to center
-            return {
-                "expected_pct": 0.0,
-                "range_low_pct": 0.0,
-                "range_high_pct": round(noise_pct * 0.5, 2),
-                "horizon": "24h",
-                "confidence": "negligible",
-            }
-
-        # Apply direction sign
-        sign = 1.0 if direction == "bullish" else -1.0 if direction == "bearish" else 0.0
-
-        return {
-            "expected_pct": round(sign * expected_pct, 2),
-            "range_low_pct": round(sign * range_low if sign >= 0 else sign * range_high, 2),
-            "range_high_pct": round(sign * range_high if sign >= 0 else sign * range_low, 2),
-            "horizon": "24h",
-            "confidence": conf,
-        }
-
-    def _compute_conviction(
-        self,
-        composite: float,
-        calibrated_confidence: Optional[Dict[str, Any]],
-        data_tiers: Dict[str, str],
-    ) -> str:
-        """
-        Compute conviction level from composite score distance, calibrated
-        confidence edge, and data quality.
-        """
-        distance = abs(composite - 50)
-
-        # Base conviction from distance
-        if distance > 15:
-            base = "high"
-        elif distance > 10:
-            base = "medium"
-        elif distance > 5:
-            base = "low"
-        else:
-            return "none"
-
-        # Adjust based on calibrated edge
-        if calibrated_confidence:
-            edge = calibrated_confidence.get("kelly_edge", 0)
-            if edge < 0.03 and base == "high":
-                base = "medium"
-            elif edge > 0.15 and base == "low":
-                base = "medium"
-
-        # Poor data quality can downgrade
-        full_tiers = sum(1 for t in data_tiers.values() if t == "full")
-        if full_tiers < 2 and base in ("high", "medium"):
-            base = "low"
-
-        return base
-
-    def _compute_signal_strength(
-        self,
-        conviction: str,
-        calibrated_confidence: Optional[Dict[str, Any]],
-        data_tiers: Dict[str, str],
-        dimension_agreement: int,
-    ) -> str:
-        """
-        Compute signal strength: combines conviction + agreement + data quality.
-
-        Returns: "strong", "moderate", or "weak"
-        """
-        # If calibrated edge is negative, signal has no edge → weak
-        if calibrated_confidence:
-            edge = calibrated_confidence.get("kelly_edge", 0)
-            if edge <= 0:
-                return "weak"
-
-        score = 0
-        if conviction == "high":
-            score += 3
-        elif conviction == "medium":
-            score += 2
-        elif conviction == "low":
-            score += 1
-
-        if dimension_agreement >= 4:
-            score += 2
-        elif dimension_agreement >= 3:
-            score += 1
-
-        full_tiers = sum(1 for t in data_tiers.values() if t == "full")
-        if full_tiers >= 4:
-            score += 2
-        elif full_tiers >= 2:
-            score += 1
-
-        if score >= 5:
-            return "strong"
-        elif score >= 3:
-            return "moderate"
-        return "weak"
 
     def fuse(self) -> Dict[str, Any]:
         """Main entry: load latest agent data, score, label, summarise."""
@@ -290,7 +107,7 @@ class SignalFusion:
         label_cfg = self.profile.get("labels", [])
 
         signals: Dict[str, Dict[str, Any]] = {}
-        all_roles = ["whale", "technical", "derivatives", "narrative", "market", "trend"]
+        all_roles = ["exchange_flow", "technical", "derivatives", "narrative", "market"]
 
         # Dynamic reweighting config (from YAML)
         reweight_cfg = self.profile.get("reweighting", {})
@@ -331,63 +148,6 @@ class SignalFusion:
                 errors.append(f"dynamic abstain: F&G unavailable → using base threshold={base_min_distance}")
         else:
             resolved_distance = base_min_distance
-
-        # --- Phase 6 pre-compute: Trend override (BTC 30-day MA check) ---
-        # When BTC is in a confirmed downtrend (price < MA30 AND MA30 falling),
-        # dampen the contrarian inversion on market + derivatives dimensions.
-        # This allows bearish signals to emerge in sustained bear markets.
-        trend_cfg = self.profile.get("trend_override", {})
-        is_downtrend = False
-        trend_dampening = 1.0  # 1.0 = no dampening
-
-        if trend_cfg.get("enabled", False):
-            dampening_factor = float(trend_cfg.get("dampening_factor", 0.5))
-            dampen_dims = trend_cfg.get("dampen_dimensions", ["market", "derivatives"])
-
-            # Get BTC price from market agent
-            btc_price = None
-            market_data = raw.get("market")
-            if market_data:
-                btc_price = market_data.get("data", {}).get("per_asset", {}).get("BTC", {}).get("price")
-
-            # Get BTC MA30 from technical agent
-            btc_ma30 = None
-            tech_data = raw.get("technical")
-            if tech_data:
-                btc_ma30 = tech_data.get("data", {}).get("by_asset", {}).get("BTC", {}).get("ma_30d")
-
-            if btc_price is not None and btc_ma30 is not None and btc_ma30 > 0:
-                pct_below_ma = (btc_price - btc_ma30) / btc_ma30 * 100
-                downtrend_pct = float(trend_cfg.get("downtrend_threshold_pct", -5.0))
-                # Confirmed downtrend: price must be below threshold vs 30-day MA
-                if pct_below_ma < downtrend_pct:
-                    is_downtrend = True
-                    trend_dampening = dampening_factor
-                    errors.append(
-                        f"trend override: BTC ${btc_price:.0f} is {pct_below_ma:.1f}% below MA30 "
-                        f"(${btc_ma30:.0f}) → dampening contrarian on {dampen_dims} by {dampening_factor}"
-                    )
-                else:
-                    errors.append(
-                        f"trend override: BTC ${btc_price:.0f} is {pct_below_ma:+.1f}% vs MA30 "
-                        f"(${btc_ma30:.0f}) → no dampening"
-                    )
-            else:
-                errors.append(f"trend override: BTC price/MA30 unavailable — skipping")
-
-        # --- Phase 4.5 pre-compute: Velocity analyzer ---
-        # Load historical agent data ONCE for velocity computation across all assets.
-        velocity_analyzer = None
-        velocity_cfg = self.profile.get("velocity", {})
-        if velocity_cfg.get("enabled", False):
-            try:
-                from signal_fusion.velocity import VelocityAnalyzer
-                velocity_analyzer = VelocityAnalyzer(self.store, self.profile)
-                vel_errors = velocity_analyzer.preload_history()
-                errors.extend(vel_errors)
-            except Exception as exc:
-                errors.append(f"velocity analyzer init failed: {exc}")
-                velocity_analyzer = None
 
         # --- Regime detection pre-compute ---
         # Detect TRENDING vs RANGING using BTC's position relative to MA30.
@@ -433,32 +193,6 @@ class SignalFusion:
             else:
                 errors.append("regime: BTC data unavailable")
 
-        # --- F&G Regime-First Scoring pre-compute ---
-        # Shift weights and dampen scores based on the Fear & Greed regime.
-        # In fear: boost pro-trend, suppress contrarian.
-        # In greed: boost contrarian, suppress pro-trend.
-        fg_regime_cfg = self.profile.get("fg_regime_scoring", {})
-        fg_regime = _fg_regime(fg_value)
-        fg_regime_overrides: Dict[str, Any] = {}
-        fg_weight_shifts: Dict[str, float] = {}
-        fg_score_dampening: Dict[str, Any] = {}
-
-        if fg_regime_cfg.get("enabled", False) and fg_regime != "unknown":
-            fg_regime_overrides = fg_regime_cfg.get(fg_regime, {})
-            fg_weight_shifts = {
-                k: float(v) for k, v in fg_regime_overrides.get("weight_shifts", {}).items()
-            }
-            fg_score_dampening = fg_regime_overrides.get("score_dampening", {})
-            # Override abstain distance with regime-specific value
-            if "abstain_distance" in fg_regime_overrides:
-                resolved_distance = float(fg_regime_overrides["abstain_distance"])
-            errors.append(
-                f"fg_regime_scoring: {fg_regime} (F&G={fg_value}) "
-                f"→ wt_shifts={{{', '.join(f'{k}:{v}' for k, v in fg_weight_shifts.items())}}}, "
-                f"abstain={resolved_distance}, "
-                f"dampening={'on(factor=' + str(fg_score_dampening.get('factor', '-')) + ')' if fg_score_dampening.get('enabled') else 'off'}"
-            )
-
         # Pre-inject market price changes into derivatives data for OI-price divergence
         _deriv_data = raw.get("derivatives")
         _market_data = raw.get("market")
@@ -475,8 +209,7 @@ class SignalFusion:
             # --- Phase 1: Score ALL dimensions first ---
             raw_scores: Dict[str, Tuple[float, str]] = {}
             for role in all_roles:
-                # Trend dimension reads from technical agent (no dedicated trend agent)
-                agent_data = raw.get(role) if role != "trend" else raw.get("technical")
+                agent_data = raw.get(role)
                 rules = scoring_cfg.get(role, {})
                 raw_scores[role] = self._score_dimension(role, asset, agent_data, rules)
 
@@ -491,9 +224,6 @@ class SignalFusion:
                         role, score_val, detail_str,
                         agent_reweight_rules.get(role, {}),
                     )
-
-            # Keep whale_data_tier for backward compatibility in output
-            whale_data_tier = data_tiers.get("whale", "full")
 
             # --- Phase 3: Calculate adjusted weights ---
             # Direction-aware weight selection: compute unweighted average of
@@ -510,6 +240,22 @@ class SignalFusion:
             else:
                 weights = weights_default
 
+            # Per-asset weight profiles (from YAML): tier-based overrides
+            per_asset_cfg = self.profile.get("per_asset_weights", {})
+            if per_asset_cfg.get("enabled", False):
+                for tier_name in ["large_cap", "mid_cap", "small_cap", "blacklisted"]:
+                    tier_cfg = per_asset_cfg.get(tier_name, {})
+                    if asset in tier_cfg.get("assets", []):
+                        tier_bullish = tier_cfg.get("weights_bullish")
+                        tier_bearish = tier_cfg.get("weights_bearish")
+                        if raw_avg > 50 and tier_bullish:
+                            weights = tier_bullish
+                        elif raw_avg < 50 and tier_bearish:
+                            weights = tier_bearish
+                        elif tier_bullish:
+                            weights = tier_bullish  # fallback to bullish if no bearish
+                        break
+
             # Per-asset weight override (Level 2): if we have IC-learned
             # weights specifically for this asset, use those instead
             using_per_asset = False
@@ -520,24 +266,6 @@ class SignalFusion:
             base_weights: Dict[str, float] = {}
             for role in all_roles:
                 base_weights[role] = float(weights.get(role, 0.0))
-
-            # Accuracy scaling: multiply each dimension's weight by its
-            # historical directional accuracy (continuous, replaces binary gating)
-            scaling_cfg = self.profile.get("accuracy_scaling", {})
-            if scaling_cfg.get("enabled", False):
-                multipliers = scaling_cfg.get("multipliers", {})
-                min_mult = float(scaling_cfg.get("min_multiplier", 0.15))
-                direction_lean = "bullish" if raw_avg > 50 else "bearish"
-                for role in all_roles:
-                    role_mults = multipliers.get(role, {})
-                    accuracy = float(role_mults.get(direction_lean, 0.50))
-                    accuracy = max(accuracy, min_mult)
-                    base_weights[role] *= accuracy
-                # Renormalize to sum to 1.0
-                total_w = sum(base_weights.values())
-                if total_w > 0:
-                    for role in all_roles:
-                        base_weights[role] = base_weights[role] / total_w
 
             # Regime-aware weight shifts: boost directional or contrarian dims
             if regime_cfg.get("enabled", False) and regime_shifts:
@@ -550,15 +278,32 @@ class SignalFusion:
                     for role in all_roles:
                         base_weights[role] = base_weights[role] / total_w
 
-            # F&G regime weight shifts: fear → pro-trend, greed → contrarian
-            if fg_regime_cfg.get("enabled", False) and fg_weight_shifts:
-                for role in all_roles:
-                    shift = fg_weight_shifts.get(role, 1.0)
-                    base_weights[role] *= shift
-                total_w = sum(base_weights.values())
-                if total_w > 0:
-                    for role in all_roles:
-                        base_weights[role] /= total_w
+            # Contrarian extreme sentiment override: when F&G is in extreme
+            # fear/greed territory, boost the market dimension (the contrarian
+            # signal carrier) at the expense of technical (lagging indicator).
+            # This prevents the system from always following trend into reversals.
+            contrarian_cfg = self.profile.get("contrarian_override", {})
+            if contrarian_cfg.get("enabled", True):
+                market_data = raw.get("market")
+                if market_data and isinstance(market_data, dict):
+                    fg_val = market_data.get("data", {}).get("sentiment", {}).get("fear_greed_index")
+                    if fg_val is not None:
+                        fg = float(fg_val)
+                        extreme_fear_below = float(contrarian_cfg.get("extreme_fear_below", 20))
+                        extreme_greed_above = float(contrarian_cfg.get("extreme_greed_above", 80))
+                        market_boost = float(contrarian_cfg.get("market_boost", 1.5))
+                        technical_dampen = float(contrarian_cfg.get("technical_dampen", 0.7))
+
+                        if fg < extreme_fear_below or fg > extreme_greed_above:
+                            if "market" in base_weights:
+                                base_weights["market"] *= market_boost
+                            if "technical" in base_weights:
+                                base_weights["technical"] *= technical_dampen
+                            # Renormalize
+                            total_w = sum(base_weights.values())
+                            if total_w > 0:
+                                for role in all_roles:
+                                    base_weights[role] = base_weights[role] / total_w
 
             # Apply tier multipliers to ALL agents, then redistribute freed weight
             adjusted_weights: Dict[str, float] = {}
@@ -582,58 +327,12 @@ class SignalFusion:
                     for role in full_data_roles:
                         adjusted_weights[role] += total_freed * (base_weights[role] / full_data_sum)
 
-            # --- Phase C3: Data quality gating — reduce weight of no-data dims ---
-            dq_cfg = self.profile.get("data_quality_gating", {})
-            data_quality_abstain = False
-            if dq_cfg.get("enabled", False):
-                no_data_penalty = float(dq_cfg.get("no_data_weight_penalty", 0.3))
-                dims_with_data = sum(1 for r in all_roles if data_tiers[r] != "none")
-
-                for role in all_roles:
-                    if data_tiers[role] == "none":
-                        adjusted_weights[role] *= no_data_penalty
-
-                # Renormalize
-                total_w = sum(adjusted_weights.values())
-                if total_w > 0:
-                    for role in all_roles:
-                        adjusted_weights[role] = adjusted_weights[role] / total_w
-
-                min_dims = int(dq_cfg.get("min_dimensions_with_data", 3))
-                if dims_with_data < min_dims:
-                    data_quality_abstain = True
-
             # --- Phase 4: Build dimensions dict and compute composite ---
-            # Apply trend dampening: in confirmed downtrends, pull affected
-            # dimension scores toward 50, reducing the contrarian boost.
-            # This allows bearish signals to emerge in sustained bear markets.
             dimensions: Dict[str, Dict[str, Any]] = {}
             composite = 0.0
-            dampen_dims = trend_cfg.get("dampen_dimensions", []) if trend_cfg.get("enabled", False) else []
 
             for role in all_roles:
                 score, detail = raw_scores[role]
-
-                # Trend dampening: blend score toward 50 for affected dimensions
-                if is_downtrend and role in dampen_dims and score > 50:
-                    # Only dampen scores ABOVE 50 (the contrarian boost part)
-                    # dampening_factor=0.5 means: keep 50% of the distance from 50
-                    # e.g. score=70 → 50 + (70-50)*0.5 = 60
-                    original_score = score
-                    score = 50.0 + (score - 50.0) * trend_dampening
-                    detail = f"{detail}; trend dampened {original_score:.1f}→{score:.1f}"
-
-                # F&G regime score dampening: pull contrarian "buy" signals toward 50
-                # In fear markets, contrarian dims wrongly say "buy" — dampen those.
-                # In extreme greed, pro-trend dims wrongly say "keep buying" — dampen those.
-                if fg_score_dampening.get("enabled", False) and score > 50:
-                    sd_dims = fg_score_dampening.get("dimensions", [])
-                    if role in sd_dims:
-                        sd_factor = float(fg_score_dampening.get("factor", 1.0))
-                        original_score = score
-                        score = 50.0 + (score - 50.0) * sd_factor
-                        detail = f"{detail}; fg dampened {original_score:.1f}→{score:.1f}"
-
                 label_name, direction = self._classify(score, label_cfg)
                 adj_w = adjusted_weights[role]
 
@@ -648,81 +347,49 @@ class SignalFusion:
 
             composite = round(composite, 1)
 
-            # --- Phase C2: Cross-dimensional features ---
-            cross_dim_cfg = self.profile.get("cross_dimensional", {})
-            cross_dim_adjustment = 0.0
-            if cross_dim_cfg.get("enabled", False):
-                oi_div = cross_dim_cfg.get("oi_price_divergence", {})
-                if oi_div.get("enabled", False):
-                    d_score = raw_scores.get("derivatives", (50, ""))[0]
-                    m_score = raw_scores.get("market", (50, ""))[0]
-                    if (d_score > float(oi_div.get("derivatives_high_threshold", 60)) and
-                            m_score < float(oi_div.get("market_low_threshold", 45))):
-                        cross_dim_adjustment += float(oi_div.get("penalty", -4))
+            # --- Phase 4b: Contrarian score nudge ---
+            # In extreme sentiment, nudge composite toward the contrarian
+            # direction. F&G < 25 nudges bullish, F&G > 75 nudges bearish.
+            # This is the "smart layer" — extreme fear historically produces
+            # 48h bounces, extreme greed produces corrections.
+            if contrarian_cfg.get("enabled", True):
+                market_data = raw.get("market")
+                if market_data and isinstance(market_data, dict):
+                    fg_val_nudge = market_data.get("data", {}).get("sentiment", {}).get("fear_greed_index")
+                    if fg_val_nudge is not None:
+                        fg_n = float(fg_val_nudge)
+                        nudge_max = float(contrarian_cfg.get("score_nudge_max", 5.0))
+                        ef_below = float(contrarian_cfg.get("extreme_fear_below", 25))
+                        eg_above = float(contrarian_cfg.get("extreme_greed_above", 75))
 
-                wd_bear = cross_dim_cfg.get("whale_derivatives_bearish", {})
-                if wd_bear.get("enabled", False):
-                    w_score = raw_scores.get("whale", (50, ""))[0]
-                    d_score = raw_scores.get("derivatives", (50, ""))[0]
-                    if (w_score < float(wd_bear.get("whale_low_threshold", 35)) and
-                            d_score < float(wd_bear.get("derivatives_low_threshold", 35))):
-                        cross_dim_adjustment += float(wd_bear.get("penalty", -5))
+                        # Tier-aware nudge scaling: large caps bounce more
+                        # reliably from extreme sentiment than small caps
+                        tier_scales = contrarian_cfg.get("tier_nudge_scale", {})
+                        asset_tier = self._get_asset_tier(asset)
+                        # Check per-asset-weight tier too
+                        pa_cfg = self.profile.get("per_asset_weights", {})
+                        for tn in ["large_cap", "mid_cap", "small_cap"]:
+                            tc = pa_cfg.get(tn, {})
+                            if asset in tc.get("assets", []):
+                                asset_tier = tn
+                                break
+                        tier_scale = float(tier_scales.get(asset_tier, 1.0))
 
-                multi_bear = cross_dim_cfg.get("multi_dim_bearish", {})
-                if multi_bear.get("enabled", False):
-                    b_thresh = float(multi_bear.get("bearish_threshold", 45))
-                    min_agree = int(multi_bear.get("min_agreeing", 4))
-                    bear_dims = sum(1 for r in all_roles if raw_scores[r][0] < b_thresh)
-                    if bear_dims >= min_agree:
-                        cross_dim_adjustment += float(multi_bear.get("penalty", -6))
-
-                tm_bear = cross_dim_cfg.get("tech_market_bearish", {})
-                if tm_bear.get("enabled", False):
-                    t_score = raw_scores.get("technical", (50, ""))[0]
-                    m_score = raw_scores.get("market", (50, ""))[0]
-                    if (t_score < float(tm_bear.get("technical_threshold", 40)) and
-                            m_score < float(tm_bear.get("market_threshold", 42))):
-                        cross_dim_adjustment += float(tm_bear.get("penalty", -3))
-
-                if cross_dim_adjustment != 0:
-                    composite = round(max(0.0, min(100.0, composite + cross_dim_adjustment)), 1)
-
-            # --- Phase 4.5: Velocity dampening ---
-            # When indicators are accelerating against the signal direction,
-            # dampen the composite toward 50. This prevents premature contrarian
-            # calls (e.g. buying into accelerating fear that keeps dropping).
-            velocity_result = None
-            if velocity_analyzer and velocity_analyzer.is_enabled():
-                try:
-                    velocity_result = velocity_analyzer.compute_asset_velocity(
-                        asset, composite
-                    )
-                    if velocity_result is not None:
-                        vdamp = velocity_result["dampening_factor"]
-                        if vdamp < 1.0:
-                            original_composite = composite
-                            distance = composite - 50.0
-                            composite = round(50.0 + distance * vdamp, 1)
-                            composite = max(0.0, min(100.0, composite))
-                            errors.append(
-                                f"velocity: {asset} dampened "
-                                f"{original_composite:.1f}→{composite:.1f} "
-                                f"(factor={vdamp:.2f})"
-                            )
-                except Exception as exc:
-                    errors.append(f"velocity {asset}: {exc}")
+                        if fg_n < ef_below:
+                            intensity = (ef_below - fg_n) / ef_below
+                            nudge = nudge_max * intensity * tier_scale
+                            composite = round(composite + nudge, 1)
+                        elif fg_n > eg_above:
+                            intensity = (fg_n - eg_above) / (100 - eg_above)
+                            nudge = nudge_max * intensity * tier_scale
+                            composite = round(composite - nudge, 1)
 
             # --- Phase 5: Abstain check ---
             # Phase A1 (2026-03-16): Asymmetric abstain zones.
             # Bearish signals (composite < 50) use tighter threshold (more signals pass).
             # Bullish signals (composite > 50) use wider threshold (fewer, higher quality).
             abstain_applied = False
-            if data_quality_abstain:
-                # Phase C3: Data quality gate — insufficient dimensions with data
-                abstain_applied = True
-                label_name = "INSUFFICIENT DATA"
-                direction = "neutral"
-            elif abstain_cfg.get("enabled", False):
+            if abstain_cfg.get("enabled", False):
                 asym_cfg = abstain_cfg.get("asymmetric", {})
                 if asym_cfg.get("enabled", False):
                     bearish_dist = float(asym_cfg.get("bearish_min_distance", resolved_distance))
@@ -772,61 +439,23 @@ class SignalFusion:
             else:
                 momentum = "new"
 
-            # --- Phase D: Calibrated confidence, predicted move, conviction ---
-            dim_scores_dict = {r: raw_scores[r][0] for r in all_roles}
-            dim_weights_dict = {r: adjusted_weights.get(r, 0.1) for r in all_roles}
-
-            # Calibrated confidence (Platt-scaled probability of correct direction)
-            calibrated_confidence = None
-            try:
-                calibrated_confidence = self.calibrator.compute_signal_confidence(
-                    dim_scores_dict, dim_weights_dict, data_tiers
-                )
-            except Exception as exc:
-                errors.append(f"calibrator {asset}: {exc}")
-
-            # Meta-learner prediction (ML-based composite)
-            meta_prediction = None
-            try:
-                if self.meta_learner.is_fitted:
-                    meta_prediction = self.meta_learner.predict(dim_scores_dict, fg_value)
-            except Exception as exc:
-                errors.append(f"meta_learner {asset}: {exc}")
-
-            # Meta-labeler (signal quality assessment)
-            meta_label_result = None
-            try:
-                if self.meta_labeler.is_fitted:
-                    ml_emit, ml_prob, ml_reason = self.meta_labeler.should_emit(
-                        composite, dim_scores_dict, data_tiers, momentum
+            # --- Target price / Stop loss calculation ---
+            # Only for directional signals (not INSUFFICIENT EDGE)
+            target_data = {}
+            if not abstain_applied and direction in ("buy", "sell"):
+                try:
+                    if self._target_calculator is None:
+                        from signal_fusion.target_calculator import TargetCalculator
+                        self._target_calculator = TargetCalculator(self.store, self.profile)
+                    target_data = self._target_calculator.calculate(
+                        asset=asset,
+                        direction=direction,
+                        composite_score=composite,
+                        dimension_scores=dimensions,
+                        agent_data=raw,
                     )
-                    meta_label_result = {
-                        "should_emit": ml_emit,
-                        "probability": round(ml_prob, 4),
-                        "reason": ml_reason,
-                    }
-            except Exception as exc:
-                errors.append(f"meta_labeler {asset}: {exc}")
-
-            # Conviction level
-            conviction = self._compute_conviction(
-                composite, calibrated_confidence, data_tiers
-            )
-
-            # Dimension agreement for signal strength
-            bullish_dims = sum(1 for s in dim_scores_dict.values() if s > 55)
-            bearish_dims = sum(1 for s in dim_scores_dict.values() if s < 45)
-            dim_agreement = max(bullish_dims, bearish_dims)
-
-            # Signal strength (strong / moderate / weak)
-            signal_strength = self._compute_signal_strength(
-                conviction, calibrated_confidence, data_tiers, dim_agreement
-            )
-
-            # Predicted move (expected % change with range)
-            predicted_move = self._compute_predicted_move(
-                asset, composite, direction
-            )
+                except Exception as exc:
+                    errors.append(f"target calc error for {asset}: {exc}")
 
             signals[asset] = {
                 "composite_score": composite,
@@ -838,75 +467,38 @@ class SignalFusion:
                 "data_tiers": data_tiers,
                 "abstain": abstain_applied,
                 "abstain_threshold": resolved_distance,
-                "trend_dampened": is_downtrend,
                 "regime": detected_regime,
-                "velocity": velocity_result if velocity_result else None,
                 "config_version": self.config_hash,
                 "regime_at_generation": _fg_regime(fg_value),
                 "per_asset_weights": using_per_asset,
-                # Phase D: New enrichment fields
-                "conviction": conviction,
-                "signal_strength": signal_strength,
-                "predicted_move": predicted_move,
-                "meta_learner": meta_prediction,
-                "meta_label": meta_label_result,
-                "calibrated_confidence": calibrated_confidence,
+                **({
+                    "entry_price": target_data.get("entry_price"),
+                    "target_price": target_data.get("target_price"),
+                    "stop_loss": target_data.get("stop_loss"),
+                    "risk_reward_ratio": target_data.get("risk_reward_ratio"),
+                    "confidence": target_data.get("confidence"),
+                    "timeframe_hours": target_data.get("timeframe_hours", 48),
+                } if target_data else {}),
             }
 
             # Store current score for next momentum comparison
             self.store.save_kv("fusion_scores", asset, composite)
 
-        # Portfolio summary (pass dynamic abstain + trend + velocity info)
+            # Save signal for future evaluation
+            try:
+                from signal_fusion.evaluator import SignalEvaluator
+                eval_signal = dict(signals[asset])
+                eval_signal["_features"] = features if not abstain_applied else {}
+                evaluator = SignalEvaluator(self.store)
+                evaluator.save_for_evaluation(eval_signal, asset)
+            except Exception:
+                pass  # non-critical — don't block fusion
+
+        # Portfolio summary
         portfolio = self._build_portfolio_summary(signals, raw)
         portfolio["fear_greed"] = fg_value
         portfolio["abstain_threshold"] = resolved_distance
-        portfolio["btc_downtrend"] = is_downtrend
         portfolio["detected_regime"] = detected_regime
-
-        # Velocity summary stats
-        vel_dampened = [
-            s for s in signals.values()
-            if s.get("velocity") and s["velocity"].get("dampening_factor", 1.0) < 1.0
-        ]
-        portfolio["velocity_dampened_count"] = len(vel_dampened)
-        if vel_dampened:
-            avg_damp = sum(
-                s["velocity"]["dampening_factor"] for s in vel_dampened
-            ) / len(vel_dampened)
-            portfolio["avg_velocity_dampening"] = round(avg_damp, 2)
-        else:
-            portfolio["avg_velocity_dampening"] = 1.0
-
-        # LLM insights
-        llm_cfg = self.profile.get("llm_insights", {})
-        if llm_cfg.get("enabled", False) and self.anthropic_key:
-            try:
-                prev_run = self.store.load_latest("signal_fusion")
-                prev_signals = prev_run.get("data", {}).get("signals", {}) if prev_run else {}
-
-                if llm_cfg.get("portfolio_summary", False):
-                    portfolio["llm_insight"] = self._llm_portfolio_insight(
-                        portfolio, signals, prev_signals, llm_cfg
-                    )
-
-                if llm_cfg.get("per_asset", False):
-                    # Only generate for top buys + top sells (not all 20 — saves cost)
-                    top_assets = set()
-                    for item in portfolio.get("top_buys", []):
-                        top_assets.add(item["asset"])
-                    for item in portfolio.get("top_sells", []):
-                        top_assets.add(item["asset"])
-
-                    for asset in top_assets:
-                        sig = signals.get(asset, {})
-                        prev_sig = prev_signals.get(asset, {})
-                        insight = self._llm_asset_insight(asset, sig, prev_sig, llm_cfg)
-                        signals[asset]["llm_insight"] = insight
-
-            except Exception as exc:
-                errors.append(f"llm_insights: {exc}")
-        elif llm_cfg.get("enabled", False) and not self.anthropic_key:
-            errors.append("llm_insights: ANTHROPIC_API_KEY not set")
 
         duration_ms = int((time.perf_counter() - start) * 1000)
 
@@ -957,87 +549,42 @@ class SignalFusion:
             return 50.0, f"error: {exc}"
 
     # ================================================================ #
-    #  WHALE scorer
+    #  EXCHANGE FLOW scorer (replaces whale scorer)
     # ================================================================ #
 
-    def _score_whale(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
-        """Score whale dimension for one asset.
+    def _score_exchange_flow(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
+        """Score exchange flow dimension for one asset.
 
-        Phase B2: Now supports volume_ratio scoring mode (USD-weighted).
-        Falls back to count-based ratio if USD amounts unavailable.
+        Reads from the exchange_flow_agent which provides:
+        - Order book imbalance (bid/ask ratio)
+        - Volume momentum (vs 7-day average)
+        - Trade intensity
+        - Pre-computed exchange_flow_score (0-100)
         """
-        base_score = float(rules.get("base_score", 50))
-        score = base_score
+        by_asset = data.get("by_asset", {})
+        asset_data = by_asset.get(asset, {})
+
+        if not asset_data:
+            return 50.0, "no exchange flow data"
+
+        # Use the agent's pre-computed score if available
+        score = float(asset_data.get("exchange_flow_score", 50.0))
         details: List[str] = []
 
-        # Per-asset moves
-        by_asset = data.get("by_asset", {})
-        asset_moves = by_asset.get(asset, [])
-        accum_count = sum(1 for m in asset_moves if m.get("action") == "accumulate")
-        sell_count = sum(1 for m in asset_moves if m.get("action") == "sell")
+        # Build detail string from available data
+        bid_ask = asset_data.get("bid_ask_ratio")
+        if bid_ask is not None:
+            details.append(f"bid/ask={bid_ask:.2f}")
 
-        scoring_mode = str(rules.get("scoring_mode", "ratio"))
-        directional = accum_count + sell_count
+        vol_change = asset_data.get("volume_change_pct")
+        if vol_change is not None:
+            details.append(f"vol_chg={vol_change:+.1f}%")
 
-        if scoring_mode == "volume_ratio" and directional >= int(rules.get("min_directional_moves", 2)):
-            # Phase B2: Volume-weighted ratio scoring (E3 Fix 1)
-            # A $500M accumulation dominates over twenty $100K transfers
-            accum_volume = sum(
-                float(m.get("amount_usd", 0))
-                for m in asset_moves
-                if m.get("action") == "accumulate"
-            )
-            sell_volume = sum(
-                float(m.get("amount_usd", 0))
-                for m in asset_moves
-                if m.get("action") == "sell"
-            )
-            total_vol = accum_volume + sell_volume
-            if total_vol > 0:
-                ratio = accum_volume / total_vol
-                max_pts = float(rules.get("ratio_max_points", 60))
-                score = ratio * max_pts
-                details.append(
-                    f"${accum_volume/1e6:.1f}M accumulate, ${sell_volume/1e6:.1f}M sell "
-                    f"(vol ratio {ratio:.0%})")
-            else:
-                # Fallback to count-based if no USD amounts available
-                ratio = accum_count / directional
-                max_pts = float(rules.get("ratio_max_points", 60))
-                score = ratio * max_pts
-                details.append(f"{accum_count} accumulate, {sell_count} sell (count ratio {ratio:.0%})")
-        elif scoring_mode == "ratio" and directional >= int(rules.get("min_directional_moves", 2)):
-            # Legacy count-based ratio scoring
-            ratio = accum_count / directional
-            max_pts = float(rules.get("ratio_max_points", 60))
-            score = ratio * max_pts
-            details.append(f"{accum_count} accumulate, {sell_count} sell (ratio {ratio:.0%})")
-        elif directional > 0:
-            # Legacy per-move scoring (fallback)
-            score += accum_count * float(rules.get("accumulate_points", 10))
-            score += sell_count * float(rules.get("sell_points", -10))
-            details.append(f"{accum_count} accumulate, {sell_count} sell")
-
-        # Exchange flow (adds up to ±10 on top)
-        summary = data.get("summary", {})
-        net_dir = summary.get("net_exchange_direction", "")
-        if net_dir == "net_outflow":
-            score += float(rules.get("exchange_outflow_bonus", 10))
-            details.append("exchange outflow")
-        elif net_dir == "net_inflow":
-            score += float(rules.get("exchange_inflow_penalty", -10))
-            details.append("exchange inflow")
-
-        # Whale wallet signals (adds up to ±8 per wallet)
-        wallet_signals = summary.get("whale_wallet_signals", [])
-        for ws in wallet_signals:
-            if "accumulating" in ws.lower():
-                score += float(rules.get("whale_wallet_accumulating_bonus", 8))
-            elif "reducing" in ws.lower():
-                score += float(rules.get("whale_wallet_reducing_penalty", -8))
+        status = asset_data.get("exchange_flow_status", "unknown")
+        details.append(f"status={status}")
 
         score = max(float(rules.get("min_score", 0)), min(float(rules.get("max_score", 100)), score))
-        return score, "; ".join(details) if details else "no whale activity"
+        return score, "; ".join(details) if details else "no exchange flow data"
 
     # ================================================================ #
     #  Asset tier helpers (for per-tier scoring overrides)
@@ -1068,94 +615,71 @@ class SignalFusion:
     # ================================================================ #
 
     def _score_technical(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
-        # Apply asset tier overrides (momentum vs contrarian)
-        tier_cfg = self.profile.get("asset_tiers", {})
-        if tier_cfg.get("enabled", False):
-            tier = self._get_asset_tier(asset)
-            overrides = tier_cfg.get("technical_overrides", {}).get(tier, {})
-            if overrides:
-                rules = self._merge_rules(rules, overrides)
+        """Score technical dimension using agent's pre-computed score.
 
+        The enhanced technical agent computes a 0-100 composite score from:
+        RSI(25%), MACD(25%), Bollinger Bands(20%), Trend(30%) + volume bonus.
+        We use that directly when available, with detail annotation.
+        """
         by_asset = data.get("by_asset", {})
         asset_data = by_asset.get(asset, {})
         if not asset_data:
             return 50.0, "no data"
 
-        score = 0.0
         details: List[str] = []
 
-        # RSI — full continuous scoring (no flat buckets in extreme zones)
-        rsi_rules = rules.get("rsi", {})
+        # Use agent's pre-computed score when available
+        agent_score = asset_data.get("technical_score")
+        if agent_score is not None:
+            score = float(agent_score)
+            # Build detail string from key indicators
+            rsi = asset_data.get("rsi_14")
+            if rsi is not None:
+                details.append(f"RSI={rsi:.0f}")
+            macd_h = asset_data.get("macd_histogram")
+            if macd_h is not None:
+                details.append(f"MACD_H={macd_h:.4f}")
+            bb_pos = asset_data.get("bb_position")
+            if bb_pos is not None:
+                details.append(f"BB={bb_pos:.2f}")
+            atr_pct = asset_data.get("atr_pct")
+            if atr_pct is not None:
+                details.append(f"ATR={atr_pct:.1f}%")
+            return max(0.0, min(100.0, score)), "; ".join(details)
+
+        # Fallback: legacy point-based scoring when agent score unavailable
+        score = 0.0
         rsi = asset_data.get("rsi_14")
         if rsi is not None:
-            oversold = float(rsi_rules.get("oversold_below", 30))
-            overbought = float(rsi_rules.get("overbought_above", 70))
-            if rsi < oversold:
-                # Continuous within oversold zone: RSI 0→oversold maps extreme→oversold score
-                extreme_s = float(rsi_rules.get("extreme_oversold_score", 40))
-                oversold_s = float(rsi_rules.get("oversold_score", 35))
-                ratio = rsi / oversold if oversold > 0 else 0.0  # 0.0 at RSI=0, 1.0 at threshold
-                score += extreme_s + ratio * (oversold_s - extreme_s)
-                details.append(f"RSI {rsi:.0f} oversold")
-            elif rsi > overbought:
-                # Continuous within overbought zone: RSI overbought→100 maps overbought→extreme score
-                overbought_s = float(rsi_rules.get("overbought_score", 10))
-                extreme_s = float(rsi_rules.get("extreme_overbought_score", 5))
-                denom = 100.0 - overbought
-                ratio = (rsi - overbought) / denom if denom > 0 else 0.0
-                score += overbought_s + ratio * (extreme_s - overbought_s)
-                details.append(f"RSI {rsi:.0f} overbought")
+            if rsi < 30:
+                score += 35; details.append(f"RSI {rsi:.0f} oversold")
+            elif rsi > 70:
+                score += 10; details.append(f"RSI {rsi:.0f} overbought")
             else:
-                # Linear interpolation between oversold and overbought (unchanged)
-                ratio = (rsi - oversold) / (overbought - oversold)
-                min_s = float(rsi_rules.get("neutral_min_score", 15))
-                max_s = float(rsi_rules.get("neutral_max_score", 40))
-                score += min_s + ratio * (max_s - min_s)
-                details.append(f"RSI {rsi:.0f}")
+                ratio = (rsi - 30) / 40
+                score += 15 + ratio * 25; details.append(f"RSI {rsi:.0f}")
 
-        # MACD
-        macd_rules = rules.get("macd", {})
         macd_val = asset_data.get("macd_line")
         macd_signal = asset_data.get("macd_signal")
         if macd_val is not None and macd_signal is not None:
             if macd_val > macd_signal:
-                score += float(macd_rules.get("bullish_cross_points", 20))
-                details.append("MACD bullish")
+                score += 20; details.append("MACD bullish")
             else:
-                score += float(macd_rules.get("bearish_cross_points", 0))
                 details.append("MACD bearish")
 
-        # Moving averages
-        ma_rules = rules.get("ma", {})
         price = asset_data.get("price")
-        ma7 = asset_data.get("ma_7d")
         ma30 = asset_data.get("ma_30d")
-        if price is not None and ma7 is not None:
-            if price > ma7:
-                score += float(ma_rules.get("above_ma7_points", 10))
-            else:
-                score += float(ma_rules.get("below_ma7_points", 0))
         if price is not None and ma30 is not None:
             if price > ma30:
-                score += float(ma_rules.get("above_ma30_points", 10))
-                details.append("above MA30")
-            else:
-                score += float(ma_rules.get("below_ma30_points", 0))
+                score += 20; details.append("above MA30")
 
-        # Trend — use 30d as primary (macro trend), 7d as secondary
-        trend_rules = rules.get("trend", {})
-        trend_30d = asset_data.get("trend_30d", "")
-        trend_7d = asset_data.get("trend_7d", "")
-        # Combine: if both bullish = "bullish", if both bearish = "bearish", else use 30d
-        trend = trend_30d if trend_30d else trend_7d
+        trend = asset_data.get("trend_30d", "")
         if trend == "bullish":
-            score += float(trend_rules.get("bullish_points", 20))
-            details.append("trend bullish")
+            score += 20; details.append("trend bullish")
         elif trend == "bearish":
-            score += float(trend_rules.get("bearish_points", 0))
             details.append("trend bearish")
         else:
-            score += float(trend_rules.get("neutral_points", 10))
+            score += 10
 
         return min(100.0, max(0.0, score)), "; ".join(details) if details else "no tech data"
 
@@ -1164,13 +688,44 @@ class SignalFusion:
     # ================================================================ #
 
     def _score_derivatives(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
+        """Score derivatives dimension using agent's pre-computed score.
+
+        The enhanced derivatives agent computes a 0-100 composite score from:
+        funding rate, L/S ratio, OI changes, taker ratio, liquidations,
+        top trader positions, and funding term structure.
+        We use that directly when available, with detail annotation.
+        """
         by_asset = data.get("by_asset", {})
         asset_data = by_asset.get(asset, {})
         if not asset_data:
             return 50.0, "no data"
 
-        score = 0.0
         details: List[str] = []
+
+        # Use agent's pre-computed score when available
+        agent_score = asset_data.get("derivatives_score")
+        if agent_score is not None:
+            score = float(agent_score)
+            # Build detail string from key indicators
+            ls = asset_data.get("long_short_ratio")
+            if ls is not None:
+                details.append(f"L/S={ls:.2f}")
+            funding = asset_data.get("funding_rate")
+            if funding is not None:
+                details.append(f"FR={funding:.5f}")
+            oi = asset_data.get("open_interest_usd") or asset_data.get("open_interest")
+            if oi is not None:
+                details.append(f"OI=${float(oi)/1e6:.0f}M")
+            taker = asset_data.get("taker_buy_sell_ratio")
+            if taker is not None:
+                details.append(f"taker={taker:.3f}")
+            liq = asset_data.get("liquidation_imbalance")
+            if liq is not None:
+                details.append(f"liq_imb={liq:.2f}")
+            return max(0.0, min(100.0, score)), "; ".join(details)
+
+        # Fallback: legacy point-based scoring when agent score unavailable
+        score = 0.0
 
         # Long/short ratio — with very_overcrowded tier (YAML-driven)
         ls_rules = rules.get("long_short", {})
@@ -1371,12 +926,51 @@ class SignalFusion:
     # ================================================================ #
 
     def _score_narrative(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
+        """Score narrative dimension using agent's pre-computed score.
+
+        The enhanced narrative agent computes a 0-100 composite score from:
+        social volume, LLM sentiment, community sentiment, trending status,
+        influencer mentions, multi-source confirmation, and event scoring.
+        We use that directly when available, with detail annotation.
+        """
         by_asset = data.get("by_asset", {})
         asset_data = by_asset.get(asset, {})
         if not asset_data:
             return 50.0, "no data"
 
         details: List[str] = []
+
+        # Use agent's pre-computed score when available
+        agent_score = asset_data.get("narrative_score")
+        if agent_score is not None:
+            score = float(agent_score)
+            # Build detail string from key indicators
+            mentions = asset_data.get("total_mentions", 0)
+            if mentions:
+                details.append(f"{mentions} mentions")
+            coverage = asset_data.get("data_coverage")
+            if coverage is not None:
+                details.append(f"cov={coverage:.0%}")
+            norm = asset_data.get("normalised_score")
+            if norm is not None:
+                details.append(f"vol={norm:.2f}")
+            llm = asset_data.get("llm_sentiment")
+            if llm and isinstance(llm, dict):
+                tone = llm.get("tone", "neutral")
+                details.append(f"LLM:{tone}")
+            community = asset_data.get("community_sentiment")
+            if community and isinstance(community, dict):
+                cs = community.get("score")
+                if cs is not None:
+                    details.append(f"comm={float(cs):.2f}")
+            if asset_data.get("trending_coingecko"):
+                details.append("trending")
+            # For data tier detection: if score is very low and no mentions, signal "low buzz"
+            if score < 1.0 and not mentions:
+                return 0.0, "low buzz"
+            return max(0.0, min(100.0, score)), "; ".join(details) if details else "narrative data"
+
+        # Fallback: legacy point-based scoring when agent score unavailable
 
         # Base score (YAML-configurable, allows contrarian penalties room)
         score = float(rules.get("narrative_base_score", 0))
@@ -1521,9 +1115,46 @@ class SignalFusion:
     # ================================================================ #
 
     def _score_market(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
+        """Score market dimension using agent's pre-computed score.
+
+        The enhanced market agent computes a 0-100 composite score from:
+        price action, volume, F&G index, BTC dominance, order book depth,
+        stablecoin flows, macro data (VIX/DXY/S&P), and ATR.
+        We use that directly when available, with detail annotation.
+        """
         per_asset = data.get("per_asset", {})
         asset_data = per_asset.get(asset, {})
         details: List[str] = []
+
+        # Use agent's pre-computed score when available
+        agent_score = asset_data.get("market_score")
+        if agent_score is not None:
+            score = float(agent_score)
+            # Build detail string from key indicators
+            chg = asset_data.get("change_24h_pct")
+            if chg is not None:
+                details.append(f"24h={chg:+.1f}%")
+            vol_ratio = asset_data.get("volume_spike_ratio")
+            if vol_ratio is not None:
+                details.append(f"vol={vol_ratio:.1f}x")
+            sentiment = data.get("sentiment", {})
+            fg = sentiment.get("fear_greed_index")
+            if fg is not None:
+                details.append(f"F&G={fg:.0f}")
+            ob = asset_data.get("order_book_imbalance")
+            if ob is not None:
+                details.append(f"OB_imb={ob:.2f}")
+            atr_pct = asset_data.get("atr_pct")
+            if atr_pct is not None:
+                details.append(f"ATR={atr_pct:.1f}%")
+            macro = data.get("macro", {})
+            if macro:
+                vix = macro.get("vix")
+                if vix is not None:
+                    details.append(f"VIX={vix:.0f}")
+            return max(0.0, min(100.0, score)), "; ".join(details) if details else "market data"
+
+        # Fallback: legacy point-based scoring when agent score unavailable
         score = float(rules.get("base_score", 0.0))  # Bipolar: start at 50
 
         # Price change — continuous scoring (no flat buckets)
@@ -1693,120 +1324,6 @@ class SignalFusion:
 
         return min(100.0, max(0.0, score)), "; ".join(details) if details else "no market data"
 
-    # ================================================================ #
-    #  TREND (pro-momentum) scorer
-    # ================================================================ #
-
-    def _score_trend(self, asset: str, data: Dict[str, Any], rules: Dict[str, Any]) -> Tuple[float, str]:
-        """
-        Pro-trend scorer — follows the trend instead of fighting it.
-
-        Unlike the contrarian technical/market scorers, this dimension says:
-        - Downtrend + bearish indicators → bearish score (< 50)
-        - Uptrend + bullish indicators → bullish score (> 50)
-
-        Reads from BOTH technical and market agent data (stored in raw).
-        The 'data' parameter here comes from technical agent via _score_dimension,
-        but we also read market data from the store separately.
-        """
-        details: List[str] = []
-        score = 50.0  # Start neutral
-
-        by_asset = data.get("by_asset", {})
-        asset_data = by_asset.get(asset, {})
-
-        # Also load market agent data for 24h price change
-        market_latest = self.store.load_latest(
-            self.profile.get("agent_names", {}).get("market", "market_agent")
-        )
-        market_asset_data = {}
-        if market_latest:
-            market_asset_data = market_latest.get("data", {}).get("per_asset", {}).get(asset, {})
-
-        # --- Component 1: MA Alignment (±15 pts) ---
-        ma_rules = rules.get("ma_alignment", {})
-        price = asset_data.get("price")
-        ma_7d = asset_data.get("ma_7d")
-        ma_30d = asset_data.get("ma_30d")
-
-        if price is not None and ma_7d is not None and ma_30d is not None:
-            if price > ma_7d and ma_7d > ma_30d:
-                score += float(ma_rules.get("bullish_chain_score", 15))
-                details.append("MA bullish chain")
-            elif price < ma_7d and ma_7d < ma_30d:
-                score += float(ma_rules.get("bearish_chain_score", -15))
-                details.append("MA bearish chain")
-            elif price > ma_30d:
-                score += float(ma_rules.get("partial_bullish_score", 8))
-                details.append("above MA30")
-            elif price < ma_30d:
-                score += float(ma_rules.get("partial_bearish_score", -8))
-                details.append("below MA30")
-
-        # --- Component 2: RSI Momentum (±12 pts) — PRO-TREND (not contrarian!) ---
-        rsi_rules = rules.get("rsi_momentum", {})
-        rsi = asset_data.get("rsi_14")
-        if rsi is not None:
-            strong_bullish = float(rsi_rules.get("strong_bullish_above", 65))
-            bullish = float(rsi_rules.get("bullish_above", 55))
-            bearish = float(rsi_rules.get("bearish_below", 45))
-            strong_bearish = float(rsi_rules.get("strong_bearish_below", 35))
-
-            if rsi > strong_bullish:
-                score += float(rsi_rules.get("strong_bullish_score", 12))
-                details.append(f"RSI {rsi:.0f} strong momentum")
-            elif rsi > bullish:
-                score += float(rsi_rules.get("bullish_score", 6))
-                details.append(f"RSI {rsi:.0f} momentum")
-            elif rsi < strong_bearish:
-                score += float(rsi_rules.get("strong_bearish_score", -12))
-                details.append(f"RSI {rsi:.0f} strong downward")
-            elif rsi < bearish:
-                score += float(rsi_rules.get("bearish_score", -6))
-                details.append(f"RSI {rsi:.0f} downward")
-
-        # --- Component 3: Price Change Direction (±10 pts) — PRO-TREND ---
-        pc_rules = rules.get("price_change", {})
-        change_24h = market_asset_data.get("change_24h_pct")
-        if change_24h is not None:
-            strong_pos = float(pc_rules.get("strong_positive_above", 5.0))
-            mild_pos = float(pc_rules.get("positive_above", 1.0))
-            mild_neg = float(pc_rules.get("negative_below", -1.0))
-            strong_neg = float(pc_rules.get("strong_negative_below", -5.0))
-
-            if change_24h > strong_pos:
-                score += float(pc_rules.get("strong_positive_score", 10))
-                details.append(f"+{change_24h:.1f}% strong up")
-            elif change_24h > mild_pos:
-                score += float(pc_rules.get("positive_score", 5))
-                details.append(f"+{change_24h:.1f}%")
-            elif change_24h < strong_neg:
-                score += float(pc_rules.get("strong_negative_score", -10))
-                details.append(f"{change_24h:.1f}% strong down")
-            elif change_24h < mild_neg:
-                score += float(pc_rules.get("negative_score", -5))
-                details.append(f"{change_24h:.1f}%")
-
-        # --- Component 4: Trend Strength (±8 pts) — distance from MA30 ---
-        strength_rules = rules.get("trend_strength", {})
-        if price is not None and ma_30d is not None and ma_30d > 0:
-            pct_from_ma = ((price - ma_30d) / ma_30d) * 100
-            strong_above = float(strength_rules.get("strong_above_pct", 10))
-            strong_below = float(strength_rules.get("strong_below_pct", -10))
-            max_bonus = float(strength_rules.get("max_bonus", 8))
-            max_penalty = float(strength_rules.get("max_penalty", -8))
-
-            if pct_from_ma > 0:
-                intensity = min(pct_from_ma / strong_above, 1.0)
-                score += intensity * max_bonus
-            else:
-                intensity = min(abs(pct_from_ma) / abs(strong_below), 1.0)
-                score += intensity * max_penalty
-
-        # Clamp to 0-100
-        score = max(0.0, min(100.0, score))
-        return score, "; ".join(details) if details else "no trend data"
-
     def _detect_data_tier(
         self, role: str, score: float, detail: str, rules: Dict[str, Any],
     ) -> str:
@@ -1946,113 +1463,3 @@ class SignalFusion:
                     rates.append(abs(float(fr)))
         return sum(rates) / len(rates) if rates else 0.0
 
-    # ================================================================ #
-    #  LLM insight generation (Claude Haiku)
-    # ================================================================ #
-
-    def _llm_call(self, messages: List[Dict[str, str]], cfg: Dict[str, Any]) -> str:
-        """Call Anthropic Messages API."""
-        from urllib.error import HTTPError
-
-        url = "https://api.anthropic.com/v1/messages"
-        system_prompt = cfg.get("system_prompt", "").strip()
-        payload = {
-            "model": cfg.get("model", "claude-haiku-4-5-20251001"),
-            "max_tokens": int(cfg.get("max_tokens", 1024)),
-            "messages": messages,
-        }
-        if system_prompt:
-            payload["system"] = system_prompt
-
-        # Ensure payload is JSON-safe (replace None, NaN, etc.)
-        data = json.dumps(payload, default=str).encode()
-        req = Request(url, data=data, headers={
-            "Content-Type": "application/json",
-            "x-api-key": self.anthropic_key,
-            "anthropic-version": "2023-06-01",
-        })
-        try:
-            with urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode())
-            content = result.get("content", [])
-            return content[0].get("text", "") if content else ""
-        except HTTPError as exc:
-            # Capture the response body for better diagnostics
-            body = ""
-            try:
-                body = exc.read().decode()[:500]
-            except Exception:
-                pass
-            print(f"LLM call failed ({exc.code}): {body}")
-            return f"[LLM unavailable: HTTP {exc.code} — {body[:200]}]"
-        except Exception as exc:
-            # Log but don't crash — LLM insights are optional
-            return f"[LLM unavailable: {exc}]"
-
-    def _llm_portfolio_insight(
-        self,
-        portfolio: Dict[str, Any],
-        signals: Dict[str, Dict[str, Any]],
-        prev_signals: Dict[str, Dict[str, Any]],
-        cfg: Dict[str, Any],
-    ) -> str:
-        # Build compact context for the LLM
-        context = {
-            "portfolio": portfolio,
-            "top_signals": {},
-            "prev_top_signals": {},
-        }
-        # Include top buys + sells detail
-        for item in portfolio.get("top_buys", []) + portfolio.get("top_sells", []):
-            asset = item["asset"]
-            sig = signals.get(asset, {})
-            context["top_signals"][asset] = {
-                "score": sig.get("composite_score"),
-                "dimensions": sig.get("dimensions"),
-                "momentum": sig.get("momentum"),
-            }
-            if cfg.get("include_previous_run") and asset in prev_signals:
-                context["prev_top_signals"][asset] = {
-                    "score": prev_signals[asset].get("composite_score"),
-                    "dimensions": prev_signals[asset].get("dimensions"),
-                }
-
-        prompt = (
-            f"Current fusion data:\n{json.dumps(context, indent=1)}\n\n"
-            f"Give a portfolio-level market summary: what's the dominant signal, "
-            f"key cross-dimensional patterns, and 1-2 actionable takeaways. "
-            f"Compare with previous run if available. Max 5 sentences."
-        )
-
-        return self._llm_call([{"role": "user", "content": prompt}], cfg)
-
-    def _llm_asset_insight(
-        self,
-        asset: str,
-        signal: Dict[str, Any],
-        prev_signal: Dict[str, Any],
-        cfg: Dict[str, Any],
-    ) -> str:
-        context = {
-            "asset": asset,
-            "current": {
-                "score": signal.get("composite_score"),
-                "label": signal.get("label"),
-                "dimensions": signal.get("dimensions"),
-                "momentum": signal.get("momentum"),
-            },
-        }
-        if cfg.get("include_previous_run") and prev_signal:
-            context["previous"] = {
-                "score": prev_signal.get("composite_score"),
-                "dimensions": prev_signal.get("dimensions"),
-            }
-
-        prompt = (
-            f"Signal data for {asset}:\n{json.dumps(context, indent=1)}\n\n"
-            f"Give a concise insight: what's the dominant signal across dimensions, "
-            f"any notable cross-dimensional patterns, and one actionable takeaway. "
-            f"Compare with previous data if available. Max 3 sentences."
-        )
-
-        return self._llm_call([{"role": "user", "content": prompt}], cfg)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlencode
@@ -8,6 +9,13 @@ from urllib.request import Request, urlopen
 
 from shared.base_agent import BaseAgent
 from shared.profile_loader import load_profile, get_assets, get_threshold, is_source_enabled
+
+# Optional yfinance import — macro data skipped if unavailable
+try:
+    import yfinance as yf  # type: ignore
+    _HAS_YFINANCE = True
+except ImportError:
+    _HAS_YFINANCE = False
 
 
 class MarketAgent(BaseAgent):
@@ -22,6 +30,9 @@ class MarketAgent(BaseAgent):
       4. global_market — total market cap, BTC dominance, 24h change
       5. dex           — top DEX pairs by volume (DexScreener)
       6. sentiment     — Fear & Greed index
+      7. order_book    — Binance order book depth + imbalance
+      8. stablecoin    — USDT/USDC market cap flow proxy
+      9. macro         — S&P 500, VIX, DXY correlations (via yfinance)
     """
 
     def __init__(self, profile_path: str | None = None) -> None:
@@ -36,6 +47,9 @@ class MarketAgent(BaseAgent):
         self.bn_cfg = self.profile.get("binance", {})
         self.dex_cfg = self.profile.get("dexscreener", {})
         self.fg_cfg = self.profile.get("fear_greed", {})
+        self.stablecoin_cfg = self.profile.get("stablecoin", {})
+        self.macro_cfg = self.profile.get("macro", {})
+        self.scoring_cfg = self.profile.get("scoring", {})
 
         super().__init__(
             agent_name="market_agent",
@@ -56,6 +70,22 @@ class MarketAgent(BaseAgent):
             },
             "dex": {"top_pairs": []},
             "sentiment": {"fear_greed_index": None, "classification": None},
+            "stablecoin": {
+                "usdt_market_cap": None,
+                "usdc_market_cap": None,
+                "total_mcap": None,
+                "change_24h_pct": None,
+                "flow_status": "unknown",
+            },
+            "macro": {
+                "sp500_price": None,
+                "sp500_change_1d_pct": None,
+                "vix_level": None,
+                "vix_status": "unknown",
+                "dxy_price": None,
+                "dxy_change_1d_pct": None,
+                "risk_status": "unknown",
+            },
             "summary": {
                 "volume_spike_assets": [],
                 "elevated_volume_assets": [],
@@ -83,7 +113,21 @@ class MarketAgent(BaseAgent):
             except Exception as exc:
                 errors.append(f"volume_spikes: {exc}")
 
-        # --- 3. Broad market breadth ---
+            # --- 2b. ATR(14) from Binance klines ---
+            try:
+                self._enrich_atr(data["per_asset"])
+            except Exception as exc:
+                errors.append(f"atr: {exc}")
+
+        # --- 3. Order book depth from Binance ---
+        ob_cfg = self.bn_cfg.get("order_book", {})
+        if ob_cfg.get("enabled", True) and is_source_enabled(self.profile, "binance"):
+            try:
+                self._enrich_order_book(data["per_asset"])
+            except Exception as exc:
+                errors.append(f"order_book: {exc}")
+
+        # --- 4. Broad market breadth ---
         market_sample: List[Dict[str, Any]] = []
         breadth_cfg = self.cg_cfg.get("breadth", {})
         if breadth_cfg.get("enabled", True) and is_source_enabled(self.profile, "coingecko"):
@@ -101,7 +145,7 @@ class MarketAgent(BaseAgent):
                 except Exception as exc:
                     errors.append(f"trending: {exc}")
 
-        # --- 4. Categories ---
+        # --- 5. Categories ---
         cat_cfg = self.cg_cfg.get("categories", {})
         if cat_cfg.get("enabled", True) and is_source_enabled(self.profile, "coingecko"):
             try:
@@ -109,7 +153,7 @@ class MarketAgent(BaseAgent):
             except Exception as exc:
                 errors.append(f"categories: {exc}")
 
-        # --- 5. Global market data ---
+        # --- 6. Global market data ---
         global_cfg = self.cg_cfg.get("global", {})
         if global_cfg.get("enabled", True) and is_source_enabled(self.profile, "coingecko"):
             try:
@@ -117,22 +161,39 @@ class MarketAgent(BaseAgent):
             except Exception as exc:
                 errors.append(f"global_market: {exc}")
 
-        # --- 6. DexScreener ---
+        # --- 7. DexScreener ---
         if is_source_enabled(self.profile, "dexscreener"):
             try:
                 data["dex"]["top_pairs"] = self._fetch_dex_pairs()
             except Exception as exc:
                 errors.append(f"dex: {exc}")
 
-        # --- 7. Fear & Greed ---
+        # --- 8. Fear & Greed ---
         if is_source_enabled(self.profile, "fear_greed"):
             try:
                 data["sentiment"] = self._fetch_sentiment()
             except Exception as exc:
                 errors.append(f"sentiment: {exc}")
 
+        # --- 9. Stablecoin flow proxy ---
+        if self.stablecoin_cfg.get("enabled", False):
+            try:
+                data["stablecoin"] = self._fetch_stablecoin()
+            except Exception as exc:
+                errors.append(f"stablecoin: {exc}")
+
+        # --- 10. Macro correlations ---
+        if self.macro_cfg.get("enabled", False):
+            try:
+                data["macro"] = self._fetch_macro()
+            except Exception as exc:
+                errors.append(f"macro: {exc}")
+
         # --- Build summary ---
         data["summary"] = self._build_summary(data)
+
+        # --- Compute per-asset market_score ---
+        self._compute_market_scores(data)
 
         return data, errors
 
@@ -178,6 +239,12 @@ class MarketAgent(BaseAgent):
                 "volume_7d_avg": None,
                 "volume_spike_ratio": None,
                 "volume_status": "unknown",
+                "order_book_imbalance": None,
+                "bid_wall_usd": None,
+                "ask_wall_usd": None,
+                "atr_14": None,
+                "atr_pct": None,
+                "market_score": None,
             }
 
         return result
@@ -233,7 +300,109 @@ class MarketAgent(BaseAgent):
                 continue  # per-asset volume failure is non-fatal
 
     # ------------------------------------------------------------------ #
-    # 3. Broad market breadth
+    # 2b. ATR(14) enrichment from Binance klines
+    # ------------------------------------------------------------------ #
+
+    def _enrich_atr(self, per_asset: Dict[str, Dict[str, Any]]) -> None:
+        """Calculate ATR(14) for each asset using Binance daily klines."""
+        base_url = self.bn_cfg.get("base_url", "https://api.binance.com/api/v3")
+        ep = self.bn_cfg.get("klines_endpoint", "/klines")
+        atr_period = 14
+        # Need atr_period + 1 candles minimum (for prev close), fetch 20 to be safe
+        lookback = max(20, atr_period + 2)
+
+        for sym in self.assets:
+            if sym not in per_asset:
+                continue
+
+            bn_sym = self.bn_symbol_map.get(sym)
+            if not bn_sym:
+                continue
+
+            try:
+                url = f"{base_url}{ep}?symbol={bn_sym}&interval=1d&limit={lookback}"
+                raw = self._get_json(url)
+
+                if len(raw) < atr_period + 1:
+                    continue
+
+                # Binance kline: [open_time, open, high, low, close, ...]
+                highs = [float(c[2]) for c in raw]
+                lows = [float(c[3]) for c in raw]
+                closes = [float(c[4]) for c in raw]
+
+                # Calculate True Range series (need prev close, so start at index 1)
+                tr_list: List[float] = []
+                for i in range(1, len(raw)):
+                    h = highs[i]
+                    l = lows[i]
+                    prev_c = closes[i - 1]
+                    tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+                    tr_list.append(tr)
+
+                if len(tr_list) < atr_period:
+                    continue
+
+                # Wilder smoothing: first ATR = simple average, then EMA-style
+                atr = sum(tr_list[:atr_period]) / atr_period
+                for tr_val in tr_list[atr_period:]:
+                    atr = (atr * (atr_period - 1) + tr_val) / atr_period
+
+                current_close = closes[-1]
+                atr_pct = (atr / current_close * 100) if current_close > 0 else 0.0
+
+                per_asset[sym]["atr_14"] = round(atr, 6)
+                per_asset[sym]["atr_pct"] = round(atr_pct, 2)
+
+            except Exception:
+                continue  # per-asset ATR failure is non-fatal
+
+    # ------------------------------------------------------------------ #
+    # 3. Order book depth from Binance
+    # ------------------------------------------------------------------ #
+
+    def _enrich_order_book(self, per_asset: Dict[str, Dict[str, Any]]) -> None:
+        """Fetch order book depth for each asset and compute imbalance."""
+        base_url = self.bn_cfg.get("base_url", "https://api.binance.com/api/v3")
+        ob_cfg = self.bn_cfg.get("order_book", {})
+        depth_limit = int(ob_cfg.get("depth_limit", 20))
+        rate_sleep = float(ob_cfg.get("rate_limit_sleep", 0.1))
+
+        for sym in self.assets:
+            if sym not in per_asset:
+                continue
+
+            bn_sym = self.bn_symbol_map.get(sym)
+            if not bn_sym:
+                continue
+
+            try:
+                url = f"{base_url}/depth?symbol={bn_sym}&limit={depth_limit}"
+                book = self._get_json(url)
+
+                # bids/asks are [[price, qty], ...]
+                bid_wall = sum(
+                    float(level[0]) * float(level[1])
+                    for level in book.get("bids", [])
+                )
+                ask_wall = sum(
+                    float(level[0]) * float(level[1])
+                    for level in book.get("asks", [])
+                )
+
+                imbalance = bid_wall / ask_wall if ask_wall > 0 else 0.0
+
+                per_asset[sym]["bid_wall_usd"] = round(bid_wall, 2)
+                per_asset[sym]["ask_wall_usd"] = round(ask_wall, 2)
+                per_asset[sym]["order_book_imbalance"] = round(imbalance, 4)
+
+            except Exception:
+                continue  # per-asset order book failure is non-fatal
+
+            time.sleep(rate_sleep)
+
+    # ------------------------------------------------------------------ #
+    # 4. Broad market breadth
     # ------------------------------------------------------------------ #
 
     def _fetch_market_sample(self, breadth_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -285,7 +454,7 @@ class MarketAgent(BaseAgent):
         return trending
 
     # ------------------------------------------------------------------ #
-    # 4. Category/sector performance
+    # 5. Category/sector performance
     # ------------------------------------------------------------------ #
 
     def _fetch_categories(self, cat_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -315,7 +484,7 @@ class MarketAgent(BaseAgent):
         return {"top_gainers": top_gainers, "top_losers": top_losers}
 
     # ------------------------------------------------------------------ #
-    # 5. Global market data (total cap, BTC dominance)
+    # 6. Global market data (total cap, BTC dominance)
     # ------------------------------------------------------------------ #
 
     def _fetch_global(self) -> Dict[str, Any]:
@@ -338,7 +507,7 @@ class MarketAgent(BaseAgent):
         }
 
     # ------------------------------------------------------------------ #
-    # 6. DexScreener
+    # 7. DexScreener
     # ------------------------------------------------------------------ #
 
     def _fetch_dex_pairs(self) -> List[Dict[str, Any]]:
@@ -376,7 +545,7 @@ class MarketAgent(BaseAgent):
         return pairs[:top_count]
 
     # ------------------------------------------------------------------ #
-    # 7. Fear & Greed
+    # 8. Fear & Greed
     # ------------------------------------------------------------------ #
 
     def _fetch_sentiment(self) -> Dict[str, Any]:
@@ -403,6 +572,265 @@ class MarketAgent(BaseAgent):
             classification = "extreme_greed"
 
         return {"fear_greed_index": index_val, "classification": classification}
+
+    # ------------------------------------------------------------------ #
+    # 9. Stablecoin flow proxy (CoinGecko)
+    # ------------------------------------------------------------------ #
+
+    def _fetch_stablecoin(self) -> Dict[str, Any]:
+        """Fetch USDT + USDC market caps to gauge stablecoin inflow/outflow."""
+        base_url = self.cg_cfg.get("base_url", "https://api.coingecko.com/api/v3")
+        ids = self.stablecoin_cfg.get("ids", "tether,usd-coin")
+
+        payload = self._get_json(
+            f"{base_url}/simple/price",
+            params={
+                "ids": ids,
+                "vs_currencies": "usd",
+                "include_market_cap": "true",
+                "include_24hr_change": "true",
+            },
+        )
+
+        usdt = payload.get("tether", {})
+        usdc = payload.get("usd-coin", {})
+
+        usdt_mcap = self._to_float(usdt.get("usd_market_cap"))
+        usdc_mcap = self._to_float(usdc.get("usd_market_cap"))
+        total_mcap = usdt_mcap + usdc_mcap
+
+        usdt_change = self._to_float(usdt.get("usd_24h_change"))
+        usdc_change = self._to_float(usdc.get("usd_24h_change"))
+
+        # Weighted average of 24h change by market cap
+        if total_mcap > 0:
+            change_24h = (usdt_change * usdt_mcap + usdc_change * usdc_mcap) / total_mcap
+        else:
+            change_24h = 0.0
+
+        # Determine flow status
+        if change_24h > 0.5:
+            flow_status = "inflow"
+        elif change_24h < -0.5:
+            flow_status = "outflow"
+        else:
+            flow_status = "neutral"
+
+        return {
+            "usdt_market_cap": round(usdt_mcap, 2),
+            "usdc_market_cap": round(usdc_mcap, 2),
+            "total_mcap": round(total_mcap, 2),
+            "change_24h_pct": round(change_24h, 4),
+            "flow_status": flow_status,
+        }
+
+    # ------------------------------------------------------------------ #
+    # 10. Macro correlations (yfinance)
+    # ------------------------------------------------------------------ #
+
+    def _fetch_macro(self) -> Dict[str, Any]:
+        """Fetch S&P 500, VIX, DXY from yfinance for macro correlation."""
+        if not _HAS_YFINANCE:
+            raise ImportError("yfinance not installed — macro data skipped")
+
+        tickers_cfg = self.macro_cfg.get("tickers", {})
+        sp500_ticker = tickers_cfg.get("sp500", "^GSPC")
+        vix_ticker = tickers_cfg.get("vix", "^VIX")
+        dxy_ticker = tickers_cfg.get("dxy", "DX-Y.NYB")
+
+        result: Dict[str, Any] = {
+            "sp500_price": None,
+            "sp500_change_1d_pct": None,
+            "vix_level": None,
+            "vix_status": "unknown",
+            "dxy_price": None,
+            "dxy_change_1d_pct": None,
+            "risk_status": "unknown",
+        }
+
+        # Fetch S&P 500
+        try:
+            sp = yf.Ticker(sp500_ticker)
+            hist = sp.history(period="5d")
+            if len(hist) >= 2:
+                result["sp500_price"] = round(float(hist["Close"].iloc[-1]), 2)
+                prev = float(hist["Close"].iloc[-2])
+                if prev > 0:
+                    result["sp500_change_1d_pct"] = round(
+                        (result["sp500_price"] - prev) / prev * 100, 2
+                    )
+        except Exception:
+            pass
+
+        # Fetch VIX
+        try:
+            vx = yf.Ticker(vix_ticker)
+            hist = vx.history(period="5d")
+            if len(hist) >= 1:
+                vix_val = round(float(hist["Close"].iloc[-1]), 2)
+                result["vix_level"] = vix_val
+                if vix_val > 30:
+                    result["vix_status"] = "extreme_fear"
+                elif vix_val > 20:
+                    result["vix_status"] = "elevated"
+                else:
+                    result["vix_status"] = "calm"
+        except Exception:
+            pass
+
+        # Fetch DXY
+        try:
+            dx = yf.Ticker(dxy_ticker)
+            hist = dx.history(period="5d")
+            if len(hist) >= 2:
+                result["dxy_price"] = round(float(hist["Close"].iloc[-1]), 2)
+                prev = float(hist["Close"].iloc[-2])
+                if prev > 0:
+                    result["dxy_change_1d_pct"] = round(
+                        (result["dxy_price"] - prev) / prev * 100, 2
+                    )
+        except Exception:
+            pass
+
+        # Determine macro risk status
+        sp_chg = result["sp500_change_1d_pct"]
+        vix_lvl = result["vix_level"]
+        dxy_chg = result["dxy_change_1d_pct"]
+
+        if sp_chg is not None and vix_lvl is not None and dxy_chg is not None:
+            if vix_lvl > 25 or sp_chg < -1.5 or dxy_chg > 0.5:
+                result["risk_status"] = "risk_off"
+            elif vix_lvl < 18 and sp_chg > 0.5 and dxy_chg < -0.3:
+                result["risk_status"] = "risk_on"
+            else:
+                result["risk_status"] = "neutral"
+
+        return result
+
+    # ------------------------------------------------------------------ #
+    # Market score computation (per-asset, 0-100)
+    # ------------------------------------------------------------------ #
+
+    def _compute_market_scores(self, data: Dict[str, Any]) -> None:
+        """Compute a 0-100 market_score for each asset using weighted components."""
+        weights_cfg = self.scoring_cfg.get("weights", {})
+        w_fg = float(weights_cfg.get("fear_greed", 0.25))
+        w_vol = float(weights_cfg.get("volume", 0.15))
+        w_breadth = float(weights_cfg.get("breadth", 0.15))
+        w_macro = float(weights_cfg.get("macro", 0.20))
+        w_ob = float(weights_cfg.get("order_book", 0.25))
+
+        # --- Fear & Greed score (same for all assets) ---
+        fg_index = data.get("sentiment", {}).get("fear_greed_index")
+        fg_classification = data.get("sentiment", {}).get("classification", "neutral")
+        fg_score = self._fg_to_score(fg_index, fg_classification)
+
+        # --- Macro score (same for all assets) ---
+        risk_status = data.get("macro", {}).get("risk_status", "unknown")
+        macro_score = self._macro_to_score(risk_status)
+
+        # --- Breadth: build set of gainer/loser symbols ---
+        gainer_syms = set()
+        loser_syms = set()
+        for coin in data.get("breadth", {}).get("top_gainers", []):
+            gainer_syms.add(coin.get("symbol", "").upper())
+        for coin in data.get("breadth", {}).get("top_losers", []):
+            loser_syms.add(coin.get("symbol", "").upper())
+
+        # --- Per-asset scoring ---
+        for sym, info in data.get("per_asset", {}).items():
+            # Volume score
+            vol_status = info.get("volume_status", "unknown")
+            ratio = info.get("volume_spike_ratio")
+            vol_score = self._volume_to_score(vol_status, ratio)
+
+            # Breadth score (wider range)
+            if sym in gainer_syms:
+                breadth_score = 75.0
+            elif sym in loser_syms:
+                breadth_score = 25.0
+            else:
+                breadth_score = 50.0
+
+            # Order book score
+            imbalance = info.get("order_book_imbalance")
+            ob_score = self._ob_to_score(imbalance)
+
+            # Weighted average
+            score = (
+                fg_score * w_fg
+                + vol_score * w_vol
+                + breadth_score * w_breadth
+                + macro_score * w_macro
+                + ob_score * w_ob
+            )
+            score = max(0.0, min(100.0, score))
+            info["market_score"] = round(score, 1)
+
+    @staticmethod
+    def _fg_to_score(index_val: int | None, classification: str) -> float:
+        """Convert Fear & Greed index to a contrarian score (wider range)."""
+        if index_val is None:
+            return 50.0
+        fg = float(index_val)
+        # Continuous contrarian mapping: low F&G = bullish opportunity, high = bearish
+        # F&G 0 → 90 (extreme fear = max bullish), F&G 50 → 50 (neutral)
+        # F&G 100 → 10 (extreme greed = max bearish)
+        score = 90.0 - (fg / 100.0) * 80.0  # 0→90, 50→50, 100→10
+        return max(10.0, min(90.0, score))
+
+    @staticmethod
+    def _volume_to_score(vol_status: str, ratio: float | None) -> float:
+        """Convert volume status to score (continuous based on ratio)."""
+        if ratio is not None:
+            # ratio = 24h_vol / 7d_avg. >1 = above average
+            if ratio > 3.0:
+                return 85.0  # massive spike
+            elif ratio > 2.0:
+                return 70.0 + (ratio - 2.0) * 15.0  # 70→85
+            elif ratio > 1.0:
+                return 55.0 + (ratio - 1.0) * 15.0  # 55→70
+            elif ratio > 0.5:
+                return 35.0 + (ratio - 0.5) * 40.0  # 35→55
+            else:
+                return 20.0 + ratio * 30.0  # 20→35
+        # Fallback to status
+        if vol_status == "spike":
+            return 75.0
+        elif vol_status == "elevated":
+            return 60.0
+        return 50.0
+
+    @staticmethod
+    def _macro_to_score(risk_status: str) -> float:
+        """Convert macro risk status to score (wider range)."""
+        if risk_status == "strong_risk_on":
+            return 80.0
+        elif risk_status == "risk_on":
+            return 70.0
+        elif risk_status == "risk_off":
+            return 30.0
+        elif risk_status == "strong_risk_off":
+            return 20.0
+        return 50.0  # neutral or unknown
+
+    @staticmethod
+    def _ob_to_score(imbalance: float | None) -> float:
+        """Convert order book imbalance to score (continuous, capped range).
+
+        Order book snapshots are noisy — cap the range to avoid extreme
+        scores from momentary imbalances.
+        """
+        if imbalance is None:
+            return 50.0
+        # imbalance = bid_vol / ask_vol. >1 = more bids = bullish
+        # Capped to 30-70 range (order book is noisy, shouldn't dominate)
+        if imbalance >= 1.0:
+            intensity = min((imbalance - 1.0) / 1.5, 1.0)
+            return 50.0 + intensity * 20.0  # 50→70
+        else:
+            intensity = min((1.0 - imbalance) / 0.7, 1.0)
+            return 50.0 - intensity * 20.0  # 50→30
 
     # ------------------------------------------------------------------ #
     # Summary builder

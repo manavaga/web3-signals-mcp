@@ -373,7 +373,7 @@ def get_health() -> str:
     store = _get_store()
     agent_names = [
         "technical_agent", "derivatives_agent", "market_agent",
-        "narrative_agent", "whale_agent",
+        "narrative_agent", "exchange_flow_agent",
     ]
     agent_status: dict[str, Any] = {}
 

@@ -539,7 +539,7 @@ if _X402_ENABLED:
 _AGENT_CADENCES_MIN: dict[str, int] = {
     "technical_agent":   15,   # Price action is fast, RSI/MACD shift on short candles
     "derivatives_agent": 15,   # Lead indicators need frequent sampling (funding delta, OI div)
-    "whale_agent":       30,   # Whale transactions are sporadic, 30min catches everything
+    "exchange_flow_agent": 30,  # Exchange flow transactions are sporadic, 30min catches everything
     "market_agent":      30,   # F&G updates daily, CoinGecko dominance moves slowly
     "narrative_agent":   60,   # Reddit/news don't change meaningfully every 15min
 }
@@ -597,10 +597,10 @@ def _orchestrator_loop(store: Storage, interval: int) -> None:
             logger.error("  narrative_agent: import error — %s", e)
 
         try:
-            from whale_agent.engine import WhaleAgent
-            agents.append(("whale_agent", WhaleAgent))
+            from exchange_flow_agent.engine import ExchangeFlowAgent
+            agents.append(("exchange_flow_agent", ExchangeFlowAgent))
         except ImportError as e:
-            logger.error("  whale_agent: import error — %s", e)
+            logger.error("  exchange_flow_agent: import error — %s", e)
 
         ran_any = False
         agent_timeout = int(os.getenv("AGENT_TIMEOUT_SEC", "120"))
@@ -1539,7 +1539,7 @@ async def root():
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["info"])
 async def health():
-    agent_names = ["technical_agent", "derivatives_agent", "market_agent", "narrative_agent", "whale_agent"]
+    agent_names = ["technical_agent", "derivatives_agent", "market_agent", "narrative_agent", "exchange_flow_agent"]
     agent_status = {}
 
     for name in agent_names:
@@ -1750,7 +1750,7 @@ async def get_signal_trace(asset: str, request: Request):
 
     # Gather raw agent inputs for this asset
     agent_names = {
-        "whale": "whale_agent",
+        "exchange_flow": "exchange_flow_agent",
         "technical": "technical_agent",
         "derivatives": "derivatives_agent",
         "narrative": "narrative_agent",
@@ -2367,7 +2367,7 @@ async def get_signal_health():
     result["agent_cadences"] = {
         "technical_agent": int(os.getenv("AGENT_CADENCE_TECHNICAL_MIN", "15")),
         "derivatives_agent": int(os.getenv("AGENT_CADENCE_DERIVATIVES_MIN", "15")),
-        "whale_agent": int(os.getenv("AGENT_CADENCE_WHALE_MIN", "30")),
+        "exchange_flow_agent": int(os.getenv("AGENT_CADENCE_EXCHANGE_FLOW_MIN", "30")),
         "market_agent": int(os.getenv("AGENT_CADENCE_MARKET_MIN", "30")),
         "narrative_agent": int(os.getenv("AGENT_CADENCE_NARRATIVE_MIN", "60")),
     }
@@ -2947,7 +2947,7 @@ async def get_signal_history(
 
     valid_agents = [
         "signal_fusion", "technical_agent", "derivatives_agent",
-        "market_agent", "narrative_agent", "whale_agent",
+        "market_agent", "narrative_agent", "exchange_flow_agent",
     ]
     if agent not in valid_agents:
         raise HTTPException(status_code=400, detail=f"Invalid agent. Valid: {valid_agents}")

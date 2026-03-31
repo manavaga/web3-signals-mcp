@@ -23,6 +23,9 @@ x402[fastapi,evm]==2.2.0
 # CDP SDK — generates JWT auth tokens for Coinbase x402 facilitator
 cdp-sdk>=1.39.0
 
+# Macro data (market agent — S&P 500, VIX, DXY)
+yfinance>=1.2.0
+
 # Phase D: ML pipeline (meta-learner, meta-labeler, calibration)
 lightgbm>=4.0.0
 scikit-learn>=1.3.0

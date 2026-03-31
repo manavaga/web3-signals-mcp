@@ -1,15 +1,18 @@
 """
 Orchestrator — runs all data agents on a schedule and stores results.
 
+Data collection agents run every 1-2h.
+Signal fusion runs every 12h (configurable via SIGNAL_CADENCE_HOURS).
+
 Usage:
-    # Run once (all agents)
+    # Run once (all agents + fusion)
     python -m orchestrator.runner --once
 
-    # Run on loop (default 15 min interval)
+    # Run on loop (default 60 min interval, fusion every 12h)
     python -m orchestrator.runner
 
     # Custom interval
-    python -m orchestrator.runner --interval 600
+    python -m orchestrator.runner --interval 3600
 """
 from __future__ import annotations
 
@@ -24,16 +27,32 @@ from typing import Any, Dict, List
 from shared.storage import Storage
 
 # Per-agent cadence (minutes). Agents whose cadence hasn't elapsed are skipped.
-# Override via env: AGENT_CADENCE_TECHNICAL_MIN=15, AGENT_CADENCE_WHALE_MIN=30, etc.
+# Override via env: AGENT_CADENCE_TECHNICAL_MIN=60, AGENT_CADENCE_WHALE_MIN=120, etc.
 _AGENT_CADENCES_MIN: Dict[str, int] = {
-    "technical_agent":   15,   # Price action is fast
-    "derivatives_agent": 15,   # Lead indicators need frequent sampling
-    "whale_agent":       30,   # Whale moves are sporadic
-    "market_agent":      30,   # F&G daily, dominance slow
-    "narrative_agent":   60,   # Reddit/news don't change every 15min
+    "technical_agent":   60,   # Hourly — daily candles don't change faster
+    "derivatives_agent": 60,   # Hourly — sufficient for funding/OI updates
+    "exchange_flow_agent": 120,  # Every 2h — order book/flow data
+    "market_agent":      120,  # Every 2h — F&G is daily, prices slow
+    "narrative_agent":   120,  # Every 2h — news/social don't change faster
 }
 
 _agent_last_run: Dict[str, float] = {}
+
+# Signal fusion cadence (hours). Fusion only runs every N hours.
+# Override via env: SIGNAL_CADENCE_HOURS=12
+_SIGNAL_CADENCE_HOURS: int = int(os.getenv("SIGNAL_CADENCE_HOURS", "12"))
+_last_fusion_run: float | None = None
+
+
+def _should_run_fusion(force: bool = False) -> bool:
+    """Check if enough time has elapsed since last fusion run."""
+    global _last_fusion_run
+    if force:
+        return True
+    if _last_fusion_run is None:
+        return True  # Always run on first cycle
+    elapsed_hours = (time.time() - _last_fusion_run) / 3600
+    return elapsed_hours >= _SIGNAL_CADENCE_HOURS
 
 
 def _should_run_agent(name: str, force: bool = False) -> bool:
@@ -109,10 +128,10 @@ def run_all_agents(store: Storage, force: bool = False) -> List[Dict[str, Any]]:
         results.append({"agent": "narrative_agent", "status": "import_error", "duration_sec": 0, "errors": [str(e)]})
 
     try:
-        from whale_agent.engine import WhaleAgent
-        agents.append(("whale_agent", WhaleAgent))
+        from exchange_flow_agent.engine import ExchangeFlowAgent
+        agents.append(("exchange_flow_agent", ExchangeFlowAgent))
     except ImportError as e:
-        results.append({"agent": "whale_agent", "status": "import_error", "duration_sec": 0, "errors": [str(e)]})
+        results.append({"agent": "exchange_flow_agent", "status": "import_error", "duration_sec": 0, "errors": [str(e)]})
 
     for name, factory in agents:
         if not _should_run_agent(name, force=force):
@@ -129,14 +148,27 @@ def run_all_agents(store: Storage, force: bool = False) -> List[Dict[str, Any]]:
     return results
 
 
-def run_fusion(store: Storage) -> Dict[str, Any]:
-    """Run signal fusion on latest agent data."""
+def run_fusion(store: Storage, force: bool = False) -> Dict[str, Any] | None:
+    """Run signal fusion on latest agent data.
+
+    Returns None if fusion was skipped (cadence not elapsed).
+    """
+    global _last_fusion_run
+
+    if not _should_run_fusion(force=force):
+        elapsed_h = (time.time() - (_last_fusion_run or 0)) / 3600
+        remaining_h = _SIGNAL_CADENCE_HOURS - elapsed_h
+        print(f"  Signal fusion: SKIP (next run in {remaining_h:.1f}h, cadence={_SIGNAL_CADENCE_HOURS}h)")
+        return None
+
     try:
         from signal_fusion.engine import SignalFusion
+        print(f"  Running signal fusion ({_SIGNAL_CADENCE_HOURS}h cadence)...")
         fusion = SignalFusion()
         result = fusion.fuse()
         elapsed_ms = result["meta"]["duration_ms"]
         status = result["status"]
+        _last_fusion_run = time.time()
         print(f"  Signal fusion: {status} ({elapsed_ms}ms)")
         return {"status": status, "duration_ms": elapsed_ms, "errors": result["meta"]["errors"]}
     except Exception as exc:
@@ -147,12 +179,12 @@ def run_fusion(store: Storage) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description="Run signal agents on a schedule")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
-    parser.add_argument("--interval", type=int, default=900, help="Seconds between runs (default: 900 = 15 min)")
+    parser.add_argument("--interval", type=int, default=3600, help="Seconds between runs (default: 3600 = 60 min)")
     parser.add_argument("--db", type=str, default="signals.db", help="SQLite database path (ignored if DATABASE_URL set)")
     args = parser.parse_args()
 
     store = Storage(args.db)
-    print(f"Orchestrator starting (backend={store.backend}, interval={args.interval}s)")
+    print(f"Orchestrator starting (backend={store.backend}, interval={args.interval}s, fusion_cadence={_SIGNAL_CADENCE_HOURS}h)")
     print(f"DATABASE_URL: {'set' if os.getenv('DATABASE_URL') else 'not set (using SQLite)'}")
     print()
 
@@ -168,15 +200,40 @@ def main():
         agent_results = run_all_agents(store, force=force)
         total_agent_time = time.time() - total_start
 
-        # Run fusion
-        fusion_result = run_fusion(store)
+        # Run fusion (gated by cadence — skips if <12h since last run)
+        fusion_result = run_fusion(store, force=force)
+
+        # Evaluate pending signals (runs every cycle, evaluates signals >48h old)
+        try:
+            from signal_fusion.evaluator import SignalEvaluator
+            evaluator = SignalEvaluator(store)
+            eval_results = evaluator.evaluate_pending()
+            if eval_results:
+                print(f"  Evaluated {len(eval_results)} signals")
+                cwa = evaluator.compute_cwa(days=30)
+                print(f"  CWA(30d): {cwa['cwa']:.3f} | Accuracy: {cwa['raw_accuracy']:.3f} | Coverage: {cwa['coverage']:.3f}")
+        except Exception as exc:
+            print(f"  Signal evaluation: ERROR - {exc}")
+
+        # Self-learning weight optimizer (runs after fusion, when we have new evaluations)
+        if fusion_result and fusion_result.get("status") != "error":
+            try:
+                from signal_fusion.self_learner import SelfLearner
+                from signal_fusion.engine import SignalFusion
+                sf = SignalFusion()
+                learner = SelfLearner(store, sf.profile)
+                opt_result = learner.optimize()
+                print(f"  Self-learner: {opt_result['action']} | CWA: {opt_result['current_cwa']:.4f} | {opt_result.get('details', '')}")
+            except Exception as exc:
+                print(f"  Self-learner: ERROR - {exc}")
 
         total_time = time.time() - total_start
         success_count = sum(1 for r in agent_results if r["status"] == "success")
         partial_count = sum(1 for r in agent_results if r["status"] == "partial")
         error_count = sum(1 for r in agent_results if r["status"] in ("error", "import_error"))
 
-        print(f"\n  Total: {total_time:.0f}s | Agents: {success_count} ok, {partial_count} partial, {error_count} error | Fusion: {fusion_result['status']}")
+        fusion_status = fusion_result["status"] if fusion_result else "skipped"
+        print(f"\n  Total: {total_time:.0f}s | Agents: {success_count} ok, {partial_count} partial, {error_count} error | Fusion: {fusion_status}")
         print()
 
         if args.once:

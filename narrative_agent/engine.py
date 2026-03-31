@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time as _time_module
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ class NarrativeAgent(BaseAgent):
     4. CryptoPanic — community-voted news aggregator
     5. Google News RSS — unlimited free news headlines
     6. CoinGecko Trending — trending coin boost
+    7. LunarCrush — social metrics (galaxy_score, sentiment, social volume)
 
     LLM Sentiment: 12-hour batched analysis via Claude Haiku.
     All config driven by profiles/default.yaml.
@@ -97,6 +99,15 @@ class NarrativeAgent(BaseAgent):
             "influencer_mentions": 0,
             "top_influencers_active": [],
             "sources_with_data": 0,
+            # LunarCrush social metrics
+            "lunarcrush_galaxy_score": None,
+            "lunarcrush_alt_rank": None,
+            "lunarcrush_social_volume": None,
+            "lunarcrush_sentiment": None,
+            "lunarcrush_social_dominance": None,
+            # Composite narrative score
+            "narrative_score": 50.0,
+            "data_coverage": 0.0,
         }
 
     def collect(self) -> Tuple[Dict[str, Any], List[str]]:
@@ -178,6 +189,17 @@ class NarrativeAgent(BaseAgent):
             except Exception as exc:
                 errors.append(f"coingecko_trending: {exc}")
 
+        # --- Source 7: LunarCrush Social Metrics ---
+        lunarcrush_data: Dict[str, Dict[str, Any]] = {}
+        lc_cfg = self.profile.get("lunarcrush", {})
+        if lc_cfg.get("enabled", False):
+            try:
+                lunarcrush_data = self._fetch_lunarcrush()
+                if lunarcrush_data:
+                    data["sources_used"].append("lunarcrush")
+            except Exception as exc:
+                errors.append(f"lunarcrush: {exc}")
+
         # --- Score each asset ---
         score_min = float(get_threshold(self.profile, "thresholds", "narrative_score_min", default=0.40))
         score_max = float(get_threshold(self.profile, "thresholds", "narrative_score_max", default=0.70))
@@ -242,6 +264,33 @@ class NarrativeAgent(BaseAgent):
             # Influencer mentions
             inf_list = influencer_hits.get(sym, [])
 
+            # LunarCrush data for this asset
+            lc = lunarcrush_data.get(sym, {})
+            lc_galaxy = lc.get("galaxy_score")
+            lc_alt_rank = lc.get("alt_rank")
+            lc_social_vol = lc.get("social_volume")
+            lc_sentiment = lc.get("sentiment")
+            lc_social_dom = lc.get("social_dominance")
+            has_lunarcrush = lc_galaxy is not None
+
+            # --- Compute composite narrative_score (0-100) ---
+            narrative_score = self._compute_narrative_score(
+                normalised=normalised,
+                status=status,
+                keyword_sent=keyword_sent,
+                lc_galaxy=lc_galaxy,
+                cs_score=cs_score,
+                llm_sent=llm_sent,
+                total_mentions=total,
+                has_lunarcrush=has_lunarcrush,
+            )
+
+            # Data coverage: count sources with actual data / total possible sources
+            # Possible sources: reddit, twitter, farcaster, cryptopanic, google_news, coingecko_trending, lunarcrush
+            total_possible_sources = 7
+            coverage_count = sources_with_data + (1 if has_lunarcrush else 0)
+            data_coverage = round(coverage_count / total_possible_sources, 4)
+
             data["by_asset"][sym] = {
                 "reddit_mentions": rd,
                 "reddit_weighted_mentions": round(rd_w, 1),
@@ -268,6 +317,15 @@ class NarrativeAgent(BaseAgent):
                 "influencer_mentions": len(inf_list),
                 "top_influencers_active": inf_list[:5],
                 "sources_with_data": sources_with_data,
+                # LunarCrush social metrics
+                "lunarcrush_galaxy_score": lc_galaxy,
+                "lunarcrush_alt_rank": lc_alt_rank,
+                "lunarcrush_social_volume": lc_social_vol,
+                "lunarcrush_sentiment": lc_sentiment,
+                "lunarcrush_social_dominance": lc_social_dom,
+                # Composite narrative score
+                "narrative_score": narrative_score,
+                "data_coverage": data_coverage,
             }
 
             self._store_count(sym, total)
@@ -936,6 +994,195 @@ class NarrativeAgent(BaseAgent):
             return None
         except Exception:
             return None
+
+    # ------------------------------------------------------------------ #
+    # Source 7: LunarCrush Social Metrics
+    # ------------------------------------------------------------------ #
+
+    def _fetch_lunarcrush(self) -> Dict[str, Dict[str, Any]]:
+        """Fetch social metrics from LunarCrush v2 API for all tracked assets.
+
+        Returns a dict keyed by asset symbol with galaxy_score, alt_rank,
+        social_volume, sentiment, social_dominance, and social_contributors.
+        Skips gracefully if API key is not set or calls fail.
+        """
+        lc_cfg = self.profile.get("lunarcrush", {})
+        api_key = os.getenv(lc_cfg.get("api_key_env", "LUNARCRUSH_API_KEY"), "").strip()
+
+        if not api_key:
+            raise RuntimeError("LUNARCRUSH_API_KEY not set — skipping LunarCrush")
+
+        base_url = lc_cfg.get("base_url", "https://lunarcrush.com/api/v2")
+        rate_limit_sleep = float(lc_cfg.get("rate_limit_sleep", 0.5))
+
+        results: Dict[str, Dict[str, Any]] = {}
+
+        # Try to batch all symbols in one call first
+        symbols_str = ",".join(self.assets)
+        batch_url = f"{base_url}/assets?data=assets&symbol={symbols_str}"
+
+        try:
+            req = Request(batch_url, headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "User-Agent": "web3-signal-bot/1.0",
+            })
+            with urlopen(req, timeout=self.timeout) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+
+            assets_data = raw.get("data", [])
+            if isinstance(assets_data, list):
+                for item in assets_data:
+                    sym = str(item.get("symbol", "")).upper()
+                    if sym in self.assets:
+                        results[sym] = {
+                            "galaxy_score": item.get("galaxy_score"),
+                            "alt_rank": item.get("alt_rank"),
+                            "social_volume": item.get("social_volume"),
+                            "social_score": item.get("social_score"),
+                            "social_contributors": item.get("social_contributors"),
+                            "sentiment": item.get("sentiment"),
+                            "social_dominance": item.get("social_dominance"),
+                        }
+
+            # If batch worked, return
+            if results:
+                return results
+
+        except Exception:
+            pass  # Fall through to per-asset calls
+
+        # Fallback: per-asset calls with rate limiting
+        for sym in self.assets:
+            try:
+                url = f"{base_url}/assets?data=assets&symbol={sym}"
+                req = Request(url, headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                    "User-Agent": "web3-signal-bot/1.0",
+                })
+                with urlopen(req, timeout=self.timeout) as resp:
+                    raw = json.loads(resp.read().decode("utf-8"))
+
+                assets_data = raw.get("data", [])
+                if isinstance(assets_data, list) and assets_data:
+                    item = assets_data[0]
+                    results[sym] = {
+                        "galaxy_score": item.get("galaxy_score"),
+                        "alt_rank": item.get("alt_rank"),
+                        "social_volume": item.get("social_volume"),
+                        "social_score": item.get("social_score"),
+                        "social_contributors": item.get("social_contributors"),
+                        "sentiment": item.get("sentiment"),
+                        "social_dominance": item.get("social_dominance"),
+                    }
+
+                _time_module.sleep(rate_limit_sleep)
+
+            except Exception:
+                continue  # Skip this asset, continue with others
+
+        return results
+
+    # ------------------------------------------------------------------ #
+    # Composite narrative_score (0-100)
+    # ------------------------------------------------------------------ #
+
+    def _compute_narrative_score(
+        self,
+        normalised: float,
+        status: str,
+        keyword_sent: float,
+        lc_galaxy: Optional[float],
+        cs_score: Optional[float],
+        llm_sent: Optional[Dict[str, Any]],
+        total_mentions: int,
+        has_lunarcrush: bool,
+    ) -> float:
+        """Compute a composite narrative score (0-100) from all available signals.
+
+        When LunarCrush is unavailable, its weight is redistributed to
+        mentions and keyword_sentiment. When there is no data at all,
+        returns 50 (true neutral).
+        """
+        scoring_cfg = self.profile.get("scoring", {})
+        weights_cfg = scoring_cfg.get("weights", {})
+        no_lc_cfg = scoring_cfg.get("no_lunarcrush_redistribution", {})
+
+        # --- Sub-score 1: Mention score based on normalised_score & status ---
+        if status == "early_pickup":
+            # Sweet spot: growing attention (normalised 0.4-0.7)
+            # Map 0.4-0.7 range to 60-75
+            t = max(0.0, min(1.0, (normalised - 0.4) / 0.3))
+            mention_score = 60.0 + t * 15.0
+        elif status == "peak_crowded":
+            # Already priced in (normalised > 0.7)
+            # Map 0.7-1.0 range to 55-40 (higher normalised = lower score)
+            t = max(0.0, min(1.0, (normalised - 0.7) / 0.3))
+            mention_score = 55.0 - t * 15.0
+        elif status == "too_early":
+            # Not enough signal (normalised < 0.4)
+            # Map 0.0-0.4 range to 45-55
+            t = max(0.0, min(1.0, normalised / 0.4))
+            mention_score = 45.0 + t * 10.0
+        else:
+            # unknown / no data
+            mention_score = 50.0
+
+        # --- Sub-score 2: Keyword sentiment (-1.0 to +1.0 -> 20-80) ---
+        # +1.0 -> 80, 0.0 -> 50, -1.0 -> 20
+        keyword_sentiment_score = 50.0 + keyword_sent * 30.0
+        keyword_sentiment_score = max(20.0, min(80.0, keyword_sentiment_score))
+
+        # --- Sub-score 3: LunarCrush galaxy_score (already 0-100) ---
+        lunarcrush_score = 50.0
+        if has_lunarcrush and lc_galaxy is not None:
+            lunarcrush_score = max(0.0, min(100.0, float(lc_galaxy)))
+
+        # --- Sub-score 4: Community sentiment from CryptoPanic ---
+        community_score = 50.0
+        if cs_score is not None:
+            # Map -1.0 to +1.0 -> 20-80
+            community_score = 50.0 + float(cs_score) * 30.0
+            community_score = max(20.0, min(80.0, community_score))
+
+        # --- Sub-score 5: LLM sentiment ---
+        llm_sentiment_score = 50.0
+        if llm_sent is not None and isinstance(llm_sent, dict):
+            llm_val = llm_sent.get("sentiment")
+            if llm_val is not None:
+                # Map -1.0 to +1.0 -> 20-80
+                llm_sentiment_score = 50.0 + float(llm_val) * 30.0
+                llm_sentiment_score = max(20.0, min(80.0, llm_sentiment_score))
+
+        # --- Weighted average ---
+        if has_lunarcrush:
+            w_mention = float(weights_cfg.get("mentions", 0.25))
+            w_keyword = float(weights_cfg.get("keyword_sentiment", 0.20))
+            w_lunar = float(weights_cfg.get("lunarcrush", 0.25))
+            w_community = float(weights_cfg.get("community", 0.10))
+            w_llm = float(weights_cfg.get("llm_sentiment", 0.20))
+        else:
+            # Redistribute LunarCrush weight to mentions and keyword_sentiment
+            w_mention = float(no_lc_cfg.get("mentions", 0.35))
+            w_keyword = float(no_lc_cfg.get("keyword_sentiment", 0.30))
+            w_lunar = 0.0
+            w_community = float(no_lc_cfg.get("community", 0.15))
+            w_llm = float(no_lc_cfg.get("llm_sentiment", 0.20))
+
+        composite = (
+            w_mention * mention_score
+            + w_keyword * keyword_sentiment_score
+            + w_lunar * lunarcrush_score
+            + w_community * community_score
+            + w_llm * llm_sentiment_score
+        )
+
+        # If no data at all (no mentions AND no LunarCrush), return true neutral
+        if total_mentions == 0 and not has_lunarcrush:
+            return 50.0
+
+        return round(max(0.0, min(100.0, composite)), 1)
 
     # ------------------------------------------------------------------ #
     # Rolling peak storage

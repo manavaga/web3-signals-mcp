@@ -91,3 +91,45 @@ binance:
   # Taker ratio settings
   taker_ratio_period: "1h"            # match L/S period for consistency
   taker_ratio_limit: 1                # latest only for now
+
+# ---------------------------------------------------------------------------
+# Liquidation data — forced liquidations from Binance Futures
+# Rate-limited (5/min), so we sleep between calls.
+# ---------------------------------------------------------------------------
+liquidations:
+  enabled: true
+  endpoint: "/fapi/v1/forceOrders"
+  limit: 100
+  rate_limit_sleep: 1.0               # seconds between calls per asset
+
+# ---------------------------------------------------------------------------
+# Top Trader Positions — L/S ratio of top traders (smart money signal)
+# Divergence from general accounts = contrarian signal.
+# ---------------------------------------------------------------------------
+top_traders:
+  enabled: true
+  endpoint: "/futures/data/topLongShortPositionRatio"
+  period: "4h"
+
+# ---------------------------------------------------------------------------
+# Funding Rate Term Structure — last 3 funding rates for trend detection
+# ---------------------------------------------------------------------------
+funding_history:
+  enabled: true
+  endpoint: "/fapi/v1/fundingRate"
+  limit: 3
+
+# ---------------------------------------------------------------------------
+# Composite derivatives_score (0-100) — weighted sub-signal scoring
+# ---------------------------------------------------------------------------
+scoring:
+  weights:
+    long_short: 0.20
+    funding: 0.25
+    open_interest: 0.15
+    liquidations: 0.20
+    taker_ratio: 0.20
+  thresholds:
+    funding_extreme: 0.001             # |funding_rate| above this = extreme
+    overcrowded_long: 0.65             # L/S ratio above this = overcrowded
+    shorts_dominating: 0.55            # L/S ratio below this = shorts dominating

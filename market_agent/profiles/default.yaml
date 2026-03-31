@@ -71,7 +71,7 @@ binance_symbol_map:
   ADA: ADAUSDT
   AVAX: AVAXUSDT
   DOT: DOTUSDT
-  MATIC: MATICUSDT
+  MATIC: POLUSDT
   LINK: LINKUSDT
   UNI: UNIUSDT
   ATOM: ATOMUSDT
@@ -137,6 +137,12 @@ binance:
     high_threshold: 1.5                  # >= 1.5x = elevated volume
     # Anything below high_threshold = normal
 
+  # Order book depth
+  order_book:
+    enabled: true
+    depth_limit: 20
+    rate_limit_sleep: 0.1
+
 # ---------------------------------------------------------------------------
 # Source: DexScreener — on-chain DEX pair tracking
 # ---------------------------------------------------------------------------
@@ -170,3 +176,31 @@ fear_greed:
   neutral_max: 55
   greed_max: 75
   # Above greed_max = extreme_greed
+
+# ---------------------------------------------------------------------------
+# Source: Stablecoin flow proxy (CoinGecko)
+# ---------------------------------------------------------------------------
+stablecoin:
+  enabled: true
+  ids: "tether,usd-coin"
+
+# ---------------------------------------------------------------------------
+# Source: Macro correlations (yfinance)
+# ---------------------------------------------------------------------------
+macro:
+  enabled: true
+  tickers:
+    sp500: "^GSPC"
+    vix: "^VIX"
+    dxy: "DX-Y.NYB"
+
+# ---------------------------------------------------------------------------
+# Market scoring weights
+# ---------------------------------------------------------------------------
+scoring:
+  weights:
+    fear_greed: 0.35       # strongest contrarian signal, very reliable
+    volume: 0.15
+    breadth: 0.15
+    macro: 0.20
+    order_book: 0.15       # noisy snapshot — reduced from 0.25

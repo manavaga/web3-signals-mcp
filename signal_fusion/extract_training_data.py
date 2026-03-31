@@ -76,10 +76,10 @@ def extract_training_data(
     print("=" * 60)
 
     # Load agent histories (same as backtest)
-    agent_names = ["whale_agent", "technical_agent", "derivatives_agent",
+    agent_names = ["exchange_flow_agent", "technical_agent", "derivatives_agent",
                     "narrative_agent", "market_agent"]
     agent_map = {
-        "whale_agent": "whale",
+        "exchange_flow_agent": "exchange_flow",
         "technical_agent": "technical",
         "derivatives_agent": "derivatives",
         "narrative_agent": "narrative",

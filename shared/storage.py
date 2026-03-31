@@ -2453,6 +2453,198 @@ class Storage:
         return result
 
     # ------------------------------------------------------------------ #
+    #  Signal evaluation methods
+    # ------------------------------------------------------------------ #
+
+    def _ensure_evaluation_table(self) -> None:
+        """Create signal_evaluations table if it doesn't exist."""
+        ddl = (
+            "CREATE TABLE IF NOT EXISTS signal_evaluations ("
+            "  id TEXT PRIMARY KEY,"
+            "  asset TEXT NOT NULL,"
+            "  direction TEXT NOT NULL,"
+            "  composite_score REAL,"
+            "  entry_price REAL,"
+            "  target_price REAL,"
+            "  stop_loss REAL,"
+            "  signal_timestamp TEXT NOT NULL,"
+            "  features TEXT,"
+            "  target_hit_at TEXT,"
+            "  stop_loss_hit_at TEXT,"
+            "  price_at_48h REAL,"
+            "  highest_price_48h REAL,"
+            "  lowest_price_48h REAL,"
+            "  outcome TEXT,"
+            "  score REAL,"
+            "  actual_move_pct REAL,"
+            "  evaluated_at TEXT"
+            ")"
+        )
+        if self.backend == "postgres":
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(ddl)
+                conn.commit()
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(ddl)
+
+    def save_signal_for_evaluation(self, record: dict) -> None:
+        """Save a signal for future evaluation."""
+        self._ensure_evaluation_table()
+        cols = [
+            "id", "asset", "direction", "composite_score",
+            "entry_price", "target_price", "stop_loss",
+            "signal_timestamp", "features",
+        ]
+        vals = [record.get(c) for c in cols]
+
+        if self.backend == "postgres":
+            placeholders = ", ".join(["%s"] * len(cols))
+            col_str = ", ".join(cols)
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"INSERT INTO signal_evaluations ({col_str}) VALUES ({placeholders}) "
+                        f"ON CONFLICT (id) DO NOTHING",
+                        vals,
+                    )
+                conn.commit()
+        else:
+            placeholders = ", ".join(["?"] * len(cols))
+            col_str = ", ".join(cols)
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    f"INSERT OR IGNORE INTO signal_evaluations ({col_str}) VALUES ({placeholders})",
+                    vals,
+                )
+
+    def get_pending_evaluations(self) -> List[Dict[str, Any]]:
+        """Get signals older than 48h that haven't been evaluated yet."""
+        self._ensure_evaluation_table()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+
+        query = (
+            "SELECT id, asset, direction, composite_score, entry_price, "
+            "target_price, stop_loss, signal_timestamp, features "
+            "FROM signal_evaluations "
+            "WHERE evaluated_at IS NULL AND signal_timestamp < ?"
+        )
+
+        rows = []
+        if self.backend == "postgres":
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query.replace("?", "%s"), (cutoff,))
+                    cols = [d[0] for d in cur.description]
+                    for row in cur.fetchall():
+                        rows.append(dict(zip(cols, row)))
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                for row in conn.execute(query, (cutoff,)).fetchall():
+                    rows.append(dict(row))
+
+        return rows
+
+    def evaluate_signal(self, signal_id: str, evaluation: dict) -> None:
+        """Save evaluation result for a signal."""
+        self._ensure_evaluation_table()
+        update_cols = [
+            "target_hit_at", "stop_loss_hit_at", "price_at_48h",
+            "highest_price_48h", "lowest_price_48h", "outcome",
+            "score", "actual_move_pct", "evaluated_at",
+        ]
+        vals = [evaluation.get(c) for c in update_cols]
+        vals.append(signal_id)
+
+        set_clause = ", ".join(f"{c} = ?" for c in update_cols)
+        query = f"UPDATE signal_evaluations SET {set_clause} WHERE id = ?"
+
+        if self.backend == "postgres":
+            query = query.replace("?", "%s")
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, vals)
+                conn.commit()
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(query, vals)
+
+    def get_accuracy_stats(
+        self, asset: str = None, days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """Get evaluated signals for accuracy computation."""
+        self._ensure_evaluation_table()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        query = (
+            "SELECT id, asset, direction, composite_score, entry_price, "
+            "target_price, stop_loss, signal_timestamp, outcome, score, "
+            "actual_move_pct, evaluated_at "
+            "FROM signal_evaluations "
+            "WHERE evaluated_at IS NOT NULL AND signal_timestamp > ?"
+        )
+        params: list = [cutoff]
+
+        if asset:
+            query += " AND asset = ?"
+            params.append(asset)
+
+        rows = []
+        if self.backend == "postgres":
+            query = query.replace("?", "%s")
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    cols = [d[0] for d in cur.description]
+                    for row in cur.fetchall():
+                        rows.append(dict(zip(cols, row)))
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                for row in conn.execute(query, params).fetchall():
+                    rows.append(dict(row))
+
+        return rows
+
+    def get_evaluated_signals(self, days: int = 90) -> List[Dict[str, Any]]:
+        """Get evaluated signals with features for ML training."""
+        self._ensure_evaluation_table()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        query = (
+            "SELECT features, actual_move_pct "
+            "FROM signal_evaluations "
+            "WHERE evaluated_at IS NOT NULL AND actual_move_pct IS NOT NULL "
+            "AND signal_timestamp > ?"
+        )
+
+        rows = []
+        if self.backend == "postgres":
+            with _pg_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query.replace("?", "%s"), (cutoff,))
+                    for row in cur.fetchall():
+                        features_str, actual = row
+                        try:
+                            features = json.loads(features_str) if features_str else {}
+                        except Exception:
+                            features = {}
+                        rows.append({"features": features, "actual_move_pct": actual})
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                for row in conn.execute(query, (cutoff,)).fetchall():
+                    features_str, actual = row
+                    try:
+                        features = json.loads(features_str) if features_str else {}
+                    except Exception:
+                        features = {}
+                    rows.append({"features": features, "actual_move_pct": actual})
+
+        return rows
+
+    # ------------------------------------------------------------------ #
     #  Internal helpers
     # ------------------------------------------------------------------ #
 
