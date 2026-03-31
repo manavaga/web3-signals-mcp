@@ -34,6 +34,8 @@ asset_blacklist:
     - INJ     # 20.7% accuracy — worst, consistently anti-predicts
     - ATOM    # 24.5% accuracy — anti-predicts almost as badly
     - OP      # 41.9% accuracy — below coin-flip, drags portfolio
+    - ADA     # volatile mid-cap, unreliable during sentiment reversals
+    - DOT     # volatile mid-cap, weak recovery from fear events
 
 # ---------------------------------------------------------------------------
 # Agent names — must match agent_name used in storage
