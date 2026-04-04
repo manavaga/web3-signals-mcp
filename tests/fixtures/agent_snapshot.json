@@ -1,0 +1,16 @@
+{
+  "technical": {
+    "BTC": {"rsi_14": 42, "macd_histogram": 0.3, "bb_position": 0.35, "price": 84000, "ma7": 83500, "ma30": 82000, "volume_status": "normal", "atr_14": 2100, "atr_pct": 2.5},
+    "ETH": {"rsi_14": 55, "macd_histogram": -0.1, "bb_position": 0.55, "price": 3200, "ma7": 3250, "ma30": 3100, "volume_status": "normal", "atr_14": 120, "atr_pct": 3.75}
+  },
+  "derivatives": {
+    "BTC": {"long_short_ratio": 0.58, "funding_rate": 0.0001, "oi_change_pct": 2.0, "liq_imbalance": 0.0, "taker_buy_sell_ratio": 1.05},
+    "ETH": {"long_short_ratio": 0.62, "funding_rate": 0.0003, "oi_change_pct": -1.0, "liq_imbalance": 0.1, "taker_buy_sell_ratio": 0.98}
+  },
+  "market": {
+    "BTC": {"fear_greed": 35, "volume_ratio": 1.2, "breadth_status": "neutral", "macro_status": "neutral", "order_book_imbalance": 1.1},
+    "ETH": {"fear_greed": 35, "volume_ratio": 0.9, "breadth_status": "neutral", "macro_status": "neutral", "order_book_imbalance": 0.95}
+  },
+  "narrative": {},
+  "exchange_flow": {}
+}
