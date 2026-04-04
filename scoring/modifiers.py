@@ -1,0 +1,177 @@
+# scoring/modifiers.py
+"""Scoring modifiers — regime, abstain, targets, labels.
+
+All pure functions. No state, no side effects.
+"""
+from __future__ import annotations
+from typing import Optional
+from scoring.types import RegimeContext, TargetLevels
+
+
+def classify_fg(fg_value: int, thresholds: dict[str, int]) -> str:
+    if fg_value <= thresholds["extreme_fear"]:
+        return "extreme_fear"
+    elif fg_value <= thresholds["fear"]:
+        return "fear"
+    elif fg_value <= thresholds["neutral"]:
+        return "neutral"
+    elif fg_value <= thresholds["greed"]:
+        return "greed"
+    return "extreme_greed"
+
+
+def detect_regime(btc_price: float, btc_ma30: float, fg_value: int,
+                  fg_thresholds: dict, trending_threshold: float = 0.08,
+                  ranging_threshold: float = 0.03) -> RegimeContext:
+    pct_from_ma30 = abs((btc_price - btc_ma30) / btc_ma30) if btc_ma30 > 0 else 0
+    if pct_from_ma30 > trending_threshold:
+        regime = "trending"
+    elif pct_from_ma30 < ranging_threshold:
+        regime = "ranging"
+    else:
+        regime = "unknown"
+
+    fg_regime = classify_fg(fg_value, fg_thresholds)
+    return RegimeContext(regime=regime, fg_value=fg_value, fg_regime=fg_regime,
+                         btc_pct_from_ma30=round(pct_from_ma30, 4))
+
+
+def select_weights(raw_avg: float, weights_default: dict[str, float],
+                   weights_bullish: dict[str, float],
+                   weights_bearish: dict[str, float]) -> dict[str, float]:
+    if raw_avg > 50:
+        return dict(weights_bullish)
+    elif raw_avg < 50:
+        return dict(weights_bearish)
+    return dict(weights_default)
+
+
+def apply_regime_shifts(weights: dict[str, float],
+                        shifts: dict[str, float]) -> dict[str, float]:
+    adjusted = {}
+    for dim, w in weights.items():
+        adjusted[dim] = w * shifts.get(dim, 1.0)
+    total = sum(adjusted.values())
+    if total > 0:
+        adjusted = {k: v / total for k, v in adjusted.items()}
+    return adjusted
+
+
+def apply_tier_redistribution(weights: dict[str, float],
+                               tiers: dict[str, str],
+                               multipliers: dict[str, float]) -> dict[str, float]:
+    effective = {}
+    freed = 0.0
+    full_dims = []
+
+    for dim, w in weights.items():
+        tier = tiers.get(dim, "partial")
+        mult = multipliers.get(tier, 0.5)
+        eff_w = w * mult
+        freed += w - eff_w
+        effective[dim] = eff_w
+        if tier == "full":
+            full_dims.append(dim)
+
+    if full_dims and freed > 0:
+        full_total = sum(effective[d] for d in full_dims)
+        if full_total > 0:
+            for d in full_dims:
+                share = effective[d] / full_total
+                effective[d] += freed * share
+
+    total = sum(effective.values())
+    if total > 0:
+        effective = {k: v / total for k, v in effective.items()}
+
+    return effective
+
+
+def check_abstain(composite: float, bearish_dist: float, bullish_dist: float,
+                  regime_multiplier: float = 1.0) -> bool:
+    eff_bearish = bearish_dist * regime_multiplier
+    eff_bullish = bullish_dist * regime_multiplier
+
+    if composite == 50:
+        return True
+    if composite < 50 and (50 - composite) < eff_bearish:
+        return True
+    if composite > 50 and (composite - 50) < eff_bullish:
+        return True
+    return False
+
+
+def assign_label(composite: float, labels: list[dict]) -> tuple[str, str]:
+    for entry in labels:
+        if composite >= entry["min_score"]:
+            name = entry["name"]
+            if "BUY" in name:
+                return name, "bullish"
+            elif "SELL" in name:
+                return name, "bearish"
+            return name, "neutral"
+    return "STRONG SELL", "bearish"
+
+
+def calculate_targets(entry_price: float, composite: float, direction: str,
+                      atr_14: float, sl_multiplier: float,
+                      cfg: dict) -> Optional[TargetLevels]:
+    if direction == "neutral":
+        return None
+
+    if direction == "bullish":
+        stop_loss = entry_price - (atr_14 * sl_multiplier)
+    else:
+        stop_loss = entry_price + (atr_14 * sl_multiplier)
+
+    distance = composite - 50.0
+    atr_pct = (atr_14 / entry_price) * 100 if entry_price > 0 else 3.0
+    divisor = cfg.get("move_distance_divisor", 10.0)
+    atr_mult = cfg.get("move_atr_multiplier", 1.5)
+    max_factor = cfg.get("move_max_atr_factor", 2.0)
+    min_floor = cfg.get("move_min_floor_atr_factor", 0.3)
+
+    move_fraction = distance / divisor
+    predicted_pct = move_fraction * atr_pct * atr_mult
+    max_move = atr_pct * max_factor
+    predicted_pct = max(-max_move, min(max_move, predicted_pct))
+
+    min_prediction = atr_pct * min_floor
+    if abs(predicted_pct) < min_prediction:
+        predicted_pct = min_prediction if direction == "bullish" else -min_prediction
+
+    if direction == "bullish" and predicted_pct < 0:
+        predicted_pct = abs(predicted_pct) * 0.5
+    elif direction == "bearish" and predicted_pct > 0:
+        predicted_pct = -abs(predicted_pct) * 0.5
+
+    min_rr = cfg.get("min_rr_ratio", 0.5)
+    risk = abs(entry_price - stop_loss)
+    min_reward = risk * min_rr
+    ml_target = entry_price * (1 + predicted_pct / 100)
+
+    if direction == "bullish":
+        target_price = max(ml_target, entry_price + min_reward)
+    else:
+        target_price = min(ml_target, entry_price - min_reward)
+
+    reward = abs(target_price - entry_price)
+    rr_ratio = reward / risk if risk > 0 else 0
+
+    score_distance = abs(composite - 50.0)
+    if score_distance > 20:
+        confidence = "high"
+    elif score_distance > 12:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return TargetLevels(
+        entry_price=round(entry_price, 2),
+        target_price=round(target_price, 2),
+        stop_loss=round(stop_loss, 2),
+        risk_reward_ratio=round(rr_ratio, 2),
+        predicted_move_pct=round(predicted_pct, 2),
+        confidence=confidence,
+        timeframe_hours=cfg.get("timeframe_hours", 48),
+    )
