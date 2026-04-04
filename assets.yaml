@@ -1,0 +1,169 @@
+assets:
+  BTC:
+    enabled: true
+    tier: large_cap
+    binance_symbol: BTCUSDT
+    coingecko_id: bitcoin
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 1.0
+    strong_threshold_pct: 3.0
+  ETH:
+    enabled: true
+    tier: large_cap
+    binance_symbol: ETHUSDT
+    coingecko_id: ethereum
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 1.5
+    strong_threshold_pct: 4.0
+  SOL:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: SOLUSDT
+    coingecko_id: solana
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  BNB:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: BNBUSDT
+    coingecko_id: binancecoin
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 1.5
+    strong_threshold_pct: 4.0
+  XRP:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: XRPUSDT
+    coingecko_id: ripple
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  ADA:
+    enabled: false
+    blacklist_reason: "Anti-predictive in backtest (IC < -0.05)"
+    tier: mid_cap
+    binance_symbol: ADAUSDT
+    coingecko_id: cardano
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  AVAX:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: AVAXUSDT
+    coingecko_id: avalanche-2
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  DOT:
+    enabled: false
+    blacklist_reason: "Anti-predictive in backtest"
+    tier: mid_cap
+    binance_symbol: DOTUSDT
+    coingecko_id: polkadot
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  MATIC:
+    enabled: false
+    blacklist_reason: "Anti-predictive in backtest"
+    tier: small_cap
+    binance_symbol: MATICUSDT
+    coingecko_id: matic-network
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  LINK:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: LINKUSDT
+    coingecko_id: chainlink
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  UNI:
+    enabled: true
+    tier: small_cap
+    binance_symbol: UNIUSDT
+    coingecko_id: uniswap
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  ATOM:
+    enabled: false
+    blacklist_reason: "IC=-0.12, 24.5% accuracy"
+    tier: mid_cap
+    binance_symbol: ATOMUSDT
+    coingecko_id: cosmos
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  LTC:
+    enabled: true
+    tier: mid_cap
+    binance_symbol: LTCUSDT
+    coingecko_id: litecoin
+    sl_atr_multiplier: 2.0
+    noise_threshold_pct: 2.0
+    strong_threshold_pct: 5.0
+  FIL:
+    enabled: true
+    tier: small_cap
+    binance_symbol: FILUSDT
+    coingecko_id: filecoin
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  NEAR:
+    enabled: false
+    blacklist_reason: "Insufficient data quality"
+    tier: small_cap
+    binance_symbol: NEARUSDT
+    coingecko_id: near
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  APT:
+    enabled: false
+    blacklist_reason: "Anti-predictive in backtest"
+    tier: small_cap
+    binance_symbol: APTUSDT
+    coingecko_id: aptos
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  ARB:
+    enabled: true
+    tier: small_cap
+    binance_symbol: ARBUSDT
+    coingecko_id: arbitrum
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  OP:
+    enabled: false
+    blacklist_reason: "41.9% accuracy, anti-predictive"
+    tier: small_cap
+    binance_symbol: OPUSDT
+    coingecko_id: optimism
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  INJ:
+    enabled: false
+    blacklist_reason: "20.7% accuracy, strongly anti-predictive"
+    tier: small_cap
+    binance_symbol: INJUSDT
+    coingecko_id: injective-protocol
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 2.5
+    strong_threshold_pct: 6.0
+  SUI:
+    enabled: true
+    tier: small_cap
+    binance_symbol: SUIUSDT
+    coingecko_id: sui
+    sl_atr_multiplier: 2.5
+    noise_threshold_pct: 3.0
+    strong_threshold_pct: 7.0

@@ -1,0 +1,195 @@
+# config.yaml — THE scoring rulebook
+# All weights, thresholds, and agent configs live here.
+# Validated by Pydantic at startup — crash on bad config.
+
+scoring:
+  weights_default:
+    technical: 0.45
+    derivatives: 0.05
+    market: 0.50
+    narrative: 0.00
+    exchange_flow: 0.00
+  weights_bullish:
+    technical: 0.40
+    derivatives: 0.05
+    market: 0.55
+    narrative: 0.00
+    exchange_flow: 0.00
+  weights_bearish:
+    technical: 0.50
+    derivatives: 0.05
+    market: 0.45
+    narrative: 0.00
+    exchange_flow: 0.00
+  per_tier_weights:
+    large_cap:
+      assets: [BTC, ETH]
+      weights_bullish:
+        technical: 0.35
+        derivatives: 0.05
+        market: 0.60
+        narrative: 0.00
+        exchange_flow: 0.00
+      weights_bearish:
+        technical: 0.50
+        derivatives: 0.05
+        market: 0.45
+        narrative: 0.00
+        exchange_flow: 0.00
+    small_cap:
+      assets: [MATIC, UNI, FIL, NEAR, APT, ARB, SUI]
+      weights_bullish:
+        technical: 0.40
+        derivatives: 0.05
+        market: 0.55
+        narrative: 0.00
+        exchange_flow: 0.00
+      weights_bearish:
+        technical: 0.50
+        derivatives: 0.05
+        market: 0.45
+        narrative: 0.00
+        exchange_flow: 0.00
+  labels:
+    - { name: "STRONG BUY", min_score: 70 }
+    - { name: "MODERATE BUY", min_score: 60 }
+    - { name: "NEUTRAL", min_score: 42 }
+    - { name: "MODERATE SELL", min_score: 30 }
+    - { name: "STRONG SELL", min_score: 0 }
+  abstain:
+    bearish_min_distance: 8
+    bullish_min_distance: 10
+  tier_multipliers:
+    full: 1.0
+    partial: 0.5
+    none: 0.0
+  momentum_threshold: 5
+
+regime:
+  btc_ma_period: 30
+  trending_threshold: 0.08
+  ranging_threshold: 0.03
+  weight_shifts:
+    trending:
+      technical: 1.2
+      derivatives: 0.9
+      market: 1.1
+      narrative: 0.7
+      exchange_flow: 0.8
+    ranging:
+      technical: 1.1
+      derivatives: 0.8
+      market: 1.2
+      narrative: 0.5
+      exchange_flow: 1.0
+  abstain_multiplier:
+    trending: 0.7
+    ranging: 3.0
+    unknown: 1.0
+  fg_thresholds:
+    extreme_fear: 20
+    fear: 40
+    neutral: 60
+    greed: 80
+
+targets:
+  timeframe_hours: 48
+  min_rr_ratio: 0.5
+  move_distance_divisor: 10.0
+  move_atr_multiplier: 1.5
+  move_max_atr_factor: 2.0
+  move_min_floor_atr_factor: 0.3
+  ml_blend_weight: 0.6
+  ml_max_move_pct: 30.0
+  model_max_age_hours: 24
+  min_training_samples: 30
+
+agents:
+  technical:
+    cadence_minutes: 60
+    binance_kline_limit: 50
+    intervals: ["1d", "4h"]
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bb_period: 20
+    bb_std_dev: 2
+    bb_squeeze_threshold: 0.04
+    volume_ma_period: 20
+    volume_spike_threshold: 2.0
+    volume_elevated_threshold: 1.5
+    volume_low_threshold: 0.5
+    atr_period: 14
+    scoring_weights:
+      rsi: 0.25
+      macd: 0.25
+      bollinger: 0.20
+      trend: 0.30
+    volume_spike_bonus: 10
+  derivatives:
+    cadence_minutes: 60
+    scoring_weights:
+      long_short: 0.20
+      funding: 0.25
+      open_interest: 0.15
+      liquidations: 0.20
+      taker_ratio: 0.20
+    ls_overcrowded: 0.65
+    ls_shorts_dominating: 0.55
+    ls_contrarian: 0.45
+    funding_extreme: 0.001
+    funding_extreme_negative: 0.005
+    oi_change_threshold_pct: 5.0
+    liq_imbalance_threshold: 0.3
+  market:
+    cadence_minutes: 120
+    scoring_weights:
+      fear_greed: 0.25
+      volume: 0.15
+      breadth: 0.15
+      macro: 0.20
+      order_book: 0.25
+    volume_spike_threshold: 2.0
+    macro_vix_risk_off: 25
+    macro_vix_risk_on: 18
+    macro_sp_risk_off_pct: -1.5
+    macro_sp_risk_on_pct: 0.5
+    macro_dxy_risk_off_pct: 0.5
+    macro_dxy_risk_on_pct: -0.3
+    stablecoin_inflow_threshold: 0.5
+  narrative:
+    cadence_minutes: 120
+    scoring_weights:
+      reddit: 0.40
+      cryptopanic: 0.40
+      llm_sentiment: 0.20
+  exchange_flow:
+    cadence_minutes: 120
+    order_book_depth_limit: 20
+    bid_ask_significant_ratio: 1.5
+
+evaluation:
+  gradient_thresholds:
+    strong_correct: 1.0
+    correct: 0.7
+    weak_correct: 0.4
+    weak_wrong: 0.2
+    wrong: 0.0
+  windows_hours: [24, 48]
+  cwa_target_coverage: 0.30
+  min_evaluation_age_hours: 48
+
+learning:
+  shadow_mode: true
+  shadow_min_days: 90
+  dirichlet_concentration: 10.0
+  weight_step_size: 0.02
+  min_signals_per_asset: 20
+  ic_min_observations: 8
+  drift_detection:
+    cwa_floor: 0.40
+    cwa_critical: 0.30
+    lookback_windows: 3
