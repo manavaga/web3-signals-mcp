@@ -32,6 +32,12 @@ class Storage:
     def _ph(self) -> str:
         return "%s" if self._backend == "postgres" else "?"
 
+    def _ago(self, days: int) -> str:
+        """SQL expression for 'days ago' — works on both SQLite and Postgres."""
+        if self._backend == "postgres":
+            return f"NOW() - INTERVAL '{days} days'"
+        return f"datetime('now', '-{days} days')"
+
     def _table_name(self, name: str) -> str:
         return re.sub(r"[^a-z0-9_]", "_", name.lower())
 
@@ -173,10 +179,8 @@ class Storage:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            ph = self._ph()
             cur.execute(
-                f"SELECT data_json, timestamp FROM {table} WHERE timestamp >= datetime('now', {ph}) ORDER BY id DESC",
-                (f"-{days} days",)
+                f"SELECT data_json, timestamp FROM {table} WHERE timestamp >= {self._ago(days)} ORDER BY id DESC"
             )
             return [{"data": json.loads(row[0]), "timestamp": row[1]} for row in cur.fetchall()]
         finally:
@@ -370,8 +374,7 @@ class Storage:
                            ps.asset, ps.signal_direction
                     FROM performance_accuracy pa
                     JOIN performance_snapshots ps ON pa.snapshot_id = ps.id
-                    WHERE ps.timestamp >= datetime('now', {ph})""",
-                (f"-{days} days",)
+                    WHERE ps.timestamp >= {self._ago(days)}"""
             )
             rows = cur.fetchall()
             if not rows:
@@ -476,10 +479,8 @@ class Storage:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            ph = self._ph()
             cur.execute(
-                f"SELECT error_type, source, message, timestamp FROM error_events WHERE timestamp >= datetime('now', {ph}) ORDER BY timestamp DESC",
-                (f"-{days} days",)
+                f"SELECT error_type, source, message, timestamp FROM error_events WHERE timestamp >= {self._ago(days)} ORDER BY timestamp DESC"
             )
             rows = cur.fetchall()
             by_type: dict[str, int] = {}
@@ -498,10 +499,8 @@ class Storage:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            ph = self._ph()
             cur.execute(
-                f"SELECT endpoint, method, user_agent, status_code, duration_ms, client_ip, payment_status, request_source, timestamp FROM api_requests WHERE timestamp >= datetime('now', {ph})",
-                (f"-{days} days",)
+                f"SELECT endpoint, method, user_agent, status_code, duration_ms, client_ip, payment_status, request_source, timestamp FROM api_requests WHERE timestamp >= {self._ago(days)}"
             )
             rows = cur.fetchall()
             if not rows:
@@ -549,10 +548,8 @@ class Storage:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            ph = self._ph()
             cur.execute(
-                f"SELECT endpoint, user_agent, payment_status, duration_ms, timestamp FROM api_requests WHERE payment_status IS NOT NULL AND timestamp >= datetime('now', {ph})",
-                (f"-{days} days",)
+                f"SELECT endpoint, user_agent, payment_status, duration_ms, timestamp FROM api_requests WHERE payment_status IS NOT NULL AND timestamp >= {self._ago(days)}"
             )
             rows = cur.fetchall()
 
