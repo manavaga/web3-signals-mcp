@@ -5,11 +5,12 @@ import uvicorn
 
 
 def _resolve_port() -> int:
-    for var in ("RAILWAY_PORT", "PORT"):
-        val = os.getenv(var)
-        if val and int(val) != 5432:
-            return int(val)
-    return 8000
+    # Railway sets PORT for the service. Skip 5432 (Postgres addon).
+    port = os.getenv("PORT", "8000")
+    p = int(port)
+    if p == 5432:
+        return 8000
+    return p
 
 
 if __name__ == "__main__":
