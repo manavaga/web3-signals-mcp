@@ -14,9 +14,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from scoring.config import load_config, load_assets, AppConfig, AssetsConfig
 from scoring.pipeline import fuse_signals
 from storage.db import Storage
-from api.middleware import (setup_x402, setup_cors, setup_usage_tracking,
+from api.middleware import (setup_x402, setup_cors, setup_usage_tracking_storage,
                            setup_proxy_scheme, get_cached_signals, set_cached_signals,
-                           classify_user_agent)
+                           classify_user_agent, UsageTrackingMiddleware)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     _assets = load_assets()
     _storage = Storage(db_path=os.getenv("DB_PATH", "signals.db"))
     _start_time = time.time()
-    setup_usage_tracking(app, _storage)
+    setup_usage_tracking_storage(_storage)
     logger.info(f"Loaded config: {len(_assets.enabled_assets())} enabled assets")
     yield
 
@@ -48,6 +48,7 @@ app = FastAPI(
 setup_cors(app)
 setup_x402(app)
 setup_proxy_scheme(app)
+app.add_middleware(UsageTrackingMiddleware)
 
 
 @app.get("/", tags=["info"])

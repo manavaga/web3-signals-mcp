@@ -248,12 +248,11 @@ class ProxySchemeMiddleware(BaseHTTPMiddleware):
 # Setup functions
 # ---------------------------------------------------------------------------
 
-def setup_usage_tracking(app, storage):
-    """Wire up request logging middleware. Must be called AFTER x402 setup."""
+def setup_usage_tracking_storage(storage):
+    """Set the storage backend for usage tracking. Called during app lifespan startup."""
     global _tracking_storage
     _tracking_storage = storage
-    app.add_middleware(UsageTrackingMiddleware)
-    logger.info("Usage tracking middleware enabled")
+    logger.info("Usage tracking storage connected")
 
 
 def setup_proxy_scheme(app):
