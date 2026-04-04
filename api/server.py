@@ -14,7 +14,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from scoring.config import load_config, load_assets, AppConfig, AssetsConfig
 from scoring.pipeline import fuse_signals
 from storage.db import Storage
-from api.middleware import setup_x402, setup_cors, get_cached_signals, set_cached_signals
+from api.middleware import (setup_x402, setup_cors, setup_usage_tracking,
+                           setup_proxy_scheme, get_cached_signals, set_cached_signals,
+                           classify_user_agent)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ async def lifespan(app: FastAPI):
     _assets = load_assets()
     _storage = Storage(db_path=os.getenv("DB_PATH", "signals.db"))
     _start_time = time.time()
+    setup_usage_tracking(app, _storage)
     logger.info(f"Loaded config: {len(_assets.enabled_assets())} enabled assets")
     yield
 
@@ -44,6 +47,7 @@ app = FastAPI(
 
 setup_cors(app)
 setup_x402(app)
+setup_proxy_scheme(app)
 
 
 @app.get("/", tags=["info"])
@@ -115,6 +119,103 @@ def get_performance(days: int = Query(default=30, ge=1, le=90)):
 @app.get("/api/signal", tags=["internal"])
 def api_signal_mirror():
     return get_signals()
+
+
+@app.get("/analytics", tags=["analytics"])
+def get_analytics(days: int = Query(default=7, ge=1, le=90)):
+    """API usage analytics — request counts, client types, endpoints, daily trends."""
+    stats = _storage.load_api_analytics(days=days)
+    x402_stats = _storage.load_x402_analytics(days=days)
+
+    total_challenges = x402_stats.get("total_402_challenges", 0)
+    total_paid = x402_stats.get("total_paid_calls", 0)
+
+    return {
+        "status": "active",
+        "window_days": days,
+        "total_requests": stats.get("total_requests", 0),
+        "unique_clients": stats.get("unique_ips", 0),
+        "avg_response_ms": stats.get("avg_duration_ms", 0),
+        "by_endpoint": stats.get("by_endpoint", {}),
+        "by_client_type": stats.get("by_client_type", {}),
+        "requests_per_day": stats.get("requests_per_day", {}),
+        "by_source": stats.get("by_source", {}),
+        "x402_payments": {
+            "total_paid_calls": total_paid,
+            "estimated_revenue_usdc": x402_stats.get("estimated_revenue_usdc", 0),
+            "total_402_challenges": total_challenges,
+            "conversion_rate_pct": round(total_paid / total_challenges * 100, 1) if total_challenges > 0 else 0,
+        },
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/analytics/x402", tags=["analytics"])
+def get_x402_analytics(days: int = Query(default=30, ge=1, le=90)):
+    """x402 payment analytics — paid calls, revenue, conversion rate."""
+    stats = _storage.load_x402_analytics(days=days)
+    total_challenges = stats.get("total_402_challenges", 0)
+    total_paid = stats.get("total_paid_calls", 0)
+    price = float(os.getenv("SIGNAL_PRICE_USDC", "0.001"))
+
+    return {
+        "status": "active",
+        "window_days": days,
+        "x402_enabled": bool(os.getenv("PAY_TO")),
+        "price_per_call": f"{price} USDC",
+        "total_paid_calls": total_paid,
+        "total_402_challenges": total_challenges,
+        "total_payment_failures": stats.get("total_payment_failures", 0),
+        "conversion_rate_pct": round(total_paid / total_challenges * 100, 1) if total_challenges > 0 else 0,
+        "estimated_revenue_usdc": stats.get("estimated_revenue_usdc", 0),
+        "by_endpoint": stats.get("by_endpoint", {}),
+        "by_client_type": stats.get("by_client_type", {}),
+        "paid_per_day": stats.get("paid_per_day", {}),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/analytics/agents", tags=["analytics"])
+def get_agent_analytics(days: int = Query(default=7, ge=1, le=90)):
+    """AI agent usage analytics — who's calling the API."""
+    stats = _storage.load_api_analytics(days=days)
+    client_types = stats.get("by_client_type", {})
+
+    ai_agents = {k: v for k, v in client_types.items()
+                 if k in ("claude", "openai", "google", "langchain", "crewai",
+                          "autogpt", "mcp_client")}
+    return {
+        "window_days": days,
+        "ai_agent_calls": sum(ai_agents.values()),
+        "by_agent": ai_agents,
+        "total_requests": stats.get("total_requests", 0),
+        "ai_share_pct": round(
+            sum(ai_agents.values()) / max(stats.get("total_requests", 1), 1) * 100, 1
+        ),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/analytics/errors", tags=["analytics"])
+def get_error_analytics(days: int = Query(default=7, ge=1, le=90)):
+    """Error tracking — 5xx errors, payment failures."""
+    errors = _storage.load_error_summary(days=days)
+    return {"window_days": days, **errors}
+
+
+@app.get("/analytics/ic", tags=["analytics"])
+def get_ic_analytics():
+    """Information Coefficient per scoring dimension (from shadow optimizer)."""
+    shadow = _storage.load_kv_json("learning", "shadow_proposed_weights")
+    if not shadow:
+        return {"status": "no_data", "message": "Shadow optimizer has not run yet"}
+    return {
+        "status": "active",
+        "ics": shadow.get("ics", {}),
+        "proposed_weights": shadow.get("proposed", {}),
+        "observations": shadow.get("observations", 0),
+        "timestamp": shadow.get("timestamp"),
+    }
 
 
 @app.get("/dashboard", tags=["ui"])

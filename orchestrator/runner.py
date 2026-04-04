@@ -1,5 +1,9 @@
 # orchestrator/runner.py
-"""Scheduler — runs agents on cadence, fusion every 12h, evaluates signals."""
+"""Scheduler — runs agents on cadence, fusion every 12h, evaluates signals.
+
+After fusion, evaluates old signals (48h+) against actual prices,
+computes IC per dimension, and proposes weight updates (shadow mode).
+"""
 from __future__ import annotations
 import argparse
 import logging
@@ -98,9 +102,140 @@ def run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force
                 )
 
         logger.info(f"Fusion complete: {len(signals)} signals")
+
+        # --- Learning layer: evaluate old signals, compute IC, propose weights ---
+        _run_evaluation_cycle(config, assets_cfg, storage, signals)
+
         return now
 
     return last_fusion
+
+
+def _run_evaluation_cycle(config, assets_cfg, storage, current_signals):
+    """Evaluate 48h-old signals, compute IC, propose weight updates."""
+    try:
+        from learning.evaluation import gradient_score, compute_cwa, detect_drift
+        from learning.optimizer import compute_ic, propose_weight_update
+
+        # 1. Evaluate unevaluated snapshots (48h old)
+        for window in config.evaluation.windows_hours:
+            unevaluated = storage.load_unevaluated_snapshots(window_hours=window)
+            if not unevaluated:
+                continue
+
+            logger.info(f"Evaluating {len(unevaluated)} signals for {window}h window")
+            for snap in unevaluated:
+                current_price = _get_current_price(snap["asset"], storage)
+                if current_price is None:
+                    continue
+
+                pct_change = ((current_price - snap["price_at_signal"]) / snap["price_at_signal"]) * 100
+                asset_cfg = assets_cfg.get(snap["asset"])
+                score = gradient_score(
+                    direction=snap["signal_direction"],
+                    pct_change=pct_change,
+                    noise_pct=asset_cfg.noise_threshold_pct,
+                    strong_pct=asset_cfg.strong_threshold_pct,
+                    thresholds=config.evaluation.gradient_thresholds.model_dump(),
+                )
+                storage.save_performance_accuracy(
+                    snapshot_id=snap["id"],
+                    window_hours=window,
+                    price_at_window=current_price,
+                    gradient_score=score,
+                    pct_change=pct_change,
+                )
+                logger.debug(f"Evaluated {snap['asset']} snap#{snap['id']}: "
+                             f"pct={pct_change:.2f}%, score={score}")
+
+        # 2. Save dimension scores for IC computation
+        for asset, sig in current_signals.items():
+            dim_scores = {name: ds.score for name, ds in sig.dimensions.items()}
+            # Use a placeholder snapshot_id of 0 — will be linked later
+            storage.save_dimension_scores(
+                snapshot_id=0,
+                dimension_scores=dim_scores,
+                config_version="1.0",
+                regime=sig.regime.regime,
+            )
+
+        # 3. Compute IC + propose weight updates (shadow mode)
+        if config.learning.shadow_mode:
+            _run_shadow_optimizer(config, storage)
+
+    except Exception as e:
+        logger.error(f"Learning cycle error (non-fatal): {e}")
+
+
+def _get_current_price(asset: str, storage) -> float | None:
+    """Get current price from latest technical agent data."""
+    try:
+        data = storage.load_latest("technical_agent")
+        if data and asset in data:
+            asset_data = data[asset]
+            if isinstance(asset_data, dict):
+                return asset_data.get("close") or asset_data.get("price")
+    except Exception:
+        pass
+    try:
+        data = storage.load_latest("market_agent")
+        if data and asset in data:
+            asset_data = data[asset]
+            if isinstance(asset_data, dict):
+                return asset_data.get("price") or asset_data.get("current_price")
+    except Exception:
+        pass
+    return None
+
+
+def _run_shadow_optimizer(config, storage):
+    """Compute IC per dimension, propose weight updates, log but don't apply."""
+    from learning.optimizer import compute_ic, propose_weight_update
+
+    try:
+        # Load recent dimension scores and accuracy results
+        conn = storage._connect()
+        try:
+            cur = conn.cursor()
+            ph = storage._ph()
+            cur.execute(
+                """SELECT ic.dimension_scores, pa.gradient_score, ic.regime
+                   FROM ic_dimension_scores ic
+                   JOIN performance_accuracy pa ON ic.snapshot_id = pa.snapshot_id
+                   WHERE pa.window_hours = 48
+                   ORDER BY ic.id DESC LIMIT 100"""
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        if len(rows) < config.learning.ic_min_observations:
+            logger.info(f"Shadow optimizer: {len(rows)} observations, need {config.learning.ic_min_observations}")
+            return
+
+        import json
+        dim_scores = [json.loads(r[0]) if isinstance(r[0], str) else r[0] for r in rows]
+        outcomes = [r[1] for r in rows]
+
+        ics = compute_ic(dim_scores, outcomes)
+        if ics:
+            logger.info(f"Shadow IC: {ics}")
+            proposed = propose_weight_update(
+                current_weights=config.scoring.weights_default,
+                ics=ics,
+                step_size=config.learning.weight_step_size,
+            )
+            logger.info(f"Shadow proposed weights: {proposed}")
+            # Save proposed weights for review (shadow mode — never auto-apply)
+            storage.save_kv_json("learning", "shadow_proposed_weights", {
+                "proposed": proposed,
+                "ics": ics,
+                "observations": len(rows),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+    except Exception as e:
+        logger.error(f"Shadow optimizer error: {e}")
 
 
 def main():

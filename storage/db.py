@@ -416,6 +416,26 @@ class Storage:
         finally:
             conn.close()
 
+    def _ensure_error_table(self):
+        if "error_events" in self._created_tables:
+            return
+        pk = "SERIAL PRIMARY KEY" if self._backend == "postgres" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""CREATE TABLE IF NOT EXISTS error_events (
+                id {pk},
+                timestamp TEXT NOT NULL,
+                error_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message TEXT NOT NULL
+            )""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_error_ts ON error_events(timestamp)")
+            conn.commit()
+            self._created_tables.add("error_events")
+        finally:
+            conn.close()
+
     def save_api_request(self, endpoint: str, method: str, user_agent: str,
                           status_code: int, duration_ms: float,
                           client_ip: str = "", payment_status: Optional[str] = None,
@@ -433,5 +453,144 @@ class Storage:
                 (ts, endpoint, method, user_agent, status_code, duration_ms, client_ip, payment_status, request_source)
             )
             conn.commit()
+        finally:
+            conn.close()
+
+    def save_error_event(self, error_type: str, source: str, message: str) -> None:
+        self._ensure_error_table()
+        ts = datetime.now(timezone.utc).isoformat()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            ph = self._ph()
+            cur.execute(
+                f"INSERT INTO error_events (timestamp, error_type, source, message) VALUES ({ph},{ph},{ph},{ph})",
+                (ts, error_type, source, message)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def load_error_summary(self, days: int = 7) -> dict[str, Any]:
+        self._ensure_error_table()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            ph = self._ph()
+            cur.execute(
+                f"SELECT error_type, source, message, timestamp FROM error_events WHERE timestamp >= datetime('now', {ph}) ORDER BY timestamp DESC",
+                (f"-{days} days",)
+            )
+            rows = cur.fetchall()
+            by_type: dict[str, int] = {}
+            recent: list[dict] = []
+            for r in rows:
+                by_type[r[0]] = by_type.get(r[0], 0) + 1
+                if len(recent) < 20:
+                    recent.append({"type": r[0], "source": r[1], "message": r[2], "timestamp": r[3]})
+            return {"total_errors": len(rows), "by_type": by_type, "recent": recent}
+        finally:
+            conn.close()
+
+    def load_api_analytics(self, days: int = 7) -> dict[str, Any]:
+        """Aggregate API request analytics for the given window."""
+        self._ensure_api_table()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            ph = self._ph()
+            cur.execute(
+                f"SELECT endpoint, method, user_agent, status_code, duration_ms, client_ip, payment_status, request_source, timestamp FROM api_requests WHERE timestamp >= datetime('now', {ph})",
+                (f"-{days} days",)
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return {"total_requests": 0, "unique_ips": 0, "avg_duration_ms": 0,
+                        "by_endpoint": {}, "by_client_type": {}, "requests_per_day": {},
+                        "by_source": {}}
+
+            from api.middleware import classify_user_agent
+
+            total = len(rows)
+            ips = set()
+            durations = []
+            by_endpoint: dict[str, int] = {}
+            by_client_type: dict[str, int] = {}
+            by_day: dict[str, int] = {}
+            by_source: dict[str, int] = {}
+
+            for endpoint, method, ua, status, dur, ip, pay_status, req_source, ts in rows:
+                ips.add(ip)
+                if dur is not None:
+                    durations.append(dur)
+                by_endpoint[endpoint] = by_endpoint.get(endpoint, 0) + 1
+                client_type = classify_user_agent(ua or "")
+                by_client_type[client_type] = by_client_type.get(client_type, 0) + 1
+                day = ts[:10] if ts else "unknown"
+                by_day[day] = by_day.get(day, 0) + 1
+                src = req_source or "unknown"
+                by_source[src] = by_source.get(src, 0) + 1
+
+            return {
+                "total_requests": total,
+                "unique_ips": len(ips),
+                "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else 0,
+                "by_endpoint": by_endpoint,
+                "by_client_type": by_client_type,
+                "requests_per_day": dict(sorted(by_day.items())),
+                "by_source": by_source,
+            }
+        finally:
+            conn.close()
+
+    def load_x402_analytics(self, days: int = 30) -> dict[str, Any]:
+        """Aggregate x402 payment analytics."""
+        self._ensure_api_table()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            ph = self._ph()
+            cur.execute(
+                f"SELECT endpoint, user_agent, payment_status, duration_ms, timestamp FROM api_requests WHERE payment_status IS NOT NULL AND timestamp >= datetime('now', {ph})",
+                (f"-{days} days",)
+            )
+            rows = cur.fetchall()
+
+            total_paid = 0
+            total_402 = 0
+            total_failed = 0
+            by_endpoint: dict[str, int] = {}
+            by_client_type: dict[str, int] = {}
+            by_day: dict[str, int] = {}
+            paid_durations = []
+            price = float(os.getenv("SIGNAL_PRICE_USDC", "0.001"))
+
+            from api.middleware import classify_user_agent
+
+            for endpoint, ua, pay_status, dur, ts in rows:
+                if pay_status == "paid":
+                    total_paid += 1
+                    by_endpoint[endpoint] = by_endpoint.get(endpoint, 0) + 1
+                    ct = classify_user_agent(ua or "")
+                    by_client_type[ct] = by_client_type.get(ct, 0) + 1
+                    day = ts[:10] if ts else "unknown"
+                    by_day[day] = by_day.get(day, 0) + 1
+                    if dur is not None:
+                        paid_durations.append(dur)
+                elif pay_status == "payment_required":
+                    total_402 += 1
+                elif pay_status == "payment_failed":
+                    total_failed += 1
+
+            return {
+                "total_paid_calls": total_paid,
+                "total_402_challenges": total_402,
+                "total_payment_failures": total_failed,
+                "estimated_revenue_usdc": round(total_paid * price, 4),
+                "by_endpoint": by_endpoint,
+                "by_client_type": by_client_type,
+                "paid_per_day": dict(sorted(by_day.items())),
+                "avg_paid_latency_ms": round(sum(paid_durations) / len(paid_durations), 1) if paid_durations else 0,
+            }
         finally:
             conn.close()
