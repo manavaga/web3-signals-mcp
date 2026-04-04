@@ -33,9 +33,10 @@ class Storage:
         return "%s" if self._backend == "postgres" else "?"
 
     def _ago(self, days: int) -> str:
-        """SQL expression for 'days ago' — works on both SQLite and Postgres."""
+        """SQL expression for 'days ago' — works on both SQLite and Postgres.
+        Timestamps are stored as ISO text, so Postgres needs CAST for comparison."""
         if self._backend == "postgres":
-            return f"NOW() - INTERVAL '{days} days'"
+            return f"(NOW() - INTERVAL '{days} days')::text"
         return f"datetime('now', '-{days} days')"
 
     def _table_name(self, name: str) -> str:

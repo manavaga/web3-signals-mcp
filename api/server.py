@@ -113,7 +113,11 @@ def get_signal(asset: str):
 
 @app.get("/performance", tags=["performance"])
 def get_performance(days: int = Query(default=30, ge=1, le=90)):
-    stats = _storage.load_accuracy_stats(days=days)
+    try:
+        stats = _storage.load_accuracy_stats(days=days)
+    except Exception as e:
+        logger.error(f"Performance query error: {e}")
+        stats = {"total": 0, "windows": {}, "error": str(e)}
     return {"days": days, "stats": stats}
 
 
@@ -125,8 +129,16 @@ def api_signal_mirror():
 @app.get("/analytics", tags=["analytics"])
 def get_analytics(days: int = Query(default=7, ge=1, le=90)):
     """API usage analytics — request counts, client types, endpoints, daily trends."""
-    stats = _storage.load_api_analytics(days=days)
-    x402_stats = _storage.load_x402_analytics(days=days)
+    try:
+        stats = _storage.load_api_analytics(days=days)
+    except Exception as e:
+        logger.error(f"Analytics query error: {e}")
+        stats = {"total_requests": 0, "unique_ips": 0, "avg_duration_ms": 0, "by_endpoint": {}, "by_client_type": {}, "requests_per_day": {}, "by_source": {}}
+    try:
+        x402_stats = _storage.load_x402_analytics(days=days)
+    except Exception as e:
+        logger.error(f"x402 analytics error: {e}")
+        x402_stats = {"total_paid_calls": 0, "total_402_challenges": 0, "estimated_revenue_usdc": 0}
 
     total_challenges = x402_stats.get("total_402_challenges", 0)
     total_paid = x402_stats.get("total_paid_calls", 0)
