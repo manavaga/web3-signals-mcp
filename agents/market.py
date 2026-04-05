@@ -6,12 +6,21 @@ Data sources: CoinGecko, Alternative.me F&G, Binance, yfinance.
 from __future__ import annotations
 import json
 import logging
+import time
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 from typing import Any
+
+import requests
+import yfinance as yf
+
 from agents.base import BaseAgent
 
 logger = logging.getLogger(__name__)
+
+# Simple in-memory cache for macro data (30-minute TTL)
+_macro_cache: dict = {"data": None, "timestamp": 0}
+CACHE_TTL = 1800  # 30 minutes
 
 
 class MarketAgent(BaseAgent):
@@ -37,16 +46,32 @@ class MarketAgent(BaseAgent):
         except Exception as e:
             errors.append(f"F&G: {e}")
 
-        # Fetch macro (VIX, S&P, DXY) — optional, may fail
-        macro_status = "unknown"
+        # Fetch macro data (S&P, DXY, NASDAQ, VIX) with caching
+        macro = {}
         try:
-            macro_status = self._fetch_macro_status()
+            macro = self._fetch_macro_cached()
         except Exception as e:
             errors.append(f"Macro: {e}")
 
+        # Compute macro_status from thresholds
+        macro_status = self._compute_macro_status(macro)
+
+        # Fetch BTC dominance for breadth
+        btc_dominance = self._fetch_btc_dominance()
+        breadth_status = self._compute_breadth_status(btc_dominance)
+
         for asset, symbol in self.symbols.items():
             try:
-                result = {"fear_greed": fg_value, "macro_status": macro_status}
+                result = {
+                    "fear_greed": fg_value,
+                    "macro_status": macro_status,
+                    "sp500_change": macro.get("sp500_change", 0.0),
+                    "dxy_change": macro.get("dxy_change", 0.0),
+                    "nasdaq_change": macro.get("nasdaq_change", 0.0),
+                    "vix_roc": macro.get("vix_roc", 0.0),
+                    "btc_dominance": btc_dominance,
+                    "breadth_status": breadth_status,
+                }
 
                 # Volume from Binance klines
                 try:
@@ -74,9 +99,6 @@ class MarketAgent(BaseAgent):
                     errors.append(f"{asset} depth: {e}")
                     result["order_book_imbalance"] = 1.0
 
-                # Breadth (simplified — use CoinGecko trending)
-                result["breadth_status"] = "neutral"
-
                 results[asset] = result
             except Exception as e:
                 logger.error(f"Market agent error for {asset}: {e}")
@@ -85,19 +107,91 @@ class MarketAgent(BaseAgent):
 
         return results, errors
 
-    def _fetch_macro_status(self) -> str:
-        """Fetch VIX, S&P 500, DXY from yfinance. Returns risk status."""
+    def _fetch_macro_cached(self) -> dict:
+        """Fetch macro data (S&P, DXY, NASDAQ, VIX) with 30-min caching."""
+        now = time.time()
+        if _macro_cache["data"] and (now - _macro_cache["timestamp"]) < CACHE_TTL:
+            return _macro_cache["data"]
+
+        macro = {}
+
+        # Fetch equity/currency indices
+        for ticker, key in [("SPY", "sp500_change"), ("DX-Y.NYB", "dxy_change"), ("QQQ", "nasdaq_change")]:
+            try:
+                data = yf.download(ticker, period="5d", interval="1d", progress=False)
+                if len(data) >= 2:
+                    close = data["Close"]
+                    macro[key] = float((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100)
+                else:
+                    macro[key] = 0.0
+            except Exception as e:
+                logger.warning(f"Failed to fetch {ticker}: {e}")
+                macro[key] = 0.0
+
+        # Fetch VIX and compute rate of change
         try:
-            import yfinance as yf
-            vix = yf.Ticker("^VIX").fast_info.get("lastPrice", 20)
-            cfg = self.config
-            if vix > cfg.get("macro_vix_risk_off", 25):
-                return "risk_off"
-            elif vix < cfg.get("macro_vix_risk_on", 18):
-                return "risk_on"
+            vix_data = yf.download("^VIX", period="5d", interval="1d", progress=False)
+            if len(vix_data) >= 2:
+                vix_close = vix_data["Close"]
+                macro["vix"] = float(vix_close.iloc[-1])
+                macro["vix_roc"] = float((vix_close.iloc[-1] - vix_close.iloc[-2]) / vix_close.iloc[-2] * 100)
+            else:
+                vix_price = yf.Ticker("^VIX").fast_info.get("lastPrice", 20)
+                macro["vix"] = float(vix_price)
+                macro["vix_roc"] = 0.0
+        except Exception as e:
+            logger.warning(f"Failed to fetch VIX: {e}")
+            macro["vix"] = 20.0
+            macro["vix_roc"] = 0.0
+
+        _macro_cache["data"] = macro
+        _macro_cache["timestamp"] = now
+        return macro
+
+    def _compute_macro_status(self, macro: dict) -> str:
+        """Compute macro risk status from VIX and S&P thresholds."""
+        vix = macro.get("vix", 20.0)
+        sp500_change = macro.get("sp500_change", 0.0)
+        cfg = self.config
+
+        vix_risk_off = cfg.get("macro_vix_risk_off", 25)
+        vix_risk_on = cfg.get("macro_vix_risk_on", 18)
+        sp_risk_off = cfg.get("macro_sp_risk_off_pct", -1.5)
+        sp_risk_on = cfg.get("macro_sp_risk_on_pct", 0.5)
+
+        if vix > vix_risk_off or sp500_change < sp_risk_off:
+            return "strong_risk_off"
+        elif vix < vix_risk_on and sp500_change > sp_risk_on:
+            return "strong_risk_on"
+        elif sp500_change > 0:
+            return "risk_on"
+        elif sp500_change < 0:
+            return "risk_off"
+        else:
             return "neutral"
-        except Exception:
-            return "unknown"
+
+    def _fetch_btc_dominance(self) -> float:
+        """Fetch BTC market cap dominance from CoinGecko."""
+        try:
+            resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+            data = resp.json()["data"]
+            return float(data["market_cap_percentage"]["btc"])
+        except Exception as e:
+            logger.warning(f"Failed to fetch BTC dominance: {e}")
+            return 50.0
+
+    def _compute_breadth_status(self, btc_dominance: float) -> str:
+        """Compute breadth from BTC dominance.
+
+        High BTC dominance (>60%) means altcoins are losing ground = 'loser'.
+        Low BTC dominance (<40%) means altcoins gaining = 'gainer'.
+        """
+        if btc_dominance > 60:
+            return "loser"
+        elif btc_dominance < 40:
+            return "gainer"
+        else:
+            return "neutral"
 
     def _fetch_json(self, url: str) -> Any:
         req = Request(url, headers={"User-Agent": "web3-signals/1.0"})
