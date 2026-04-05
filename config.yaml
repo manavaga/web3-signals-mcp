@@ -57,8 +57,8 @@ scoring:
     - { name: "MODERATE SELL", min_score: 30 }
     - { name: "STRONG SELL", min_score: 0 }
   abstain:
-    bearish_min_distance: 8
-    bullish_min_distance: 10
+    bearish_min_distance: 5
+    bullish_min_distance: 6
   tier_multipliers:
     full: 1.0
     partial: 0.5
@@ -84,7 +84,7 @@ regime:
       exchange_flow: 1.0
   abstain_multiplier:
     trending: 0.7
-    ranging: 3.0
+    ranging: 1.2
     unknown: 1.0
   fg_thresholds:
     extreme_fear: 20

@@ -169,8 +169,9 @@ async function loadSignals(){
       const wts=s.weights_used||{};
       let dimHtml='';
       for(const [dn,dv] of Object.entries(dims)){
-        const sc=dv.score!=null?dv.score:50;
         const wt=wts[dn];
+        if(wt!=null && wt===0) continue;
+        const sc=dv.score!=null?dv.score:50;
         dimHtml+=`<div class="dim-row"><span class="dim-name">${dn}</span>
           <div class="bar-bg"><div class="bar-fill" style="width:${sc}%;background:${barColor(sc)}"></div></div>
           <span class="dim-val mono">${fmt(sc,1)}</span>

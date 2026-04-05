@@ -67,8 +67,10 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             dim_cfg = agent_cfg.model_dump() if agent_cfg else {}
             dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg)
 
-        # Compute raw average for weight selection
-        raw_avg = sum(ds.score for ds in dimensions.values()) / len(dimensions)
+        # Compute raw average for weight selection (exclude zero-weight dimensions)
+        active_dims = [ds for dim, ds in dimensions.items()
+                       if cfg.scoring.weights_default.get(dim, 0) > 0]
+        raw_avg = (sum(ds.score for ds in active_dims) / len(active_dims)) if active_dims else 50.0
 
         # Step 3a: Select direction-aware weights
         tier_weights = None

@@ -281,7 +281,9 @@ def score_narrative(data: Optional[dict], cfg: dict) -> DimensionScore:
         return DimensionScore(name="narrative", score=50.0, detail="no data", tier="none")
     sentiment = data.get("sentiment_score", 50.0)
     detail = data.get("detail", "narrative data")
-    return DimensionScore(name="narrative", score=_clamp(sentiment), detail=detail, tier="partial")
+    # Placeholder agents that return exactly 50 are treated as "none" tier
+    tier = "none" if sentiment == 50.0 and "placeholder" in detail.lower() else "partial"
+    return DimensionScore(name="narrative", score=_clamp(sentiment), detail=detail, tier=tier)
 
 
 # --- Exchange Flow ---
@@ -291,4 +293,6 @@ def score_exchange_flow(data: Optional[dict], cfg: dict) -> DimensionScore:
         return DimensionScore(name="exchange_flow", score=50.0, detail="no data", tier="none")
     flow_score = data.get("flow_score", 50.0)
     detail = data.get("detail", "exchange flow data")
-    return DimensionScore(name="exchange_flow", score=_clamp(flow_score), detail=detail, tier="partial")
+    # Placeholder agents that return exactly 50 are treated as "none" tier
+    tier = "none" if flow_score == 50.0 and "placeholder" in detail.lower() else "partial"
+    return DimensionScore(name="exchange_flow", score=_clamp(flow_score), detail=detail, tier=tier)
