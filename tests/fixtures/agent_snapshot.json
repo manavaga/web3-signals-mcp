@@ -10,7 +10,5 @@
   "market": {
     "BTC": {"fear_greed": 35, "volume_ratio": 1.2, "breadth_status": "neutral", "macro_status": "neutral", "order_book_imbalance": 1.1},
     "ETH": {"fear_greed": 35, "volume_ratio": 0.9, "breadth_status": "neutral", "macro_status": "neutral", "order_book_imbalance": 0.95}
-  },
-  "narrative": {},
-  "exchange_flow": {}
+  }
 }

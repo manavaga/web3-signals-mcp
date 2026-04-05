@@ -2,7 +2,7 @@
 from scoring.types import DimensionScore
 from scoring.dimensions import (
     score_technical, score_derivatives, score_market,
-    score_narrative, score_exchange_flow, detect_data_tier
+    detect_data_tier
 )
 
 

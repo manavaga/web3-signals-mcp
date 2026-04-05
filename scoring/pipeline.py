@@ -17,7 +17,7 @@ from scoring.types import DimensionScore, RegimeContext, Signal
 from scoring.config import AppConfig, AssetsConfig
 from scoring.dimensions import (
     score_technical, score_derivatives, score_market,
-    score_narrative, score_exchange_flow, detect_data_tier
+    detect_data_tier
 )
 from scoring.modifiers import (
     detect_regime, select_weights, apply_regime_shifts,
@@ -25,13 +25,11 @@ from scoring.modifiers import (
     calculate_targets
 )
 
-ALL_DIMENSIONS = ["technical", "derivatives", "market", "narrative", "exchange_flow"]
+ALL_DIMENSIONS = ["technical", "derivatives", "market"]
 SCORE_FNS = {
     "technical": score_technical,
     "derivatives": score_derivatives,
     "market": score_market,
-    "narrative": score_narrative,
-    "exchange_flow": score_exchange_flow,
 }
 
 

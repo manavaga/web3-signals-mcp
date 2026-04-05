@@ -7,20 +7,14 @@ scoring:
     technical: 0.45
     derivatives: 0.05
     market: 0.50
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bullish:
     technical: 0.40
     derivatives: 0.05
     market: 0.55
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bearish:
     technical: 0.50
     derivatives: 0.05
     market: 0.45
-    narrative: 0.00
-    exchange_flow: 0.00
   per_tier_weights:
     large_cap:
       assets: [BTC, ETH]
@@ -28,28 +22,20 @@ scoring:
         technical: 0.35
         derivatives: 0.05
         market: 0.60
-        narrative: 0.00
-        exchange_flow: 0.00
       weights_bearish:
         technical: 0.50
         derivatives: 0.05
         market: 0.45
-        narrative: 0.00
-        exchange_flow: 0.00
     small_cap:
       assets: [MATIC, UNI, FIL, NEAR, APT, ARB, SUI]
       weights_bullish:
         technical: 0.40
         derivatives: 0.05
         market: 0.55
-        narrative: 0.00
-        exchange_flow: 0.00
       weights_bearish:
         technical: 0.50
         derivatives: 0.05
         market: 0.45
-        narrative: 0.00
-        exchange_flow: 0.00
   labels:
     - { name: "STRONG BUY", min_score: 70 }
     - { name: "MODERATE BUY", min_score: 60 }
@@ -74,14 +60,10 @@ regime:
       technical: 1.2
       derivatives: 0.9
       market: 1.1
-      narrative: 0.7
-      exchange_flow: 0.8
     ranging:
       technical: 1.1
       derivatives: 0.8
       market: 1.2
-      narrative: 0.5
-      exchange_flow: 1.0
   abstain_multiplier:
     trending: 0.7
     ranging: 1.2
@@ -160,16 +142,6 @@ agents:
     macro_dxy_risk_off_pct: 0.5
     macro_dxy_risk_on_pct: -0.3
     stablecoin_inflow_threshold: 0.5
-  narrative:
-    cadence_minutes: 120
-    scoring_weights:
-      reddit: 0.40
-      cryptopanic: 0.40
-      llm_sentiment: 0.20
-  exchange_flow:
-    cadence_minutes: 120
-    order_book_depth_limit: 20
-    bid_ask_significant_ratio: 1.5
 
 evaluation:
   gradient_thresholds:

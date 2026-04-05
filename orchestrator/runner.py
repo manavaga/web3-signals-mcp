@@ -43,20 +43,6 @@ def _load_agents(config, assets_cfg):
     except ImportError:
         pass
 
-    try:
-        from agents.narrative import NarrativeAgent
-        agents.append(("narrative_agent", NarrativeAgent(config.agents.narrative.model_dump(), symbols),
-                       config.agents.narrative.cadence_minutes))
-    except ImportError:
-        pass
-
-    try:
-        from agents.exchange_flow import ExchangeFlowAgent
-        agents.append(("exchange_flow_agent", ExchangeFlowAgent(config.agents.exchange_flow.model_dump(), symbols),
-                       config.agents.exchange_flow.cadence_minutes))
-    except ImportError:
-        pass
-
     return agents
 
 
@@ -81,7 +67,7 @@ def run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force
         raw = storage.load_all_latest(agent_names)
 
         agent_data = {}
-        for name in ["technical", "derivatives", "market", "narrative", "exchange_flow"]:
+        for name in ["technical", "derivatives", "market"]:
             full_name = f"{name}_agent"
             agent_data[name] = raw.get(full_name) or {}
 

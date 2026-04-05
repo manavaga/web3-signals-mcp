@@ -11,7 +11,7 @@ from typing import Optional
 @dataclass(frozen=True)
 class DimensionScore:
     """One agent's score for one asset."""
-    name: str           # "technical", "derivatives", "market", "narrative", "exchange_flow"
+    name: str           # "technical", "derivatives", "market"
     score: float        # 0-100, clamped
     detail: str         # human-readable explanation
     tier: str           # "full", "partial", "none"

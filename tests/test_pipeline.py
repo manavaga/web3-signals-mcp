@@ -41,8 +41,6 @@ def _mock_agent_data():
                     "breadth_status": "neutral", "macro_status": "neutral",
                     "order_book_imbalance": 0.95},
         },
-        "narrative": {},
-        "exchange_flow": {},
     }
 
 

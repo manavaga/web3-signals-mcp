@@ -10,20 +10,14 @@ scoring:
     technical: 0.50
     derivatives: 0.10
     market: 0.40
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bullish:
     technical: 0.50
     derivatives: 0.10
     market: 0.40
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bearish:
     technical: 0.50
     derivatives: 0.10
     market: 0.40
-    narrative: 0.00
-    exchange_flow: 0.00
   labels:
     - { name: "STRONG BUY", min_score: 70 }
     - { name: "MODERATE BUY", min_score: 60 }
@@ -43,8 +37,8 @@ regime:
   trending_threshold: 0.08
   ranging_threshold: 0.03
   weight_shifts:
-    trending: { technical: 1.2, derivatives: 0.9, market: 1.1, narrative: 0.7, exchange_flow: 0.8 }
-    ranging: { technical: 1.1, derivatives: 0.8, market: 1.2, narrative: 0.5, exchange_flow: 1.0 }
+    trending: { technical: 1.2, derivatives: 0.9, market: 1.1 }
+    ranging: { technical: 1.1, derivatives: 0.8, market: 1.2 }
   abstain_multiplier:
     trending: 0.7
     ranging: 3.0
@@ -65,8 +59,6 @@ agents:
   technical: { cadence_minutes: 60, binance_kline_limit: 50, intervals: ["1d"], rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, macd_fast: 12, macd_slow: 26, macd_signal: 9, bb_period: 20, bb_std_dev: 2, bb_squeeze_threshold: 0.04, volume_ma_period: 20, volume_spike_threshold: 2.0, volume_elevated_threshold: 1.5, volume_low_threshold: 0.5, atr_period: 14, scoring_weights: { rsi: 0.25, macd: 0.25, bollinger: 0.20, trend: 0.30 }, volume_spike_bonus: 10 }
   derivatives: { cadence_minutes: 60, scoring_weights: { long_short: 0.20, funding: 0.25, open_interest: 0.15, liquidations: 0.20, taker_ratio: 0.20 }, ls_overcrowded: 0.65, ls_shorts_dominating: 0.55, ls_contrarian: 0.45, funding_extreme: 0.001, funding_extreme_negative: 0.005, oi_change_threshold_pct: 5.0, liq_imbalance_threshold: 0.3 }
   market: { cadence_minutes: 120, scoring_weights: { fear_greed: 0.25, volume: 0.15, breadth: 0.15, macro: 0.20, order_book: 0.25 }, volume_spike_threshold: 2.0, macro_vix_risk_off: 25, macro_vix_risk_on: 18, macro_sp_risk_off_pct: -1.5, macro_sp_risk_on_pct: 0.5, macro_dxy_risk_off_pct: 0.5, macro_dxy_risk_on_pct: -0.3, stablecoin_inflow_threshold: 0.5 }
-  narrative: { cadence_minutes: 120, scoring_weights: { reddit: 0.40, cryptopanic: 0.40, llm_sentiment: 0.20 } }
-  exchange_flow: { cadence_minutes: 120, order_book_depth_limit: 20, bid_ask_significant_ratio: 1.5 }
 evaluation:
   gradient_thresholds: { strong_correct: 1.0, correct: 0.7, weak_correct: 0.4, weak_wrong: 0.2, wrong: 0.0 }
   windows_hours: [24, 48]
@@ -98,20 +90,14 @@ scoring:
     technical: 0.50
     derivatives: 0.50
     market: 0.50
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bullish:
     technical: 0.50
     derivatives: 0.10
     market: 0.40
-    narrative: 0.00
-    exchange_flow: 0.00
   weights_bearish:
     technical: 0.50
     derivatives: 0.10
     market: 0.40
-    narrative: 0.00
-    exchange_flow: 0.00
   labels:
     - { name: "STRONG BUY", min_score: 70 }
     - { name: "NEUTRAL", min_score: 42 }
@@ -124,8 +110,8 @@ regime:
   trending_threshold: 0.08
   ranging_threshold: 0.03
   weight_shifts:
-    trending: { technical: 1.0, derivatives: 1.0, market: 1.0, narrative: 1.0, exchange_flow: 1.0 }
-    ranging: { technical: 1.0, derivatives: 1.0, market: 1.0, narrative: 1.0, exchange_flow: 1.0 }
+    trending: { technical: 1.0, derivatives: 1.0, market: 1.0 }
+    ranging: { technical: 1.0, derivatives: 1.0, market: 1.0 }
   abstain_multiplier: { trending: 0.7, ranging: 3.0, unknown: 1.0 }
   fg_thresholds: { extreme_fear: 20, fear: 40, neutral: 60, greed: 80 }
 targets:
@@ -143,8 +129,6 @@ agents:
   technical: { cadence_minutes: 60, binance_kline_limit: 50, intervals: ["1d"], rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, macd_fast: 12, macd_slow: 26, macd_signal: 9, bb_period: 20, bb_std_dev: 2, bb_squeeze_threshold: 0.04, volume_ma_period: 20, volume_spike_threshold: 2.0, volume_elevated_threshold: 1.5, volume_low_threshold: 0.5, atr_period: 14, scoring_weights: { rsi: 0.25, macd: 0.25, bollinger: 0.20, trend: 0.30 }, volume_spike_bonus: 10 }
   derivatives: { cadence_minutes: 60, scoring_weights: { long_short: 0.20, funding: 0.25, open_interest: 0.15, liquidations: 0.20, taker_ratio: 0.20 }, ls_overcrowded: 0.65, ls_shorts_dominating: 0.55, ls_contrarian: 0.45, funding_extreme: 0.001, funding_extreme_negative: 0.005, oi_change_threshold_pct: 5.0, liq_imbalance_threshold: 0.3 }
   market: { cadence_minutes: 120, scoring_weights: { fear_greed: 0.25, volume: 0.15, breadth: 0.15, macro: 0.20, order_book: 0.25 }, volume_spike_threshold: 2.0, macro_vix_risk_off: 25, macro_vix_risk_on: 18, macro_sp_risk_off_pct: -1.5, macro_sp_risk_on_pct: 0.5, macro_dxy_risk_off_pct: 0.5, macro_dxy_risk_on_pct: -0.3, stablecoin_inflow_threshold: 0.5 }
-  narrative: { cadence_minutes: 120, scoring_weights: { reddit: 0.40, cryptopanic: 0.40, llm_sentiment: 0.20 } }
-  exchange_flow: { cadence_minutes: 120, order_book_depth_limit: 20, bid_ask_significant_ratio: 1.5 }
 evaluation:
   gradient_thresholds: { strong_correct: 1.0, correct: 0.7, weak_correct: 0.4, weak_wrong: 0.2, wrong: 0.0 }
   windows_hours: [24, 48]

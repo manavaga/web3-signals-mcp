@@ -59,9 +59,9 @@ def root():
     return {
         "name": "Web3 Signals API",
         "version": "2.0.0",
-        "description": "AI-powered crypto signal intelligence — 5 agents, 20 assets, x402 micropayments",
+        "description": "AI-powered crypto signal intelligence — 3 agents, 20 assets, x402 micropayments",
         "assets": _assets.enabled_assets() if _assets else [],
-        "agents": ["technical", "derivatives", "market", "narrative", "exchange_flow"],
+        "agents": ["technical", "derivatives", "market"],
         "endpoints": {
             "signals": {
                 "/signal": "All asset signals with dimensions, targets, regime",
@@ -110,8 +110,7 @@ def health():
     uptime = int(time.time() - _start_time)
     # Check agent data freshness
     agent_status = {}
-    agent_names = ["technical_agent", "derivatives_agent", "market_agent",
-                   "narrative_agent", "exchange_flow_agent"]
+    agent_names = ["technical_agent", "derivatives_agent", "market_agent"]
     try:
         raw = _storage.load_all_latest(agent_names) if _storage else {}
         for name in agent_names:
@@ -144,12 +143,11 @@ def get_signals():
     if cached:
         return cached
 
-    agent_names = ["technical_agent", "derivatives_agent", "market_agent",
-                   "narrative_agent", "exchange_flow_agent"]
+    agent_names = ["technical_agent", "derivatives_agent", "market_agent"]
     raw = _storage.load_all_latest(agent_names)
 
     agent_data = {}
-    for name in ["technical", "derivatives", "market", "narrative", "exchange_flow"]:
+    for name in ["technical", "derivatives", "market"]:
         full_name = f"{name}_agent"
         agent_data[name] = raw.get(full_name) or {}
 
@@ -318,7 +316,7 @@ def agent_discovery():
     return {
         "name": "Web3 Signals",
         "description": "AI-powered crypto signal intelligence for 20 assets. "
-                       "5 independent agents (technical, derivatives, market, narrative, exchange flow) "
+                       "3 independent agents (technical, derivatives, market) "
                        "produce directional signals with target prices and stop losses. "
                        "Monetized via x402 micropayments ($0.001 USDC per call on Base).",
         "version": "2.0.0",
@@ -353,7 +351,7 @@ def llms_txt():
 > AI-powered crypto signal intelligence for 20 assets
 
 ## What This API Does
-Produces directional trading signals (BUY/SELL/NEUTRAL) for crypto assets by fusing data from 5 independent AI agents: technical analysis, derivatives data, market metrics, narrative sentiment, and exchange flow analysis. Each signal includes target prices, stop losses, confidence levels, and dimensional breakdowns.
+Produces directional trading signals (BUY/SELL/NEUTRAL) for crypto assets by fusing data from 3 independent AI agents: technical analysis, derivatives data, and market metrics. Each signal includes target prices, stop losses, confidence levels, and dimensional breakdowns.
 
 ## Endpoints
 

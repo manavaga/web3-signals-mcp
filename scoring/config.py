@@ -130,21 +130,10 @@ class MarketAgentConfig(BaseModel):
     macro_dxy_risk_on_pct: float
     stablecoin_inflow_threshold: float
 
-class NarrativeAgentConfig(BaseModel):
-    cadence_minutes: int
-    scoring_weights: dict[str, float]
-
-class ExchangeFlowAgentConfig(BaseModel):
-    cadence_minutes: int
-    order_book_depth_limit: int
-    bid_ask_significant_ratio: float
-
 class AgentsConfig(BaseModel):
     technical: TechnicalAgentConfig
     derivatives: DerivativesAgentConfig
     market: MarketAgentConfig
-    narrative: NarrativeAgentConfig
-    exchange_flow: ExchangeFlowAgentConfig
 
 
 # --- Evaluation ---
