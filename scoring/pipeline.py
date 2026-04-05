@@ -54,16 +54,63 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
         ranging_threshold=cfg.regime.ranging_threshold,
     )
 
+    # --- Step 1: Score all dimensions for all assets ---
+    all_dimensions: dict[str, dict[str, DimensionScore]] = {}
     for asset in enabled:
-        asset_entry = assets_cfg.get(asset)
-
-        # Step 1: Score all dimensions
         dimensions: dict[str, DimensionScore] = {}
         for dim in ALL_DIMENSIONS:
             dim_data = (agent_data.get(dim) or {}).get(asset)
             agent_cfg = getattr(cfg.agents, dim, None)
             dim_cfg = agent_cfg.model_dump() if agent_cfg else {}
             dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg)
+        all_dimensions[asset] = dimensions
+
+    # --- Step 1b: Compute relative features (asset vs BTC) ---
+    btc_tech_data = (agent_data.get("technical") or {}).get("BTC", {})
+    btc_deriv_data = (agent_data.get("derivatives") or {}).get("BTC", {})
+    has_btc_ref = bool(btc_tech_data)
+
+    relative_metadata: dict[str, dict] = {}  # asset -> relative features
+
+    if has_btc_ref:
+        btc_rsi = btc_tech_data.get("rsi_14", 50.0)
+        btc_roc = btc_tech_data.get("roc_7d", 0.0)
+        btc_funding = btc_deriv_data.get("funding_rate", 0.0)
+
+        for asset in enabled:
+            if asset == "BTC":
+                continue
+
+            asset_tech_data = (agent_data.get("technical") or {}).get(asset, {})
+            asset_deriv_data = (agent_data.get("derivatives") or {}).get(asset, {})
+
+            relative_momentum = asset_tech_data.get("rsi_14", 50.0) - btc_rsi
+            relative_strength = asset_tech_data.get("roc_7d", 0.0) - btc_roc
+            relative_funding = asset_deriv_data.get("funding_rate", 0.0) - btc_funding
+
+            # Adjust technical dimension score by relative momentum
+            # Max adjustment: +/-5 points
+            rel_adjustment = min(max(relative_momentum * 0.15, -5), 5)
+
+            old_dim = all_dimensions[asset]["technical"]
+            new_tech_score = max(0.0, min(100.0, old_dim.score + rel_adjustment))
+            all_dimensions[asset]["technical"] = DimensionScore(
+                name=old_dim.name,
+                score=new_tech_score,
+                detail=old_dim.detail,
+                tier=old_dim.tier,
+            )
+
+            relative_metadata[asset] = {
+                "relative_momentum": relative_momentum,
+                "relative_strength": relative_strength,
+                "relative_funding": relative_funding,
+                "relative_tech_adjustment": round(rel_adjustment, 4),
+            }
+
+    for asset in enabled:
+        asset_entry = assets_cfg.get(asset)
+        dimensions = all_dimensions[asset]
 
         # Compute raw average for weight selection (exclude zero-weight dimensions)
         active_dims = [ds for dim, ds in dimensions.items()
@@ -159,6 +206,7 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             targets=targets,
             momentum=momentum,
             abstained=abstained,
+            metadata=relative_metadata.get(asset, {}),
         )
 
     return signals

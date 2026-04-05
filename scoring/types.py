@@ -54,6 +54,7 @@ class Signal:
     targets: Optional[TargetLevels]           # None for NEUTRAL / INSUFFICIENT EDGE
     momentum: str                             # "improving", "degrading", "stable"
     abstained: bool                           # True if INSUFFICIENT EDGE
+    metadata: dict = field(default_factory=dict)  # relative features, IC analysis data
 
     def to_dict(self) -> dict:
         """Serialize for API response."""
@@ -85,4 +86,6 @@ class Signal:
                 "confidence": self.targets.confidence,
                 "timeframe_hours": self.targets.timeframe_hours,
             }
+        if self.metadata:
+            d["metadata"] = self.metadata
         return d

@@ -109,3 +109,102 @@ def test_fuse_with_prev_scores_momentum():
 
     # BTC should show momentum change
     assert signals2["BTC"].momentum in ["improving", "degrading", "stable"]
+
+
+# --- Relative features tests ---
+
+def _mock_agent_data_for_relative():
+    """Agent data where ETH RSI is much higher than BTC RSI."""
+    return {
+        "technical": {
+            "BTC": {"rsi_14": 50, "macd_histogram": 0.0, "bb_position": 0.5,
+                    "price": 84000, "ma7": 83000, "ma30": 82000,
+                    "volume_status": "normal", "atr_14": 2100,
+                    "roc_7d": 2.0},
+            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_position": 0.5,
+                    "price": 3200, "ma7": 3250, "ma30": 3100,
+                    "volume_status": "normal", "atr_14": 120,
+                    "roc_7d": 5.0},
+        },
+        "derivatives": {
+            "BTC": {"long_short_ratio": 0.58, "funding_rate": 0.0001,
+                    "oi_change_pct": 2.0, "liq_imbalance": 0.0,
+                    "taker_buy_sell_ratio": 1.05},
+            "ETH": {"long_short_ratio": 0.62, "funding_rate": 0.0005,
+                    "oi_change_pct": -1.0, "liq_imbalance": 0.1,
+                    "taker_buy_sell_ratio": 0.98},
+        },
+        "market": {
+            "BTC": {"fear_greed": 50, "volume_ratio": 1.0,
+                    "breadth_status": "neutral", "macro_status": "neutral",
+                    "order_book_imbalance": 1.0},
+            "ETH": {"fear_greed": 50, "volume_ratio": 1.0,
+                    "breadth_status": "neutral", "macro_status": "neutral",
+                    "order_book_imbalance": 1.0},
+        },
+    }
+
+
+def test_relative_features_adjust_non_btc():
+    """ETH with RSI 70 when BTC RSI is 50 -> ETH tech score gets boost."""
+    cfg = _get_config()
+    assets = _get_assets()
+    agent_data = _mock_agent_data_for_relative()
+
+    signals = fuse_signals(agent_data, cfg, assets)
+
+    if "ETH" in signals:
+        sig = signals["ETH"]
+        # relative_momentum = 70 - 50 = 20
+        # adjustment = 20 * 0.15 = 3.0 (clamped to ±5)
+        assert sig.metadata.get("relative_momentum") == 20.0
+        assert sig.metadata.get("relative_strength") == 3.0  # 5.0 - 2.0
+        assert abs(sig.metadata.get("relative_funding", 999) - 0.0004) < 0.0001
+
+
+def test_relative_features_btc_unchanged():
+    """BTC's own scores should not be adjusted by relative features."""
+    cfg = _get_config()
+    assets = _get_assets()
+    agent_data = _mock_agent_data_for_relative()
+
+    # Run once without relative features (baseline)
+    # BTC should have no relative metadata
+    signals = fuse_signals(agent_data, cfg, assets)
+
+    if "BTC" in signals:
+        sig = signals["BTC"]
+        assert "relative_momentum" not in sig.metadata
+        assert "relative_strength" not in sig.metadata
+        assert "relative_funding" not in sig.metadata
+
+
+def test_relative_features_no_btc_data():
+    """If BTC data is missing, no crash, no adjustment."""
+    cfg = _get_config()
+    assets = _get_assets()
+    agent_data = {
+        "technical": {
+            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_position": 0.5,
+                    "price": 3200, "ma7": 3250, "ma30": 3100,
+                    "volume_status": "normal", "atr_14": 120},
+        },
+        "derivatives": {
+            "ETH": {"long_short_ratio": 0.62, "funding_rate": 0.0003,
+                    "oi_change_pct": -1.0, "liq_imbalance": 0.1,
+                    "taker_buy_sell_ratio": 0.98},
+        },
+        "market": {
+            "ETH": {"fear_greed": 50, "volume_ratio": 1.0,
+                    "breadth_status": "neutral", "macro_status": "neutral",
+                    "order_book_imbalance": 1.0},
+        },
+    }
+
+    # Should not crash
+    signals = fuse_signals(agent_data, cfg, assets)
+
+    if "ETH" in signals:
+        sig = signals["ETH"]
+        # No relative features since BTC data is missing
+        assert "relative_momentum" not in sig.metadata
