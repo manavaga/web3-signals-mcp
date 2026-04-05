@@ -17,10 +17,11 @@ BINANCE_FUTURES = "https://fapi.binance.com"
 
 
 class DerivativesAgent(BaseAgent):
-    def __init__(self, config: dict, symbols: dict[str, str]):
+    def __init__(self, config: dict, symbols: dict[str, str], storage=None):
         super().__init__("derivatives_agent")
         self.config = config
         self.symbols = symbols
+        self.storage = storage
 
     def empty_data(self) -> dict[str, Any]:
         return {asset: {} for asset in self.symbols}
@@ -54,8 +55,21 @@ class DerivativesAgent(BaseAgent):
                 try:
                     data = self._fetch_json(f"{BINANCE_FUTURES}/fapi/v1/openInterest?symbol={symbol}")
                     if data:
-                        result["open_interest"] = float(data.get("openInterest", 0))
-                    result["oi_change_pct"] = 0.0  # Need previous to compute change
+                        current_oi = float(data.get("openInterest", 0))
+                        result["open_interest"] = current_oi
+
+                        # Compute OI change % using stored previous value
+                        prev_oi = None
+                        if self.storage:
+                            prev_oi = self.storage.load_kv("derivatives", f"prev_oi_{symbol}")
+                            self.storage.save_kv("derivatives", f"prev_oi_{symbol}", current_oi)
+
+                        if prev_oi and prev_oi > 0:
+                            result["oi_change_pct"] = ((current_oi - prev_oi) / prev_oi) * 100
+                        else:
+                            result["oi_change_pct"] = 0.0
+                    else:
+                        result["oi_change_pct"] = 0.0
                 except Exception as e:
                     errors.append(f"{asset} OI: {e}")
                     result["oi_change_pct"] = 0.0
@@ -82,6 +96,11 @@ class DerivativesAgent(BaseAgent):
                 except Exception as e:
                     errors.append(f"{asset} liq: {e}")
                     result["liq_imbalance"] = 0.0
+
+                # OI-weighted funding rate
+                funding_rate = result.get("funding_rate", 0.0)
+                open_interest = result.get("open_interest", 0.0)
+                result["oi_weighted_funding"] = funding_rate * open_interest
 
                 results[asset] = result
             except Exception as e:

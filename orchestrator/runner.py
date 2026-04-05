@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 SIGNAL_CADENCE_HOURS = int(os.getenv("SIGNAL_CADENCE_HOURS", "12"))
 
 
-def _load_agents(config, assets_cfg):
+def _load_agents(config, assets_cfg, storage=None):
     symbols = {a: assets_cfg.get(a).binance_symbol for a in assets_cfg.enabled_assets()}
     agents = []
 
@@ -30,7 +30,7 @@ def _load_agents(config, assets_cfg):
 
     try:
         from agents.derivatives import DerivativesAgent
-        agents.append(("derivatives_agent", DerivativesAgent(config.agents.derivatives.model_dump(), symbols),
+        agents.append(("derivatives_agent", DerivativesAgent(config.agents.derivatives.model_dump(), symbols, storage=storage),
                        config.agents.derivatives.cadence_minutes))
     except ImportError:
         pass
@@ -238,7 +238,7 @@ def main():
     assets_cfg = load_assets()
     storage = Storage(db_path=args.db)
 
-    agents = _load_agents(config, assets_cfg)
+    agents = _load_agents(config, assets_cfg, storage=storage)
     last_runs = {}
     last_fusion = 0.0
 
