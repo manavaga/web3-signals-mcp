@@ -71,6 +71,28 @@ def _trend_score(price: float, ma7: float, ma30: float) -> float:
     return 50.0
 
 
+def _obv_score(obv_slope: float) -> float:
+    return 50 + min(max(obv_slope * 400, -40), 40)
+
+
+def _mfi_score(mfi: float) -> float:
+    return 90 - (mfi / 100) * 80
+
+
+def _roc_score(roc_7d: float) -> float:
+    return 50 + min(max(roc_7d * 3, -35), 35)
+
+
+def _squeeze_score(squeeze_on: bool, squeeze_momentum: float) -> float:
+    if squeeze_on:
+        return 50.0
+    return 50 + min(max(squeeze_momentum * 5, -30), 30)
+
+
+def _stochrsi_score(stoch_rsi: float) -> float:
+    return 90 - stoch_rsi * 80
+
+
 def score_technical(data: Optional[dict], cfg: dict) -> DimensionScore:
     if not data:
         return DimensionScore(name="technical", score=50.0, detail="no data", tier="none")
@@ -83,7 +105,19 @@ def score_technical(data: Optional[dict], cfg: dict) -> DimensionScore:
     ma30 = data.get("ma30", price)
     vol_status = data.get("volume_status", "normal")
 
-    weights = cfg.get("scoring_weights", {"rsi": 0.25, "macd": 0.25, "bollinger": 0.20, "trend": 0.30})
+    # New indicator values (with safe defaults for backward compatibility)
+    obv_slope = data.get("obv_slope", 0.0)
+    mfi = data.get("mfi", 50.0)
+    roc_7d = data.get("roc_7d", 0.0)
+    squeeze_on = data.get("squeeze_on", False)
+    squeeze_momentum = data.get("squeeze_momentum", 0.0)
+    stoch_rsi = data.get("stoch_rsi", 0.5)
+
+    default_weights = {
+        "rsi": 0.10, "macd": 0.10, "bollinger": 0.10, "trend": 0.15,
+        "obv": 0.15, "mfi": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "stoch_rsi": 0.05,
+    }
+    weights = cfg.get("scoring_weights", default_weights)
     oversold = cfg.get("rsi_oversold", 30)
     overbought = cfg.get("rsi_overbought", 70)
     spike_bonus = cfg.get("volume_spike_bonus", 10)
@@ -92,12 +126,22 @@ def score_technical(data: Optional[dict], cfg: dict) -> DimensionScore:
     macd_s = _clamp(_macd_score(hist, price), 10, 90)
     bb_s = _clamp(_bb_score(bb_pos), 10, 90)
     trend_s = _trend_score(price, ma7, ma30)
+    obv_s = _clamp(_obv_score(obv_slope), 10, 90)
+    mfi_s = _clamp(_mfi_score(mfi), 10, 90)
+    roc_s = _clamp(_roc_score(roc_7d), 15, 85)
+    sq_s = _clamp(_squeeze_score(squeeze_on, squeeze_momentum), 20, 80)
+    stochrsi_s = _clamp(_stochrsi_score(stoch_rsi), 10, 90)
 
     components = [
-        (rsi_s, weights.get("rsi", 0.25)),
-        (macd_s, weights.get("macd", 0.25)),
-        (bb_s, weights.get("bollinger", 0.20)),
-        (trend_s, weights.get("trend", 0.30)),
+        (rsi_s, weights.get("rsi", 0.10)),
+        (macd_s, weights.get("macd", 0.10)),
+        (bb_s, weights.get("bollinger", 0.10)),
+        (trend_s, weights.get("trend", 0.15)),
+        (obv_s, weights.get("obv", 0.15)),
+        (mfi_s, weights.get("mfi", 0.15)),
+        (roc_s, weights.get("roc_7d", 0.10)),
+        (sq_s, weights.get("squeeze", 0.10)),
+        (stochrsi_s, weights.get("stoch_rsi", 0.05)),
     ]
     total_w = sum(w for _, w in components)
     score = sum(s * w for s, w in components) / total_w if total_w > 0 else 50.0
@@ -106,7 +150,10 @@ def score_technical(data: Optional[dict], cfg: dict) -> DimensionScore:
         score += spike_bonus
 
     score = _clamp(score)
-    detail = f"RSI={rsi:.0f}, MACD_hist={hist:.4f}, BB_pos={bb_pos:.2f}, trend={'up' if price > ma30 else 'down'}"
+    detail = (f"RSI={rsi:.0f}, MACD_hist={hist:.4f}, BB_pos={bb_pos:.2f}, "
+              f"trend={'up' if price > ma30 else 'down'}, "
+              f"OBV_slope={obv_slope:.3f}, MFI={mfi:.0f}, ROC_7d={roc_7d:.1f}%, "
+              f"StochRSI={stoch_rsi:.2f}, squeeze={'on' if squeeze_on else 'off'}")
     tier = "full" if rsi != 50 or hist != 0 else "partial"
 
     return DimensionScore(name="technical", score=score, detail=detail, tier=tier)

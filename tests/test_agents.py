@@ -329,6 +329,136 @@ def test_market_macro_status_risk_off():
     assert results["BTC"]["macro_status"] == "strong_risk_off"
 
 
+# --- Technical agent indicator computation tests ---
+
+from agents.technical import TechnicalAgent
+
+
+def _make_technical_agent(limit=60):
+    config = {"binance_kline_limit": limit}
+    symbols = {"BTC": "BTCUSDT"}
+    return TechnicalAgent(config, symbols)
+
+
+def _generate_candles(n, base_close=100.0, trend=0.5):
+    """Generate n candles with a slight uptrend."""
+    candles = []
+    for i in range(n):
+        c = base_close + i * trend
+        candles.append({
+            "open": c - 0.5, "high": c + 2.0, "low": c - 2.0,
+            "close": c, "volume": 1000.0 + i * 10,
+        })
+    return candles
+
+
+def test_technical_obv_computation():
+    """OBV slope should be positive for uptrending prices."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+    closes = [c["close"] for c in candles]
+    volumes = [c["volume"] for c in candles]
+    obv_slope = agent._calc_obv_slope(closes, volumes)
+    assert obv_slope > 0, f"OBV slope should be positive for uptrend, got {obv_slope}"
+
+
+def test_technical_obv_flat():
+    """OBV slope should be near 0 for flat prices."""
+    agent = _make_technical_agent()
+    closes = [100.0] * 60
+    volumes = [1000.0] * 60
+    obv_slope = agent._calc_obv_slope(closes, volumes)
+    assert obv_slope == 0, f"OBV slope should be 0 for flat prices, got {obv_slope}"
+
+
+def test_technical_mfi_computation():
+    """MFI should return a value between 0 and 100."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    closes = [c["close"] for c in candles]
+    volumes = [c["volume"] for c in candles]
+    mfi = agent._calc_mfi(highs, lows, closes, volumes, 14)
+    assert 0 <= mfi <= 100, f"MFI should be 0-100, got {mfi}"
+
+
+def test_technical_roc_computation():
+    """ROC should be positive for uptrending prices."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=1.0)
+    closes = [c["close"] for c in candles]
+    roc_1d, roc_7d, roc_30d = agent._calc_roc(closes)
+    assert roc_1d > 0, f"ROC 1d should be positive, got {roc_1d}"
+    assert roc_7d > 0, f"ROC 7d should be positive, got {roc_7d}"
+    assert roc_30d > 0, f"ROC 30d should be positive, got {roc_30d}"
+
+
+def test_technical_stoch_rsi():
+    """Stochastic RSI should be between 0 and 1."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+    closes = [c["close"] for c in candles]
+    stoch_rsi = agent._calc_stoch_rsi(closes, 14)
+    assert 0 <= stoch_rsi <= 1, f"StochRSI should be 0-1, got {stoch_rsi}"
+
+
+def test_technical_squeeze():
+    """Squeeze detection should return a bool and float momentum."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    closes = [c["close"] for c in candles]
+    squeeze_on, squeeze_momentum = agent._calc_squeeze(highs, lows, closes, 20, 2)
+    assert isinstance(squeeze_on, bool)
+    assert isinstance(squeeze_momentum, float)
+
+
+def test_technical_zscores():
+    """Z-scores should return floats, 0 if insufficient data."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+    closes = [c["close"] for c in candles]
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    zscores = agent._calc_zscores(closes, highs, lows, 14, 12, 26, 9, 20, 2)
+    assert "rsi_zscore" in zscores
+    assert "macd_zscore" in zscores
+    assert "bb_zscore" in zscores
+    for key in ["rsi_zscore", "macd_zscore", "bb_zscore"]:
+        assert isinstance(zscores[key], float), f"{key} should be float"
+
+
+def test_technical_zscores_insufficient_data():
+    """Z-scores should return 0 with fewer than 50 candles."""
+    agent = _make_technical_agent()
+    candles = _generate_candles(20, base_close=100, trend=0.5)
+    closes = [c["close"] for c in candles]
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    zscores = agent._calc_zscores(closes, highs, lows, 14, 12, 26, 9, 20, 2)
+    assert zscores["rsi_zscore"] == 0
+    assert zscores["macd_zscore"] == 0
+    assert zscores["bb_zscore"] == 0
+
+
+def test_technical_collect_includes_new_fields():
+    """collect() should include all new indicator fields in its output."""
+    agent = _make_technical_agent(limit=60)
+    candles = _generate_candles(60, base_close=100, trend=0.5)
+
+    with patch.object(agent, "_fetch_klines", return_value=candles):
+        results, errors = agent.collect()
+
+    btc = results["BTC"]
+    new_fields = ["obv_slope", "mfi", "roc_1d", "roc_7d", "roc_30d",
+                  "stoch_rsi", "squeeze_on", "squeeze_momentum",
+                  "rsi_zscore", "macd_zscore", "bb_zscore"]
+    for field in new_fields:
+        assert field in btc, f"Missing field: {field}"
+
+
 def test_market_vix_rate_of_change():
     """VIX RoC should be computed as % change from previous close."""
     agent = _make_market_agent()

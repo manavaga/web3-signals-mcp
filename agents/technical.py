@@ -29,7 +29,7 @@ class TechnicalAgent(BaseAgent):
     def collect(self) -> tuple[dict[str, Any], list[str]]:
         results = {}
         errors = []
-        limit = self.config.get("binance_kline_limit", 50)
+        limit = max(self.config.get("binance_kline_limit", 60), 60)  # Need >=60 for z-scores
 
         for asset, symbol in self.symbols.items():
             try:
@@ -55,6 +55,24 @@ class TechnicalAgent(BaseAgent):
                 atr = self._calc_atr(highs, lows, closes, self.config.get("atr_period", 14))
                 vol_profile = self._calc_volume_profile(volumes, self.config.get("volume_ma_period", 20))
                 pivots = self._calc_pivots(highs[-1], lows[-1], closes[-1])
+
+                # New indicators
+                obv_slope = self._calc_obv_slope(closes, volumes)
+                mfi = self._calc_mfi(highs, lows, closes, volumes,
+                                     self.config.get("mfi_period", 14))
+                roc_1d, roc_7d, roc_30d = self._calc_roc(closes)
+                stoch_rsi = self._calc_stoch_rsi(closes, self.config.get("rsi_period", 14))
+                bb_period = self.config.get("bb_period", 20)
+                bb_std = self.config.get("bb_std_dev", 2)
+                squeeze_on, squeeze_momentum = self._calc_squeeze(
+                    highs, lows, closes, bb_period, bb_std)
+                zscores = self._calc_zscores(
+                    closes, highs, lows,
+                    self.config.get("rsi_period", 14),
+                    self.config.get("macd_fast", 12),
+                    self.config.get("macd_slow", 26),
+                    self.config.get("macd_signal", 9),
+                    bb_period, bb_std)
 
                 price = closes[-1]
                 ma7 = sum(closes[-7:]) / 7
@@ -83,6 +101,18 @@ class TechnicalAgent(BaseAgent):
                     "r2": pivots["r2"],
                     "s1": pivots["s1"],
                     "s2": pivots["s2"],
+                    # New indicators
+                    "obv_slope": obv_slope,
+                    "mfi": mfi,
+                    "roc_1d": roc_1d,
+                    "roc_7d": roc_7d,
+                    "roc_30d": roc_30d,
+                    "stoch_rsi": stoch_rsi,
+                    "squeeze_on": squeeze_on,
+                    "squeeze_momentum": squeeze_momentum,
+                    "rsi_zscore": zscores["rsi_zscore"],
+                    "macd_zscore": zscores["macd_zscore"],
+                    "bb_zscore": zscores["bb_zscore"],
                 }
             except Exception as e:
                 logger.error(f"Technical agent error for {asset}: {e}")
@@ -183,6 +213,145 @@ class TechnicalAgent(BaseAgent):
         else:
             status = "normal"
         return {"ratio": ratio, "status": status}
+
+    # --- New indicators ---
+
+    def _calc_obv_slope(self, closes: list[float], volumes: list[float]) -> float:
+        """On-Balance Volume slope (normalized rate of change over last 5 periods)."""
+        obv = 0
+        obv_values = []
+        for i in range(len(closes)):
+            if i == 0:
+                obv_values.append(0)
+                continue
+            if closes[i] > closes[i - 1]:
+                obv += volumes[i]
+            elif closes[i] < closes[i - 1]:
+                obv -= volumes[i]
+            obv_values.append(obv)
+        if len(obv_values) >= 6 and obv_values[-6] != 0:
+            return (obv_values[-1] - obv_values[-6]) / abs(obv_values[-6])
+        return 0.0
+
+    def _calc_mfi(self, highs: list[float], lows: list[float],
+                  closes: list[float], volumes: list[float], period: int = 14) -> float:
+        """Money Flow Index (0-100, volume-weighted RSI)."""
+        if len(closes) < period + 1:
+            return 50.0
+        typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+        raw_money_flow = [tp * v for tp, v in zip(typical_prices, volumes)]
+        positive_flow = sum(
+            raw_money_flow[i] for i in range(-period, 0)
+            if typical_prices[i] > typical_prices[i - 1]
+        )
+        negative_flow = sum(
+            raw_money_flow[i] for i in range(-period, 0)
+            if typical_prices[i] <= typical_prices[i - 1]
+        )
+        mfi = 100 - (100 / (1 + positive_flow / max(negative_flow, 1e-10)))
+        return mfi
+
+    def _calc_roc(self, closes: list[float]) -> tuple[float, float, float]:
+        """Rate of Change at 1d, 7d, 30d."""
+        roc_1d = (closes[-1] - closes[-2]) / closes[-2] * 100 if len(closes) >= 2 else 0
+        roc_7d = (closes[-1] - closes[-8]) / closes[-8] * 100 if len(closes) >= 8 else 0
+        roc_30d = (closes[-1] - closes[-31]) / closes[-31] * 100 if len(closes) >= 31 else 0
+        return roc_1d, roc_7d, roc_30d
+
+    def _calc_stoch_rsi(self, closes: list[float], period: int = 14) -> float:
+        """Stochastic RSI (0-1 scale)."""
+        # Need enough data to compute RSI for at least `period` windows
+        if len(closes) < period * 2:
+            return 0.5
+        # Compute RSI for a rolling window to get a series
+        rsi_series = []
+        for end in range(period + 1, len(closes) + 1):
+            window = closes[max(0, end - period * 2):end]
+            rsi_val = self._calc_rsi(window, period)
+            rsi_series.append(rsi_val)
+        if len(rsi_series) < period:
+            return 0.5
+        recent = rsi_series[-period:]
+        rsi_min = min(recent)
+        rsi_max = max(recent)
+        current_rsi = rsi_series[-1]
+        if rsi_max == rsi_min:
+            return 0.5
+        return (current_rsi - rsi_min) / (rsi_max - rsi_min)
+
+    def _calc_squeeze(self, highs: list[float], lows: list[float],
+                      closes: list[float], bb_period: int = 20,
+                      bb_std: float = 2.0) -> tuple[bool, float]:
+        """BB/Keltner Channel squeeze detection."""
+        if len(closes) < bb_period:
+            return False, 0.0
+        # BB
+        window = closes[-bb_period:]
+        sma_20 = sum(window) / bb_period
+        variance = sum((x - sma_20) ** 2 for x in window) / bb_period
+        sd = math.sqrt(variance)
+        bb_upper = sma_20 + bb_std * sd
+        bb_lower = sma_20 - bb_std * sd
+        # Keltner Channel using ATR(20)
+        atr_20 = self._calc_atr(highs, lows, closes, bb_period)
+        kc_upper = sma_20 + 1.5 * atr_20
+        kc_lower = sma_20 - 1.5 * atr_20
+        squeeze_on = (bb_lower > kc_lower) and (bb_upper < kc_upper)
+        # Momentum: distance of close from SMA, normalized by ATR
+        squeeze_momentum = (closes[-1] - sma_20) / atr_20 if atr_20 > 0 else 0.0
+        return squeeze_on, squeeze_momentum
+
+    def _calc_zscores(self, closes: list[float], highs: list[float],
+                      lows: list[float], rsi_period: int = 14,
+                      macd_fast: int = 12, macd_slow: int = 26,
+                      macd_signal: int = 9, bb_period: int = 20,
+                      bb_std: float = 2.0) -> dict[str, float]:
+        """Z-scores for RSI, MACD histogram, BB position over 50-period rolling window."""
+        min_needed = 50
+        if len(closes) < min_needed:
+            return {"rsi_zscore": 0.0, "macd_zscore": 0.0, "bb_zscore": 0.0}
+
+        # Compute rolling RSI, MACD hist, BB position for last 50 periods
+        rsi_vals = []
+        macd_hist_vals = []
+        bb_pos_vals = []
+
+        # We need enough history before each window, so start from a safe offset
+        start = max(macd_slow + macd_signal, rsi_period, bb_period)
+        if len(closes) < start + min_needed:
+            # Not enough data for full rolling computation — compute what we can
+            # but ensure at least 50 data points
+            start = max(0, len(closes) - min_needed)
+
+        for end in range(len(closes) - min_needed, len(closes)):
+            window = closes[:end + 1]
+            if len(window) < max(rsi_period + 1, macd_slow + 1, bb_period):
+                continue
+
+            rsi_vals.append(self._calc_rsi(window, rsi_period))
+
+            ema_f = self._calc_ema(window, macd_fast)
+            ema_s = self._calc_ema(window, macd_slow)
+            _, _, hist = self._calc_macd(ema_f, ema_s, macd_signal, macd_fast, macd_slow)
+            macd_hist_vals.append(hist)
+
+            bb = self._calc_bollinger(window, bb_period, bb_std)
+            bb_pos_vals.append(bb["position"])
+
+        def _zscore(values):
+            if len(values) < 2:
+                return 0.0
+            mean_v = sum(values) / len(values)
+            std_v = math.sqrt(sum((x - mean_v) ** 2 for x in values) / len(values))
+            if std_v == 0:
+                return 0.0
+            return (values[-1] - mean_v) / std_v
+
+        return {
+            "rsi_zscore": _zscore(rsi_vals),
+            "macd_zscore": _zscore(macd_hist_vals),
+            "bb_zscore": _zscore(bb_pos_vals),
+        }
 
     def _calc_pivots(self, high, low, close):
         pivot = (high + low + close) / 3.0
