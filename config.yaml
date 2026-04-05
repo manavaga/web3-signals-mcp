@@ -87,11 +87,11 @@ regime:
 
 targets:
   timeframe_hours: 48
-  min_rr_ratio: 0.5
+  min_rr_ratio: 1.5
   move_distance_divisor: 10.0
-  move_atr_multiplier: 1.5
-  move_max_atr_factor: 2.0
-  move_min_floor_atr_factor: 0.3
+  move_atr_multiplier: 2.5
+  move_max_atr_factor: 3.0
+  move_min_floor_atr_factor: 0.5
   ml_blend_weight: 0.6
   ml_max_move_pct: 30.0
   model_max_age_hours: 24
@@ -117,13 +117,34 @@ agents:
     volume_low_threshold: 0.5
     atr_period: 14
     scoring_weights:
-      rsi: 0.20
+      rsi: 0.15
       macd: 0.10
-      bollinger: 0.10
-      trend: 0.20
-      obv: 0.20
+      bb_bandwidth: 0.15
+      trend: 0.15
+      obv: 0.15
       roc_7d: 0.10
       squeeze: 0.10
+      macd_zscore: 0.10
+    # Regime-specific weight overrides (trending = momentum, ranging = mean-reversion)
+    regime_scoring_weights:
+      trending:
+        rsi: 0.10
+        macd: 0.10
+        bb_bandwidth: 0.10
+        trend: 0.20
+        obv: 0.15
+        roc_7d: 0.15
+        squeeze: 0.10
+        macd_zscore: 0.10
+      ranging:
+        rsi: 0.20
+        macd: 0.10
+        bb_bandwidth: 0.20
+        trend: 0.10
+        obv: 0.10
+        roc_7d: 0.10
+        squeeze: 0.10
+        macd_zscore: 0.10
     volume_spike_bonus: 10
   derivatives:
     cadence_minutes: 60

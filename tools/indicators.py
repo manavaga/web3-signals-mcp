@@ -380,6 +380,12 @@ def compute_technical_indicators(
     ma7 = sum(closes[-7:]) / min(7, len(closes))
     ma30 = sum(closes[-30:]) / min(30, len(closes))
 
+    # Swing high/low from recent 20 candles (for S/R-based TP/SL)
+    recent_highs = highs[-20:] if len(highs) >= 20 else highs
+    recent_lows = lows[-20:] if len(lows) >= 20 else lows
+    swing_high = max(recent_highs) if recent_highs else price
+    swing_low = min(recent_lows) if recent_lows else price
+
     return {
         "price": price,
         "rsi_14": rsi,
@@ -392,6 +398,10 @@ def compute_technical_indicators(
         "bb_position": bb["position"],
         "bb_bandwidth": bb["bandwidth"],
         "bb_squeeze": bb["squeeze"],
+        "bb_upper": bb["upper"],
+        "bb_lower": bb["lower"],
+        "swing_high": swing_high,
+        "swing_low": swing_low,
         "atr_14": atr,
         "adx_14": adx,
         "atr_pct": (atr / price * 100) if price > 0 else 0,

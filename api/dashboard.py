@@ -89,6 +89,7 @@ main{padding:1.5rem;max-width:1400px;margin:0 auto}
 </header>
 <nav id="tabs">
   <button class="active" data-tab="signals">Signals</button>
+  <button data-tab="trades">Trades & P&L</button>
   <button data-tab="performance">Performance</button>
   <button data-tab="analytics">Analytics</button>
   <button data-tab="agents">AI Agents</button>
@@ -96,6 +97,7 @@ main{padding:1.5rem;max-width:1400px;margin:0 auto}
 </nav>
 <main>
   <div id="tab-signals"></div>
+  <div id="tab-trades" class="hidden"></div>
   <div id="tab-performance" class="hidden"></div>
   <div id="tab-analytics" class="hidden"></div>
   <div id="tab-agents" class="hidden"></div>
@@ -117,7 +119,7 @@ document.querySelectorAll('#tabs button').forEach(b=>{
     document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
     activeTab=b.dataset.tab;
-    ['signals','performance','analytics','agents','health'].forEach(t=>{
+    ['signals','trades','performance','analytics','agents','health'].forEach(t=>{
       document.getElementById('tab-'+t).classList.toggle('hidden',t!==activeTab);
     });
     loadTab(activeTab);
@@ -131,7 +133,7 @@ async function fetchJSON(url){
 }
 
 function loadTab(tab){
-  const loaders={signals:loadSignals,performance:loadPerformance,analytics:loadAnalytics,agents:loadAgents,health:loadHealth};
+  const loaders={signals:loadSignals,trades:loadTrades,performance:loadPerformance,analytics:loadAnalytics,agents:loadAgents,health:loadHealth};
   if(loaders[tab])loaders[tab]();
 }
 
@@ -207,6 +209,113 @@ async function loadSignals(){
     html+='</div>';
     el.innerHTML=html;
   }catch(e){el.innerHTML=`<div class="error-msg">Error loading signals: ${e.message}</div>`}
+}
+
+async function loadTrades(){
+  const el=$('#tab-trades');
+  el.innerHTML='<div class="loading-msg">Loading trades...</div>';
+  try{
+    const d=await fetchJSON('/api/trades?days=30');
+    if(!d||d.total_trades===0){el.innerHTML='<div class="empty-msg">No trades recorded yet. Trades are logged when signals generate directional calls with TP/SL targets.</div>';return}
+
+    const pnlColor=v=>v>0?'var(--green)':v<0?'var(--red)':'var(--dim)';
+    const outcomeLabel=o=>{const m={'tp_hit':'TP Hit','sl_hit':'SL Hit','expired_win':'Exp Win','expired_loss':'Exp Loss','open':'Open'};return m[o]||o};
+    const outcomeBadge=o=>{const c=o==='tp_hit'||o==='expired_win'?'badge-buy':o==='sl_hit'||o==='expired_loss'?'badge-sell':o==='open'?'badge-neutral':'badge-neutral';return`<span class="badge ${c}">${outcomeLabel(o)}</span>`};
+
+    // Summary cards
+    let html=`<div class="summary-bar">
+      <div class="summary-item"><span class="label">Total Trades</span><span class="value mono">${d.total_trades}</span></div>
+      <div class="summary-item"><span class="label">Open</span><span class="value mono" style="color:var(--cyan)">${d.open_trades||0}</span></div>
+      <div class="summary-item"><span class="label">Win Rate</span><span class="value mono" style="color:${d.win_rate>=0.5?'var(--green)':'var(--red)'}">${(d.win_rate*100).toFixed(0)}%</span></div>
+      <div class="summary-item"><span class="label">Total P&L</span><span class="value mono" style="color:${pnlColor(d.total_pnl_pct)}">${d.total_pnl_pct>=0?'+':''}${fmt(d.total_pnl_pct)}%</span></div>
+      <div class="summary-item"><span class="label">P&L (USD)</span><span class="value mono" style="color:${pnlColor(d.total_pnl_usd)}">${d.total_pnl_usd>=0?'+$':'$'}${fmt(d.total_pnl_usd)}</span></div>
+      <div class="summary-item"><span class="label">Avg Win</span><span class="value mono" style="color:var(--green)">+${fmt(d.avg_win_pct)}%</span></div>
+      <div class="summary-item"><span class="label">Avg Loss</span><span class="value mono" style="color:var(--red)">-${fmt(d.avg_loss_pct)}%</span></div>
+      <div class="summary-item"><span class="label">Profit Factor</span><span class="value mono">${fmt(d.profit_factor)}</span></div>
+    </div>`;
+
+    // Outcome breakdown
+    if(d.outcomes&&Object.keys(d.outcomes).length){
+      html+=`<div class="section"><h3>Outcome Breakdown</h3><div class="stat-grid">`;
+      for(const [o,cnt] of Object.entries(d.outcomes)){
+        html+=`<div class="stat-card"><div class="stat-label">${outcomeLabel(o)}</div><div class="stat-val mono">${cnt}</div></div>`;
+      }
+      html+=`</div></div>`;
+    }
+
+    // By direction
+    if(d.by_direction&&Object.keys(d.by_direction).length){
+      html+=`<div class="section"><h3>By Direction</h3><div class="stat-grid">`;
+      for(const [dir,v] of Object.entries(d.by_direction)){
+        const clr=dir==='bullish'?'var(--green)':'var(--red)';
+        html+=`<div class="stat-card">
+          <div class="stat-label">${dir.toUpperCase()}</div>
+          <div class="stat-val mono" style="color:${clr}">${v.trades} trades</div>
+          <div style="font-size:.75rem;color:var(--dim)">WR: ${(v.win_rate*100).toFixed(0)}% | P&L: <span style="color:${pnlColor(v.pnl_pct)}">${v.pnl_pct>=0?'+':''}${fmt(v.pnl_pct)}%</span></div>
+        </div>`;
+      }
+      html+=`</div></div>`;
+    }
+
+    // Per-asset P&L table
+    if(d.by_asset&&Object.keys(d.by_asset).length){
+      html+=`<div class="section"><h3>P&L by Asset</h3><table class="table">
+        <tr><th>Asset</th><th>Trades</th><th>Win Rate</th><th>P&L %</th><th>P&L $</th></tr>`;
+      const sorted=Object.entries(d.by_asset).sort((a,b)=>(b[1].pnl_pct||0)-(a[1].pnl_pct||0));
+      for(const [a,v] of sorted){
+        html+=`<tr>
+          <td><strong>${a}</strong></td>
+          <td class="mono">${v.trades}</td>
+          <td class="mono" style="color:${v.win_rate>=0.5?'var(--green)':'var(--red)'}">${(v.win_rate*100).toFixed(0)}%</td>
+          <td class="mono" style="color:${pnlColor(v.pnl_pct)}">${v.pnl_pct>=0?'+':''}${fmt(v.pnl_pct)}%</td>
+          <td class="mono" style="color:${pnlColor(v.pnl_usd)}">${v.pnl_usd>=0?'+$':'-$'}${fmt(Math.abs(v.pnl_usd))}</td>
+        </tr>`;
+      }
+      html+=`</table></div>`;
+    }
+
+    // Daily P&L chart
+    if(d.by_day&&Object.keys(d.by_day).length){
+      const days=Object.entries(d.by_day).slice(-14);
+      const maxPnl=Math.max(...days.map(([,v])=>Math.abs(v.pnl_pct)),0.1);
+      html+=`<div class="section"><h3>Daily P&L (last 14 days)</h3><div class="bar-chart">`;
+      for(const [day,v] of days){
+        const w=Math.max(Math.abs(v.pnl_pct)/maxPnl*100,3);
+        const clr=v.pnl_pct>=0?'var(--green)':'var(--red)';
+        html+=`<div class="bar-chart-row">
+          <span class="bc-label">${day.slice(5)}</span>
+          <div class="bc-bar"><div class="bc-fill" style="width:${w}%;background:${clr}">${v.trades}t</div></div>
+          <span class="bc-val" style="color:${clr}">${v.pnl_pct>=0?'+':''}${fmt(v.pnl_pct)}%</span>
+        </div>`;
+      }
+      html+=`</div></div>`;
+    }
+
+    // Recent trades table
+    if(d.recent_trades&&d.recent_trades.length){
+      html+=`<div class="section"><h3>Recent Trades</h3><div style="overflow-x:auto"><table class="table">
+        <tr><th>Date</th><th>Asset</th><th>Dir</th><th>Entry</th><th>Target</th><th>SL</th><th>Exit</th><th>Outcome</th><th>P&L</th></tr>`;
+      for(const t of d.recent_trades.slice(0,30)){
+        const dir=t.direction==='bullish'?'&#9650; LONG':'&#9660; SHORT';
+        const dirClr=t.direction==='bullish'?'var(--green)':'var(--red)';
+        const pnl=t.pnl_pct||0;
+        html+=`<tr>
+          <td class="mono" style="font-size:.7rem">${(t.entry_time||'').slice(0,10)}</td>
+          <td><strong>${t.asset}</strong></td>
+          <td style="color:${dirClr}">${dir}</td>
+          <td class="mono">$${fmtInt(t.entry_price)}</td>
+          <td class="mono" style="color:var(--green)">$${fmtInt(t.target_price)}</td>
+          <td class="mono" style="color:var(--red)">$${fmtInt(t.stop_loss)}</td>
+          <td class="mono">${t.exit_price?'$'+fmtInt(t.exit_price):'--'}</td>
+          <td>${outcomeBadge(t.outcome)}</td>
+          <td class="mono" style="color:${pnlColor(pnl)};font-weight:700">${pnl>=0?'+':''}${fmt(pnl)}%</td>
+        </tr>`;
+      }
+      html+=`</table></div></div>`;
+    }
+
+    el.innerHTML=html;
+  }catch(e){el.innerHTML=`<div class="error-msg">Error loading trades: ${e.message}</div>`}
 }
 
 async function loadPerformance(){

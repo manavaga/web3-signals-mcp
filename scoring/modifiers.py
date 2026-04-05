@@ -128,48 +128,114 @@ def assign_label(composite: float, labels: list[dict]) -> tuple[str, str]:
 
 def calculate_targets(entry_price: float, composite: float, direction: str,
                       atr_14: float, sl_multiplier: float,
-                      cfg: dict) -> Optional[TargetLevels]:
+                      cfg: dict,
+                      sr_levels: Optional[dict] = None) -> Optional[TargetLevels]:
+    """Calculate TP/SL using support/resistance levels when available.
+
+    S/R levels (from price structure):
+    - ma7, ma30: dynamic support/resistance
+    - bb_upper, bb_lower: volatility-based levels
+    - swing_high, swing_low: recent swing points
+    - ATR: fallback when no S/R data
+    """
     if direction == "neutral":
         return None
 
-    if direction == "bullish":
-        stop_loss = entry_price - (atr_14 * sl_multiplier)
+    # --- STOP LOSS: nearest S/R level against direction, or ATR-based ---
+    atr_sl = atr_14 * sl_multiplier
+
+    if sr_levels and direction == "bullish":
+        # SL below nearest support (ma7, ma30, bb_lower, swing_low)
+        supports = []
+        for key in ("ma7", "ma30", "bb_lower", "swing_low"):
+            level = sr_levels.get(key, 0)
+            if 0 < level < entry_price:
+                supports.append(level)
+        if supports:
+            # Use the nearest support below price, minus a small ATR buffer
+            nearest_support = max(supports)  # Highest support below price
+            stop_loss = nearest_support - atr_14 * 0.3  # Small buffer below support
+        else:
+            stop_loss = entry_price - atr_sl
+    elif sr_levels and direction == "bearish":
+        # SL above nearest resistance (ma7, ma30, bb_upper, swing_high)
+        resistances = []
+        for key in ("ma7", "ma30", "bb_upper", "swing_high"):
+            level = sr_levels.get(key, 0)
+            if level > entry_price:
+                resistances.append(level)
+        if resistances:
+            nearest_resistance = min(resistances)
+            stop_loss = nearest_resistance + atr_14 * 0.3
+        else:
+            stop_loss = entry_price + atr_sl
     else:
-        stop_loss = entry_price + (atr_14 * sl_multiplier)
+        # Fallback: ATR-based
+        if direction == "bullish":
+            stop_loss = entry_price - atr_sl
+        else:
+            stop_loss = entry_price + atr_sl
 
-    distance = composite - 50.0
-    atr_pct = (atr_14 / entry_price) * 100 if entry_price > 0 else 3.0
-    divisor = cfg.get("move_distance_divisor", 10.0)
-    atr_mult = cfg.get("move_atr_multiplier", 1.5)
-    max_factor = cfg.get("move_max_atr_factor", 2.0)
-    min_floor = cfg.get("move_min_floor_atr_factor", 0.3)
-
-    move_fraction = distance / divisor
-    predicted_pct = move_fraction * atr_pct * atr_mult
-    max_move = atr_pct * max_factor
-    predicted_pct = max(-max_move, min(max_move, predicted_pct))
-
-    min_prediction = atr_pct * min_floor
-    if abs(predicted_pct) < min_prediction:
-        predicted_pct = min_prediction if direction == "bullish" else -min_prediction
-
-    if direction == "bullish" and predicted_pct < 0:
-        predicted_pct = abs(predicted_pct) * 0.5
-    elif direction == "bearish" and predicted_pct > 0:
-        predicted_pct = -abs(predicted_pct) * 0.5
-
-    min_rr = cfg.get("min_rr_ratio", 0.5)
+    # --- TARGET PRICE: nearest S/R level in signal direction ---
+    min_rr = cfg.get("min_rr_ratio", 1.5)
     risk = abs(entry_price - stop_loss)
     min_reward = risk * min_rr
-    ml_target = entry_price * (1 + predicted_pct / 100)
 
-    if direction == "bullish":
-        target_price = max(ml_target, entry_price + min_reward)
+    if sr_levels and direction == "bullish":
+        # Target at nearest resistance above price
+        targets = []
+        for key in ("ma30", "bb_upper", "swing_high"):
+            level = sr_levels.get(key, 0)
+            if level > entry_price + min_reward:
+                targets.append(level)
+        if targets:
+            target_price = min(targets)  # Nearest achievable resistance
+        else:
+            target_price = entry_price + min_reward
+    elif sr_levels and direction == "bearish":
+        targets = []
+        for key in ("ma30", "bb_lower", "swing_low"):
+            level = sr_levels.get(key, 0)
+            if 0 < level < entry_price - min_reward:
+                targets.append(level)
+        if targets:
+            target_price = max(targets)
+        else:
+            target_price = entry_price - min_reward
     else:
-        target_price = min(ml_target, entry_price - min_reward)
+        # Fallback: ATR-based target
+        atr_pct = (atr_14 / entry_price) * 100 if entry_price > 0 else 3.0
+        atr_mult = cfg.get("move_atr_multiplier", 2.5)
+        max_factor = cfg.get("move_max_atr_factor", 3.0)
+        distance = composite - 50.0
+        divisor = cfg.get("move_distance_divisor", 10.0)
+        move_fraction = distance / divisor
+        predicted_pct = move_fraction * atr_pct * atr_mult
+        max_move = atr_pct * max_factor
+        predicted_pct = max(-max_move, min(max_move, predicted_pct))
 
+        min_floor = cfg.get("move_min_floor_atr_factor", 0.5)
+        min_prediction = atr_pct * min_floor
+        if abs(predicted_pct) < min_prediction:
+            predicted_pct = min_prediction if direction == "bullish" else -min_prediction
+
+        ml_target = entry_price * (1 + predicted_pct / 100)
+        if direction == "bullish":
+            target_price = max(ml_target, entry_price + min_reward)
+        else:
+            target_price = min(ml_target, entry_price - min_reward)
+
+    # Ensure minimum R:R
     reward = abs(target_price - entry_price)
+    if reward < min_reward and risk > 0:
+        if direction == "bullish":
+            target_price = entry_price + min_reward
+        else:
+            target_price = entry_price - min_reward
+        reward = min_reward
+
     rr_ratio = reward / risk if risk > 0 else 0
+    predicted_pct = (target_price - entry_price) / entry_price * 100
 
     score_distance = abs(composite - 50.0)
     if score_distance > 20:

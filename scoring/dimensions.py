@@ -48,13 +48,18 @@ def _macd_score(histogram: float, price: float) -> float:
         return 50 - intensity * 40
 
 
-def _bb_score(position: float) -> float:
-    if position < 0:
-        return 90.0
-    elif position > 1:
-        return 10.0
+def _bb_bandwidth_score(bandwidth: float) -> float:
+    """BB bandwidth: high bandwidth = high volatility = bearish (IC -0.22 to -0.29).
+
+    Low bandwidth = compression = potential breakout = bullish.
+    Typical crypto bandwidth: 0.02 (tight) to 0.15 (wide).
+    """
+    if bandwidth < 0.03:
+        return 75.0
+    elif bandwidth > 0.12:
+        return 25.0
     else:
-        return 85.0 - position * 70.0
+        return 75.0 - (bandwidth - 0.03) / 0.09 * 50.0
 
 
 def _trend_score(price: float, ma7: float, ma30: float) -> float:
@@ -72,7 +77,10 @@ def _trend_score(price: float, ma7: float, ma30: float) -> float:
 
 
 def _obv_score(obv_slope: float) -> float:
-    return 50 + min(max(obv_slope * 400, -40), 40)
+    """OBV slope: data shows high OBV slope → price DOWN (IC negative).
+
+    Inverted from traditional interpretation — selling into strength."""
+    return 50 - min(max(obv_slope * 400, -40), 40)
 
 
 def _roc_score(roc_7d: float) -> float:
@@ -85,12 +93,24 @@ def _squeeze_score(squeeze_on: bool, squeeze_momentum: float) -> float:
     return 50 + min(max(squeeze_momentum * 5, -30), 30)
 
 
+def _macd_zscore_score(zscore: float) -> float:
+    """MACD z-score: how extreme current MACD is vs recent history.
+
+    Positive zscore = MACD above its recent mean = bullish momentum.
+    IC +0.14 to +0.17 across multiple assets — independent predictor.
+    """
+    return 50 + min(max(zscore * 15, -35), 35)
+
+
 def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> DimensionScore:
     """Score technical indicators, regime-aware.
 
-    In trending_down: RSI/BB mean-reversion buy signals are suppressed (clamped to ≤50).
-    In trending_up: RSI/BB mean-reversion sell signals are suppressed (clamped to ≥50).
-    In ranging/volatile: all signals pass through normally.
+    Key data-driven changes:
+    - bb_bandwidth replaces bb_position (IC -0.22 vs IC ≈ 0)
+    - OBV slope inverted (high OBV → price DOWN per IC data)
+    - macd_zscore added (IC +0.14, independent predictor)
+    - Regime-specific weights: trending uses momentum, ranging uses mean-reversion
+    - RSI/bandwidth clamped in trending regimes to suppress counter-trend signals
     """
     if not data:
         return DimensionScore(name="technical", score=50.0, detail="no data", tier="none")
@@ -98,56 +118,62 @@ def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> Dimens
     rsi = data.get("rsi_14", 50.0)
     hist = data.get("macd_histogram", 0.0)
     price = data.get("price", 1.0)
-    bb_pos = data.get("bb_position", 0.5)
+    bb_bandwidth = data.get("bb_bandwidth", 0.06)
     ma7 = data.get("ma7", price)
     ma30 = data.get("ma30", price)
     vol_status = data.get("volume_status", "normal")
 
-    # Indicator values (with safe defaults for backward compatibility)
     obv_slope = data.get("obv_slope", 0.0)
     roc_7d = data.get("roc_7d", 0.0)
     squeeze_on = data.get("squeeze_on", False)
     squeeze_momentum = data.get("squeeze_momentum", 0.0)
+    macd_zscore = data.get("macd_zscore", 0.0)
 
-    # MFI and StochRSI removed — ~0.85 correlated with RSI (triple-counting)
-    # Weights redistributed to RSI, OBV, Trend (independent signals)
-    default_weights = {
-        "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-        "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
-    }
+    # Regime-specific weights from config, falling back to defaults
+    # Trending: momentum indicators (trend, roc) weighted higher
+    # Ranging: mean-reversion indicators (rsi, bb_bandwidth) weighted higher
+    regime_weights = cfg.get("regime_scoring_weights", {})
+    if regime in ("trending_up", "trending_down") and "trending" in regime_weights:
+        default_weights = regime_weights["trending"]
+    elif regime == "ranging" and "ranging" in regime_weights:
+        default_weights = regime_weights["ranging"]
+    else:
+        default_weights = {
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
+        }
     weights = cfg.get("scoring_weights", default_weights)
+
     oversold = cfg.get("rsi_oversold", 30)
     overbought = cfg.get("rsi_overbought", 70)
     spike_bonus = cfg.get("volume_spike_bonus", 10)
 
     rsi_s = _clamp(_rsi_score(rsi, oversold, overbought), 5, 95)
     macd_s = _clamp(_macd_score(hist, price), 10, 90)
-    bb_s = _clamp(_bb_score(bb_pos), 10, 90)
+    bw_s = _clamp(_bb_bandwidth_score(bb_bandwidth), 10, 90)
     trend_s = _trend_score(price, ma7, ma30)
     obv_s = _clamp(_obv_score(obv_slope), 10, 90)
     roc_s = _clamp(_roc_score(roc_7d), 15, 85)
     sq_s = _clamp(_squeeze_score(squeeze_on, squeeze_momentum), 20, 80)
+    mz_s = _clamp(_macd_zscore_score(macd_zscore), 15, 85)
 
     # Regime-aware: suppress mean-reversion signals that fight the trend
     if regime == "trending_down":
-        # RSI "oversold = buy" is wrong in downtrends — cap at neutral
         rsi_s = min(rsi_s, 50.0)
-        # BB "below lower band = buy" is wrong in downtrends
-        bb_s = min(bb_s, 50.0)
+        bw_s = min(bw_s, 50.0)
     elif regime == "trending_up":
-        # RSI "overbought = sell" is wrong in uptrends — floor at neutral
         rsi_s = max(rsi_s, 50.0)
-        # BB "above upper band = sell" is wrong in uptrends
-        bb_s = max(bb_s, 50.0)
+        bw_s = max(bw_s, 50.0)
 
     components = [
-        (rsi_s, weights.get("rsi", 0.20)),
+        (rsi_s, weights.get("rsi", 0.15)),
         (macd_s, weights.get("macd", 0.10)),
-        (bb_s, weights.get("bollinger", 0.10)),
-        (trend_s, weights.get("trend", 0.20)),
-        (obv_s, weights.get("obv", 0.20)),
+        (bw_s, weights.get("bb_bandwidth", 0.15)),
+        (trend_s, weights.get("trend", 0.15)),
+        (obv_s, weights.get("obv", 0.15)),
         (roc_s, weights.get("roc_7d", 0.10)),
         (sq_s, weights.get("squeeze", 0.10)),
+        (mz_s, weights.get("macd_zscore", 0.10)),
     ]
     total_w = sum(w for _, w in components)
     score = sum(s * w for s, w in components) / total_w if total_w > 0 else 50.0
@@ -156,10 +182,10 @@ def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> Dimens
         score += spike_bonus
 
     score = _clamp(score)
-    detail = (f"RSI={rsi:.0f}, MACD_hist={hist:.4f}, BB_pos={bb_pos:.2f}, "
+    detail = (f"RSI={rsi:.0f}, MACD_hist={hist:.4f}, BB_bw={bb_bandwidth:.4f}, "
               f"trend={'up' if price > ma30 else 'down'}, "
               f"OBV_slope={obv_slope:.3f}, ROC_7d={roc_7d:.1f}%, "
-              f"squeeze={'on' if squeeze_on else 'off'}")
+              f"squeeze={'on' if squeeze_on else 'off'}, MACD_z={macd_zscore:.2f}")
     tier = "full" if rsi != 50 or hist != 0 else "partial"
 
     return DimensionScore(name="technical", score=score, detail=detail, tier=tier)

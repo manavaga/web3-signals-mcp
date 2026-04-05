@@ -295,6 +295,17 @@ def get_ic_analytics():
     }
 
 
+@app.get("/api/trades", tags=["trades"])
+def get_trades(days: int = Query(default=30, ge=1, le=180)):
+    """Trade log and P&L statistics."""
+    try:
+        stats = _storage.load_trade_stats(days=days)
+    except Exception as e:
+        logger.error(f"Trades query error: {e}")
+        stats = {"total_trades": 0, "error": str(e)}
+    return {"days": days, **stats}
+
+
 @app.get("/dashboard", tags=["ui"])
 def dashboard():
     try:

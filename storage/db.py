@@ -592,3 +592,237 @@ class Storage:
             }
         finally:
             conn.close()
+
+    # -----------------------------------------------------------------------
+    # Trades & P&L tracking
+    # -----------------------------------------------------------------------
+
+    def _ensure_trades_table(self):
+        if "trades" in self._created_tables:
+            return
+        pk = "SERIAL PRIMARY KEY" if self._backend == "postgres" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        float_type = "DOUBLE PRECISION" if self._backend == "postgres" else "REAL"
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""CREATE TABLE IF NOT EXISTS trades (
+                id {pk},
+                asset TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                composite_score {float_type},
+                entry_price {float_type} NOT NULL,
+                target_price {float_type} NOT NULL,
+                stop_loss {float_type} NOT NULL,
+                risk_reward_ratio {float_type},
+                entry_time TEXT NOT NULL,
+                expiry_time TEXT,
+                exit_price {float_type},
+                exit_time TEXT,
+                outcome TEXT DEFAULT 'open',
+                pnl_pct {float_type} DEFAULT 0,
+                pnl_usd {float_type} DEFAULT 0,
+                position_size_usd {float_type} DEFAULT 0,
+                confidence TEXT,
+                regime TEXT,
+                source TEXT DEFAULT 'live'
+            )""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_entry ON trades(entry_time)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_outcome ON trades(outcome)")
+            conn.commit()
+            self._created_tables.add("trades")
+        finally:
+            conn.close()
+
+    def save_trade(self, asset: str, direction: str, composite_score: float,
+                   entry_price: float, target_price: float, stop_loss: float,
+                   risk_reward_ratio: float, confidence: str = "",
+                   regime: str = "", position_size_usd: float = 0,
+                   source: str = "live") -> int:
+        """Record a new trade entry. Returns trade ID."""
+        self._ensure_trades_table()
+        ph = self._ph()
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""INSERT INTO trades
+                (asset, direction, composite_score, entry_price, target_price,
+                 stop_loss, risk_reward_ratio, entry_time, confidence, regime,
+                 position_size_usd, source)
+                VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})""",
+                (asset, direction, composite_score, entry_price, target_price,
+                 stop_loss, risk_reward_ratio, now, confidence, regime,
+                 position_size_usd, source))
+            conn.commit()
+            trade_id = cur.lastrowid
+            return trade_id
+        finally:
+            conn.close()
+
+    def close_trade(self, trade_id: int, exit_price: float, outcome: str,
+                    pnl_pct: float, pnl_usd: float = 0) -> None:
+        """Close a trade with exit price and outcome."""
+        self._ensure_trades_table()
+        ph = self._ph()
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""UPDATE trades SET
+                exit_price = {ph}, exit_time = {ph}, outcome = {ph},
+                pnl_pct = {ph}, pnl_usd = {ph}
+                WHERE id = {ph}""",
+                (exit_price, now, outcome, pnl_pct, pnl_usd, trade_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_open_trades(self) -> list[dict]:
+        """Get all open trades (not yet resolved)."""
+        self._ensure_trades_table()
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM trades WHERE outcome = 'open' ORDER BY entry_time DESC")
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+            return [dict(zip(cols, r)) for r in rows]
+        finally:
+            conn.close()
+
+    def load_trades(self, days: int = 30, asset: str = None) -> list[dict]:
+        """Load recent trades with optional asset filter."""
+        self._ensure_trades_table()
+        ph = self._ph()
+        ago = self._ago(days)
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            if asset:
+                cur.execute(f"""SELECT * FROM trades
+                    WHERE entry_time >= {ago} AND asset = {ph}
+                    ORDER BY entry_time DESC""", (asset,))
+            else:
+                cur.execute(f"""SELECT * FROM trades
+                    WHERE entry_time >= {ago}
+                    ORDER BY entry_time DESC""")
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+            return [dict(zip(cols, r)) for r in rows]
+        finally:
+            conn.close()
+
+    def load_trade_stats(self, days: int = 30) -> dict[str, Any]:
+        """Compute trade statistics for the dashboard."""
+        self._ensure_trades_table()
+        ago = self._ago(days)
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""SELECT * FROM trades
+                WHERE entry_time >= {ago}
+                ORDER BY entry_time ASC""")
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+            if not rows:
+                return {"total_trades": 0, "open_trades": 0, "closed_trades": 0,
+                        "win_rate": 0, "total_pnl_pct": 0, "total_pnl_usd": 0,
+                        "by_asset": {}, "by_direction": {}, "by_day": {},
+                        "equity_curve": [], "recent_trades": []}
+
+            closed = [r for r in rows if r["outcome"] != "open"]
+            open_trades = [r for r in rows if r["outcome"] == "open"]
+            wins = [r for r in closed if (r.get("pnl_pct") or 0) > 0]
+            losses = [r for r in closed if (r.get("pnl_pct") or 0) <= 0]
+
+            total_pnl_pct = sum(r.get("pnl_pct", 0) or 0 for r in closed)
+            total_pnl_usd = sum(r.get("pnl_usd", 0) or 0 for r in closed)
+            win_rate = len(wins) / len(closed) if closed else 0
+
+            avg_win = sum(r.get("pnl_pct", 0) or 0 for r in wins) / len(wins) if wins else 0
+            avg_loss = sum(abs(r.get("pnl_pct", 0) or 0) for r in losses) / len(losses) if losses else 0
+            profit_factor = (sum(r.get("pnl_pct", 0) or 0 for r in wins) /
+                            abs(sum(r.get("pnl_pct", 0) or 0 for r in losses))
+                            if losses and sum(r.get("pnl_pct", 0) or 0 for r in losses) != 0
+                            else 0)
+
+            # By asset
+            by_asset = {}
+            for r in closed:
+                a = r["asset"]
+                if a not in by_asset:
+                    by_asset[a] = {"trades": 0, "wins": 0, "pnl_pct": 0, "pnl_usd": 0}
+                by_asset[a]["trades"] += 1
+                by_asset[a]["pnl_pct"] += r.get("pnl_pct", 0) or 0
+                by_asset[a]["pnl_usd"] += r.get("pnl_usd", 0) or 0
+                if (r.get("pnl_pct") or 0) > 0:
+                    by_asset[a]["wins"] += 1
+            for a in by_asset:
+                by_asset[a]["win_rate"] = round(by_asset[a]["wins"] / by_asset[a]["trades"], 3) if by_asset[a]["trades"] > 0 else 0
+                by_asset[a]["pnl_pct"] = round(by_asset[a]["pnl_pct"], 2)
+                by_asset[a]["pnl_usd"] = round(by_asset[a]["pnl_usd"], 2)
+
+            # By direction
+            by_direction = {}
+            for r in closed:
+                d = r["direction"]
+                if d not in by_direction:
+                    by_direction[d] = {"trades": 0, "wins": 0, "pnl_pct": 0}
+                by_direction[d]["trades"] += 1
+                by_direction[d]["pnl_pct"] += r.get("pnl_pct", 0) or 0
+                if (r.get("pnl_pct") or 0) > 0:
+                    by_direction[d]["wins"] += 1
+            for d in by_direction:
+                by_direction[d]["win_rate"] = round(by_direction[d]["wins"] / by_direction[d]["trades"], 3) if by_direction[d]["trades"] > 0 else 0
+
+            # By day
+            by_day = {}
+            for r in closed:
+                day = (r.get("exit_time") or r.get("entry_time", ""))[:10]
+                if day not in by_day:
+                    by_day[day] = {"trades": 0, "pnl_pct": 0, "pnl_usd": 0}
+                by_day[day]["trades"] += 1
+                by_day[day]["pnl_pct"] += r.get("pnl_pct", 0) or 0
+                by_day[day]["pnl_usd"] += r.get("pnl_usd", 0) or 0
+            for day in by_day:
+                by_day[day]["pnl_pct"] = round(by_day[day]["pnl_pct"], 2)
+                by_day[day]["pnl_usd"] = round(by_day[day]["pnl_usd"], 2)
+
+            # Equity curve
+            equity = []
+            running = 0.0
+            for r in closed:
+                running += r.get("pnl_pct", 0) or 0
+                equity.append({"date": (r.get("exit_time") or r.get("entry_time", ""))[:10],
+                               "cumulative_pnl_pct": round(running, 2)})
+
+            # Outcome breakdown
+            outcomes = {}
+            for r in closed:
+                o = r.get("outcome", "unknown")
+                outcomes[o] = outcomes.get(o, 0) + 1
+
+            return {
+                "total_trades": len(rows),
+                "open_trades": len(open_trades),
+                "closed_trades": len(closed),
+                "win_rate": round(win_rate, 3),
+                "total_pnl_pct": round(total_pnl_pct, 2),
+                "total_pnl_usd": round(total_pnl_usd, 2),
+                "avg_win_pct": round(avg_win, 2),
+                "avg_loss_pct": round(avg_loss, 2),
+                "profit_factor": round(profit_factor, 2),
+                "outcomes": outcomes,
+                "by_asset": dict(sorted(by_asset.items())),
+                "by_direction": by_direction,
+                "by_day": dict(sorted(by_day.items())),
+                "equity_curve": equity,
+                "recent_trades": [
+                    {k: v for k, v in r.items() if k != "id"}
+                    for r in rows[:20]
+                ],
+            }
+        finally:
+            conn.close()

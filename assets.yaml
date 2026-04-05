@@ -4,7 +4,7 @@ assets:
     tier: large_cap
     binance_symbol: BTCUSDT
     coingecko_id: bitcoin
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.2
     noise_threshold_pct: 1.0
     strong_threshold_pct: 3.0
   ETH:
@@ -12,7 +12,7 @@ assets:
     tier: large_cap
     binance_symbol: ETHUSDT
     coingecko_id: ethereum
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.2
     noise_threshold_pct: 1.5
     strong_threshold_pct: 4.0
   SOL:
@@ -20,7 +20,7 @@ assets:
     tier: mid_cap
     binance_symbol: SOLUSDT
     coingecko_id: solana
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 2.0
     strong_threshold_pct: 5.0
   BNB:
@@ -28,7 +28,7 @@ assets:
     tier: mid_cap
     binance_symbol: BNBUSDT
     coingecko_id: binancecoin
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 1.5
     strong_threshold_pct: 4.0
   XRP:
@@ -36,7 +36,7 @@ assets:
     tier: mid_cap
     binance_symbol: XRPUSDT
     coingecko_id: ripple
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 2.0
     strong_threshold_pct: 5.0
   ADA:
@@ -53,7 +53,7 @@ assets:
     tier: mid_cap
     binance_symbol: AVAXUSDT
     coingecko_id: avalanche-2
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 2.5
     strong_threshold_pct: 6.0
   DOT:
@@ -79,7 +79,7 @@ assets:
     tier: mid_cap
     binance_symbol: LINKUSDT
     coingecko_id: chainlink
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 2.0
     strong_threshold_pct: 5.0
   UNI:
@@ -87,7 +87,7 @@ assets:
     tier: small_cap
     binance_symbol: UNIUSDT
     coingecko_id: uniswap
-    sl_atr_multiplier: 2.5
+    sl_atr_multiplier: 1.8
     noise_threshold_pct: 2.5
     strong_threshold_pct: 6.0
   ATOM:
@@ -104,7 +104,7 @@ assets:
     tier: mid_cap
     binance_symbol: LTCUSDT
     coingecko_id: litecoin
-    sl_atr_multiplier: 2.0
+    sl_atr_multiplier: 1.5
     noise_threshold_pct: 2.0
     strong_threshold_pct: 5.0
   FIL:
@@ -112,7 +112,7 @@ assets:
     tier: small_cap
     binance_symbol: FILUSDT
     coingecko_id: filecoin
-    sl_atr_multiplier: 2.5
+    sl_atr_multiplier: 1.8
     noise_threshold_pct: 2.5
     strong_threshold_pct: 6.0
   NEAR:
@@ -138,7 +138,7 @@ assets:
     tier: small_cap
     binance_symbol: ARBUSDT
     coingecko_id: arbitrum
-    sl_atr_multiplier: 2.5
+    sl_atr_multiplier: 1.8
     noise_threshold_pct: 2.5
     strong_threshold_pct: 6.0
   OP:
@@ -164,6 +164,6 @@ assets:
     tier: small_cap
     binance_symbol: SUIUSDT
     coingecko_id: sui
-    sl_atr_multiplier: 2.5
+    sl_atr_multiplier: 1.8
     noise_threshold_pct: 3.0
     strong_threshold_pct: 7.0

@@ -10,16 +10,17 @@ def test_score_technical_bullish():
     data = {
         "rsi_14": 35.0,
         "macd_histogram": 0.5,
-        "bb_position": 0.2,
+        "bb_bandwidth": 0.03,  # tight = bullish
         "price": 84000.0,
         "ma7": 83000.0,
         "ma30": 82000.0,
         "volume_status": "normal",
+        "macd_zscore": 0.5,
     }
     cfg = {
         "scoring_weights": {
-            "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-            "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
         },
         "volume_spike_bonus": 10,
         "rsi_oversold": 30, "rsi_overbought": 70,
@@ -72,25 +73,26 @@ def test_score_market_extreme_fear():
 
 
 def test_score_technical_with_new_indicators():
-    """New indicators (OBV, ROC, squeeze) should influence the score."""
+    """New indicators (OBV, ROC, squeeze, macd_zscore) should influence the score."""
     data = {
         "rsi_14": 35.0,
         "macd_histogram": 0.5,
-        "bb_position": 0.2,
+        "bb_bandwidth": 0.03,     # tight = bullish
         "price": 84000.0,
         "ma7": 83000.0,
         "ma30": 82000.0,
         "volume_status": "normal",
-        # New indicators — bullish setup
-        "obv_slope": 0.05,         # positive slope = bullish
-        "roc_7d": 3.0,             # positive momentum
+        # OBV inverted: negative slope = bullish (high OBV → price DOWN)
+        "obv_slope": -0.05,
+        "roc_7d": 3.0,
         "squeeze_on": False,
-        "squeeze_momentum": 2.0,   # bullish breakout
+        "squeeze_momentum": 2.0,
+        "macd_zscore": 1.0,       # bullish momentum
     }
     cfg = {
         "scoring_weights": {
-            "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-            "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
         },
         "volume_spike_bonus": 10,
         "rsi_oversold": 30, "rsi_overbought": 70,
@@ -104,21 +106,22 @@ def test_score_technical_bearish_new_indicators():
     data = {
         "rsi_14": 75.0,
         "macd_histogram": -0.5,
-        "bb_position": 0.9,
+        "bb_bandwidth": 0.12,     # wide = bearish
         "price": 84000.0,
         "ma7": 85000.0,
         "ma30": 86000.0,
         "volume_status": "normal",
-        # Bearish setup
-        "obv_slope": -0.08,
+        # OBV inverted: positive slope = bearish
+        "obv_slope": 0.08,
         "roc_7d": -5.0,
         "squeeze_on": False,
         "squeeze_momentum": -3.0,
+        "macd_zscore": -1.5,      # bearish momentum
     }
     cfg = {
         "scoring_weights": {
-            "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-            "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
         },
         "volume_spike_bonus": 10,
         "rsi_oversold": 30, "rsi_overbought": 70,
@@ -132,7 +135,7 @@ def test_score_technical_squeeze_on_neutral():
     data = {
         "rsi_14": 50.0,
         "macd_histogram": 0.0,
-        "bb_position": 0.5,
+        "bb_bandwidth": 0.06,    # mid-range = neutral
         "price": 84000.0,
         "ma7": 84000.0,
         "ma30": 84000.0,
@@ -141,11 +144,12 @@ def test_score_technical_squeeze_on_neutral():
         "roc_7d": 0.0,
         "squeeze_on": True,
         "squeeze_momentum": 5.0,  # momentum ignored when squeeze is on
+        "macd_zscore": 0.0,
     }
     cfg = {
         "scoring_weights": {
-            "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-            "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
         },
         "volume_spike_bonus": 10,
         "rsi_oversold": 30, "rsi_overbought": 70,
@@ -160,17 +164,16 @@ def test_score_technical_defaults_when_missing_new_indicators():
     data = {
         "rsi_14": 50.0,
         "macd_histogram": 0.0,
-        "bb_position": 0.5,
         "price": 84000.0,
         "ma7": 84000.0,
         "ma30": 84000.0,
         "volume_status": "normal",
-        # No new indicator fields
+        # No bb_bandwidth, obv_slope, roc_7d, squeeze, macd_zscore fields
     }
     cfg = {
         "scoring_weights": {
-            "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-            "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+            "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+            "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
         },
         "volume_spike_bonus": 10,
         "rsi_oversold": 30, "rsi_overbought": 70,
@@ -295,8 +298,8 @@ def test_market_score_backward_compatible():
 
 TECH_CFG = {
     "scoring_weights": {
-        "rsi": 0.20, "macd": 0.10, "bollinger": 0.10, "trend": 0.20,
-        "obv": 0.20, "roc_7d": 0.10, "squeeze": 0.10,
+        "rsi": 0.15, "macd": 0.10, "bb_bandwidth": 0.15, "trend": 0.15,
+        "obv": 0.15, "roc_7d": 0.10, "squeeze": 0.10, "macd_zscore": 0.10,
     },
     "volume_spike_bonus": 10,
     "rsi_oversold": 30, "rsi_overbought": 70,
@@ -308,15 +311,16 @@ def test_regime_trending_down_suppresses_rsi_buy():
     data = {
         "rsi_14": 20.0,  # very oversold — would normally score ~90
         "macd_histogram": -0.5,
-        "bb_position": -0.1,  # below lower band — would normally score ~90
+        "bb_bandwidth": 0.02,  # very tight — would normally score bullish
         "price": 75000.0,
         "ma7": 78000.0,
         "ma30": 82000.0,
         "volume_status": "normal",
-        "obv_slope": -0.05,
+        "obv_slope": 0.05,     # positive slope = bearish (inverted)
         "roc_7d": -8.0,
         "squeeze_on": False,
         "squeeze_momentum": -2.0,
+        "macd_zscore": -1.0,
     }
     # Without regime — RSI and BB would push bullish
     ds_no_regime = score_technical(data, TECH_CFG)
@@ -333,15 +337,16 @@ def test_regime_trending_up_suppresses_rsi_sell():
     data = {
         "rsi_14": 80.0,  # overbought — would normally score ~15
         "macd_histogram": 0.5,
-        "bb_position": 1.1,  # above upper band — would normally score ~10
+        "bb_bandwidth": 0.13,  # wide — would normally score bearish
         "price": 90000.0,
         "ma7": 88000.0,
         "ma30": 85000.0,
         "volume_status": "normal",
-        "obv_slope": 0.05,
+        "obv_slope": -0.05,    # negative slope = bullish (inverted)
         "roc_7d": 6.0,
         "squeeze_on": False,
         "squeeze_momentum": 2.0,
+        "macd_zscore": 1.5,
     }
     ds_no_regime = score_technical(data, TECH_CFG)
     ds_trending = score_technical(data, TECH_CFG, regime="trending_up")
@@ -351,16 +356,23 @@ def test_regime_trending_up_suppresses_rsi_sell():
 
 
 def test_regime_ranging_passes_through():
-    """In ranging regime, all signals pass through normally."""
+    """In ranging regime, all signals pass through normally (no clamping)."""
     data = {
         "rsi_14": 25.0,
         "macd_histogram": 0.1,
-        "bb_position": 0.1,
+        "bb_bandwidth": 0.04,
         "price": 82000.0,
         "ma7": 82000.0,
         "ma30": 82000.0,
         "volume_status": "normal",
+        "macd_zscore": 0.0,
     }
+    # With no regime_scoring_weights in cfg, both should use default weights
+    # and ranging should not clamp RSI/bb_bandwidth
     ds_ranging = score_technical(data, TECH_CFG, regime="ranging")
     ds_none = score_technical(data, TECH_CFG, regime="")
-    assert ds_ranging.score == ds_none.score, "Ranging should not modify scores"
+    # Both use same default weights (no regime_scoring_weights in TECH_CFG)
+    # and no clamping applied — scores should be equal
+    assert ds_ranging.score == ds_none.score, (
+        f"Ranging should not clamp scores: {ds_ranging.score} vs {ds_none.score}"
+    )

@@ -114,6 +114,122 @@ def fetch_macro(days: int = 180) -> dict[str, list[dict]]:
     return result
 
 
+def fetch_derivatives_history(symbol: str, days: int = 180) -> list[dict]:
+    """Fetch historical derivatives data from Binance Futures.
+
+    Combines funding rate, L/S ratio, taker ratio, and OI into daily records.
+    All endpoints are free, no API key needed.
+    """
+    end_ms = int(time.time() * 1000)
+    start_ms = int((datetime.utcnow() - timedelta(days=days)).timestamp() * 1000)
+    base = "https://fapi.binance.com"
+    result_by_date: dict[str, dict] = {}
+
+    # 1. Funding rate history (8h intervals → aggregate to daily average)
+    try:
+        all_funding: list[dict] = []
+        fetch_start = start_ms
+        while fetch_start < end_ms:
+            resp = requests.get(
+                f"{base}/fapi/v1/fundingRate",
+                params={"symbol": symbol, "startTime": fetch_start, "limit": 1000},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                break
+            all_funding.extend(data)
+            fetch_start = data[-1]["fundingTime"] + 1
+            time.sleep(0.1)
+
+        for entry in all_funding:
+            date = datetime.utcfromtimestamp(entry["fundingTime"] / 1000).strftime("%Y-%m-%d")
+            if date not in result_by_date:
+                result_by_date[date] = {"funding_rates": [], "symbol": symbol}
+            result_by_date[date]["funding_rates"].append(float(entry["fundingRate"]))
+    except Exception as e:
+        print(f"    Warning: Funding rate fetch failed for {symbol}: {e}")
+
+    # 2. L/S ratio (daily)
+    try:
+        resp = requests.get(
+            f"{base}/futures/data/globalLongShortAccountRatio",
+            params={"symbol": symbol, "period": "1d", "limit": min(days, 500)},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for entry in resp.json():
+            date = datetime.utcfromtimestamp(entry["timestamp"] / 1000).strftime("%Y-%m-%d")
+            if date not in result_by_date:
+                result_by_date[date] = {"funding_rates": [], "symbol": symbol}
+            result_by_date[date]["long_short_ratio"] = float(entry["longShortRatio"])
+        time.sleep(0.1)
+    except Exception as e:
+        print(f"    Warning: L/S ratio fetch failed for {symbol}: {e}")
+
+    # 3. Taker buy/sell ratio (daily)
+    try:
+        resp = requests.get(
+            f"{base}/futures/data/takerlongshortRatio",
+            params={"symbol": symbol, "period": "1d", "limit": min(days, 500)},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for entry in resp.json():
+            date = datetime.utcfromtimestamp(entry["timestamp"] / 1000).strftime("%Y-%m-%d")
+            if date not in result_by_date:
+                result_by_date[date] = {"funding_rates": [], "symbol": symbol}
+            result_by_date[date]["taker_buy_sell_ratio"] = float(entry["buySellRatio"])
+        time.sleep(0.1)
+    except Exception as e:
+        print(f"    Warning: Taker ratio fetch failed for {symbol}: {e}")
+
+    # 4. OI history (daily)
+    try:
+        resp = requests.get(
+            f"{base}/futures/data/openInterestHist",
+            params={"symbol": symbol, "period": "1d", "limit": min(days, 500)},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for entry in resp.json():
+            date = datetime.utcfromtimestamp(entry["timestamp"] / 1000).strftime("%Y-%m-%d")
+            if date not in result_by_date:
+                result_by_date[date] = {"funding_rates": [], "symbol": symbol}
+            result_by_date[date]["open_interest"] = float(entry["sumOpenInterest"])
+        time.sleep(0.1)
+    except Exception as e:
+        print(f"    Warning: OI fetch failed for {symbol}: {e}")
+
+    # Flatten to list with daily averages
+    records = []
+    sorted_dates = sorted(result_by_date.keys())
+    prev_oi = None
+    for date in sorted_dates:
+        d = result_by_date[date]
+        funding_rates = d.get("funding_rates", [])
+        avg_funding = sum(funding_rates) / len(funding_rates) if funding_rates else 0.0
+
+        oi = d.get("open_interest", 0.0)
+        oi_change_pct = 0.0
+        if prev_oi and prev_oi > 0 and oi > 0:
+            oi_change_pct = (oi - prev_oi) / prev_oi * 100
+        prev_oi = oi if oi > 0 else prev_oi
+
+        records.append({
+            "symbol": symbol,
+            "date": date,
+            "funding_rate": avg_funding,
+            "long_short_ratio": d.get("long_short_ratio", 0.0),
+            "taker_buy_sell_ratio": d.get("taker_buy_sell_ratio", 0.0),
+            "open_interest": oi,
+            "oi_change_pct": oi_change_pct,
+        })
+
+    return records
+
+
 def fetch_fear_greed(days: int = 180) -> list[dict]:
     """Fetch F&G index history from alternative.me."""
     try:
@@ -158,6 +274,16 @@ def init_sqlite(db_path: str = DB_PATH) -> None:
         date TEXT PRIMARY KEY,
         value INTEGER
     )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS derivatives (
+        symbol TEXT,
+        date TEXT,
+        funding_rate REAL,
+        long_short_ratio REAL,
+        taker_buy_sell_ratio REAL,
+        open_interest REAL,
+        oi_change_pct REAL,
+        PRIMARY KEY (symbol, date)
+    )""")
     conn.commit()
     conn.close()
 
@@ -189,6 +315,23 @@ def store_macro_sqlite(db_path: str, source: str, entries: list[dict]) -> int:
     conn.commit()
     conn.close()
     return len(entries)
+
+
+def store_derivatives_sqlite(db_path: str, records: list[dict]) -> int:
+    """Store derivatives data via INSERT OR REPLACE. Returns row count."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    for r in records:
+        cur.execute(
+            "INSERT OR REPLACE INTO derivatives "
+            "(symbol, date, funding_rate, long_short_ratio, taker_buy_sell_ratio, "
+            "open_interest, oi_change_pct) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (r["symbol"], r["date"], r["funding_rate"], r["long_short_ratio"],
+             r["taker_buy_sell_ratio"], r["open_interest"], r["oi_change_pct"]),
+        )
+    conn.commit()
+    conn.close()
+    return len(records)
 
 
 def store_fear_greed_sqlite(db_path: str, entries: list[dict]) -> int:
@@ -348,7 +491,22 @@ def main() -> None:
         except Exception as e:
             print(f"  [{i}/{len(assets)}] {symbol}: ERROR — {e}")
 
-    # 2. Macro
+    # 2. Derivatives (from Binance Futures)
+    total_deriv = 0
+    for i, (name, symbol) in enumerate(assets.items(), 1):
+        try:
+            records = fetch_derivatives_history(symbol, args.days)
+            if records:
+                n = store_derivatives_sqlite(db_path, records)
+                total_deriv += n
+                print(f"  [{i}/{len(assets)}] {symbol}: {n} derivatives days fetched")
+            else:
+                print(f"  [{i}/{len(assets)}] {symbol}: No derivatives data")
+        except Exception as e:
+            print(f"  [{i}/{len(assets)}] {symbol}: Derivatives ERROR — {e}")
+        time.sleep(0.2)  # Rate limit
+
+    # 3. Macro
     total_macro = 0
     macro_data = fetch_macro(args.days)
     macro_parts = []
@@ -363,7 +521,7 @@ def main() -> None:
     if macro_parts:
         print(f"  Macro data: {', '.join(macro_parts)}")
 
-    # 3. Fear & Greed
+    # 4. Fear & Greed
     fg_entries = fetch_fear_greed(args.days)
     total_fg = 0
     if fg_entries:
@@ -377,7 +535,8 @@ def main() -> None:
     if use_postgres:
         targets.append("Postgres")
     print(f"  Stored in: {' + '.join(targets)}")
-    print(f"  Total: {total_klines} kline rows, {total_macro} macro rows, {total_fg} F&G rows")
+    print(f"  Total: {total_klines} kline rows, {total_deriv} derivatives rows, "
+          f"{total_macro} macro rows, {total_fg} F&G rows")
 
 
 if __name__ == "__main__":

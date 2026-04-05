@@ -33,8 +33,12 @@ from tools.walk_forward import generate_folds, gradient_score, compute_cwa, eval
 from tools.weight_optimizer import optimize_asset, run_optimization, get_confidence_tier
 from tools.deploy_gate import check_deploy_gate, load_baseline, save_baseline
 from tools.abstain_sweep import sweep_abstain_thresholds
+from tools.fit_scoring import (
+    fit_indicator_params, score_dimension_fitted,
+    TECHNICAL_INDICATORS, MARKET_INDICATORS, DERIVATIVES_INDICATORS,
+)
 
-# Scoring functions
+# Scoring functions (fallback for non-fitted mode)
 from scoring.dimensions import score_technical, score_market
 from scoring.modifiers import detect_regime
 
@@ -91,6 +95,35 @@ def load_fear_greed_data(db_path: str) -> list[dict]:
     return [{"date": r["date"], "value": r["value"]} for r in rows]
 
 
+def load_derivatives_data(db_path: str, symbol: str) -> dict[str, dict]:
+    """Load derivatives data from SQLite, keyed by date.
+
+    Returns: {"2025-10-08": {"funding_rate": 0.0001, ...}, ...}
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM derivatives WHERE symbol = ? ORDER BY date ASC",
+            (symbol,),
+        ).fetchall()
+    except Exception:
+        conn.close()
+        return {}  # Table might not exist yet
+    conn.close()
+
+    result = {}
+    for r in rows:
+        result[r["date"]] = {
+            "funding_rate": r["funding_rate"],
+            "long_short_ratio": r["long_short_ratio"],
+            "taker_buy_sell_ratio": r["taker_buy_sell_ratio"],
+            "open_interest": r["open_interest"],
+            "oi_change_pct": r["oi_change_pct"],
+        }
+    return result
+
+
 def load_asset_config() -> dict:
     """Load assets.yaml and return per-asset configs."""
     assets_path = Path(__file__).resolve().parent.parent / "assets.yaml"
@@ -115,8 +148,14 @@ def compute_daily_scores(
     fg_data: list[dict],
     scoring_cfg: dict,
     start_idx: int = 60,
+    derivatives_data: dict[str, dict] | None = None,
 ) -> tuple[dict[int, dict], dict[int, float], dict[int, float]]:
-    """Compute dimension scores and forward returns for each day.
+    """Compute dimension scores using DATA-FITTED curves (no hardcoded scoring).
+
+    Two-pass approach:
+    1. First pass: compute raw indicator values + forward returns for all days
+    2. Fit scoring params from the data (IC-based, zero magic numbers)
+    3. Second pass: score each day using fitted params
 
     Args:
         candles: Chronological candle data for one asset.
@@ -124,26 +163,30 @@ def compute_daily_scores(
         fg_data: F&G index entries.
         scoring_cfg: Config dict for scoring functions.
         start_idx: First day to start computing (need history for indicators).
+        derivatives_data: {"2025-10-08": {"funding_rate": ..., ...}, ...}
 
     Returns:
         (dimension_scores, forward_returns_24h, forward_returns_48h)
         Each keyed by day index.
     """
-    # Build date -> index maps for macro/fg alignment
+    # Build date -> value maps for macro/fg alignment
     fg_by_date = {e["date"]: e["value"] for e in fg_data}
     macro_by_date: dict[str, dict[str, dict]] = {}
     for source, entries in macro_data.items():
         macro_by_date[source] = {e["date"]: e for e in entries}
 
     tech_cfg = scoring_cfg.get("agents", {}).get("technical", {})
-    market_cfg = scoring_cfg.get("agents", {}).get("market", {})
+    if derivatives_data is None:
+        derivatives_data = {}
 
-    dimension_scores: dict[int, dict] = {}
+    # -----------------------------------------------------------------------
+    # PASS 1: Compute raw indicator values + forward returns for ALL days
+    # -----------------------------------------------------------------------
+    raw_indicators: dict[int, dict] = {}  # day_key -> all raw indicator values
     forward_returns_24h: dict[int, float] = {}
     forward_returns_48h: dict[int, float] = {}
 
     for idx in range(start_idx, len(candles)):
-        # No future data: only use candles[0:idx+1]
         candle_slice = candles[: idx + 1]
         current_date = candles[idx]["date"]
         current_close = candles[idx]["close"]
@@ -152,79 +195,111 @@ def compute_daily_scores(
         if idx + 1 < len(candles):
             ret_24h = (candles[idx + 1]["close"] - current_close) / current_close * 100
         else:
-            continue  # Can't evaluate without forward data
+            continue
 
         if idx + 2 < len(candles):
             ret_48h = (candles[idx + 2]["close"] - current_close) / current_close * 100
         else:
-            ret_48h = ret_24h  # Fall back to 24h if no 48h data
+            ret_48h = ret_24h
 
-        # Compute technical indicators from candle slice
+        # Compute technical indicators
         tech_data = compute_technical_indicators(candle_slice, tech_cfg)
         if not tech_data:
             continue
 
-        # F&G for this date (needed by both regime detection and market scoring)
+        # Assemble ALL raw indicator values for this day
+        day_key = idx - start_idx
+        raw = dict(tech_data)  # Start with all technical indicators
+
+        # Add F&G
         fg_val = fg_by_date.get(current_date, 50)
+        raw["fear_greed"] = fg_val
 
-        # Detect regime from BTC-level data (uses ADX + price vs MA30)
-        btc_price = tech_data.get("price", 0)
-        btc_ma30 = tech_data.get("ma30", btc_price)
-        btc_adx = tech_data.get("adx_14", 25.0)
-        btc_ma7 = tech_data.get("ma7", btc_price)
-        regime_ctx = detect_regime(
-            btc_price=btc_price, btc_ma30=btc_ma30, fg_value=fg_val,
-            fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
-            btc_adx=btc_adx, btc_ma7=btc_ma7,
-        )
-
-        # Score technical dimension (regime-aware)
-        tech_score = score_technical(tech_data, tech_cfg, regime=regime_ctx.regime)
-        market_data = {
-            "fear_greed": fg_val,
-            "volume_ratio": tech_data.get("volume_ratio", 1.0),
-            "order_book_imbalance": 1.0,  # Not available historically
-            "macro_status": "neutral",
-            "sp500_change": 0.0,
-            "dxy_change": 0.0,
-            "nasdaq_change": 0.0,
-            "vix_roc": 0.0,
-            "stablecoin_supply_change_7d": 0.0,
-        }
-
-        # Fill in macro data if available for this date
+        # Add macro data
         for source in ["sp500", "dxy", "nasdaq", "vix"]:
             if source in macro_by_date and current_date in macro_by_date[source]:
                 entry = macro_by_date[source][current_date]
-                if source == "vix":
-                    market_data["vix_roc"] = entry.get("change_pct", 0.0)
-                    vix_close = entry.get("close", 20.0)
-                    sp_change = market_data["sp500_change"]
-                    if vix_close > 25 or sp_change < -1.5:
-                        market_data["macro_status"] = "strong_risk_off"
-                    elif vix_close < 18 and sp_change > 0.5:
-                        market_data["macro_status"] = "strong_risk_on"
-                    elif sp_change > 0:
-                        market_data["macro_status"] = "risk_on"
-                    elif sp_change < 0:
-                        market_data["macro_status"] = "risk_off"
-                elif source == "sp500":
-                    market_data["sp500_change"] = entry.get("change_pct", 0.0)
+                if source == "sp500":
+                    raw["sp500_change"] = entry.get("change_pct", 0.0)
                 elif source == "dxy":
-                    market_data["dxy_change"] = entry.get("change_pct", 0.0)
+                    raw["dxy_change"] = entry.get("change_pct", 0.0)
                 elif source == "nasdaq":
-                    market_data["nasdaq_change"] = entry.get("change_pct", 0.0)
+                    raw["nasdaq_change"] = entry.get("change_pct", 0.0)
+                elif source == "vix":
+                    raw["vix_roc"] = entry.get("change_pct", 0.0)
 
-        market_score = score_market(market_data, market_cfg)
+        # Add derivatives data (if available for this date)
+        deriv = derivatives_data.get(current_date, {})
+        if deriv:
+            raw["funding_rate"] = deriv.get("funding_rate", 0.0)
+            raw["long_short_ratio"] = deriv.get("long_short_ratio", 0.0)
+            raw["taker_buy_sell_ratio"] = deriv.get("taker_buy_sell_ratio", 0.0)
+            raw["oi_change_pct"] = deriv.get("oi_change_pct", 0.0)
 
-        # Store dimension scores (0-100 scale)
-        day_key = idx - start_idx  # Normalize to 0-based for optimizer
-        dimension_scores[day_key] = {
-            "technical": tech_score.score,
-            "market": market_score.score,
-        }
+        raw_indicators[day_key] = raw
         forward_returns_24h[day_key] = ret_24h
         forward_returns_48h[day_key] = ret_48h
+
+    if not raw_indicators:
+        return {}, {}, {}
+
+    # -----------------------------------------------------------------------
+    # FIT: Compute IC-based scoring params from ALL available data
+    # -----------------------------------------------------------------------
+    all_day_keys = sorted(raw_indicators.keys())
+    all_fwd_48h = [forward_returns_48h[d] for d in all_day_keys]
+
+    # Build indicator series for fitting
+    all_indicator_names = set()
+    for raw in raw_indicators.values():
+        all_indicator_names.update(raw.keys())
+
+    # Filter to numeric indicators only
+    numeric_indicators = {}
+    for name in all_indicator_names:
+        values = []
+        for d in all_day_keys:
+            v = raw_indicators[d].get(name)
+            if isinstance(v, (int, float)) and v == v:  # not NaN
+                values.append(v)
+            else:
+                values.append(None)
+        numeric_indicators[name] = values
+
+    fitted_params = fit_indicator_params(numeric_indicators, all_fwd_48h, min_obs=20)
+
+    # -----------------------------------------------------------------------
+    # PASS 2: Score each day using fitted params (data-driven, no hardcoding)
+    # -----------------------------------------------------------------------
+    dimension_scores: dict[int, dict] = {}
+
+    # Determine which indicators are available for each dimension
+    available_tech = [i for i in TECHNICAL_INDICATORS if i in fitted_params]
+    available_market = [i for i in MARKET_INDICATORS if i in fitted_params]
+    available_deriv = [i for i in DERIVATIVES_INDICATORS if i in fitted_params]
+
+    for day_key in all_day_keys:
+        raw = raw_indicators[day_key]
+
+        scores: dict[str, float] = {}
+
+        # Technical dimension (data-fitted)
+        tech_score = score_dimension_fitted(raw, fitted_params, available_tech)
+        scores["technical"] = tech_score
+
+        # Market dimension (data-fitted)
+        if available_market:
+            market_score = score_dimension_fitted(raw, fitted_params, available_market)
+            scores["market"] = market_score
+        else:
+            scores["market"] = 50.0
+
+        # Derivatives dimension (data-fitted, only if we have data)
+        if available_deriv:
+            deriv_score = score_dimension_fitted(raw, fitted_params, available_deriv)
+            scores["derivatives"] = deriv_score
+
+        dimension_scores[day_key] = scores
 
     return dimension_scores, forward_returns_24h, forward_returns_48h
 
@@ -331,8 +406,12 @@ def run_backtest(
         # Start index: need enough history for indicators
         start_idx = min(60, len(candles) - 10)
 
+        # Load derivatives data for this asset (if available)
+        deriv_data = load_derivatives_data(db_path, symbol)
+
         dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
             candles, macro_data, fg_data, scoring_cfg, start_idx=start_idx,
+            derivatives_data=deriv_data,
         )
 
         if len(dim_scores) < 20:

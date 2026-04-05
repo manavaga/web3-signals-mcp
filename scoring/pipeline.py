@@ -27,12 +27,28 @@ from scoring.modifiers import (
     apply_tier_redistribution, check_abstain, assign_label,
     calculate_targets
 )
+from tools.learned_params import load_learned_state
 
 ALL_DIMENSIONS = ["technical", "derivatives", "market"]
 
 # Cache per-asset weights from backtest baseline (reload every 30 min)
 _baseline_cache: dict = {"data": None, "timestamp": 0.0,
                          "path": Path(__file__).parent.parent / "backtest_baseline.json"}
+
+# Cache learned params (reload every 30 min)
+_learned_cache: dict = {"data": None, "timestamp": 0.0}
+
+
+def _load_learned_params():
+    """Load learned params with 30-min cache."""
+    now = time.time()
+    if _learned_cache["data"] is not None and (now - _learned_cache["timestamp"]) < 1800:
+        return _learned_cache["data"]
+    state = load_learned_state()
+    if state:
+        _learned_cache["data"] = state
+        _learned_cache["timestamp"] = now
+    return state
 
 
 def _load_per_asset_weights(path_override: Path | None = None) -> dict:
@@ -206,13 +222,30 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
         composite = sum(dimensions[dim].score * weights.get(dim, 0) for dim in ALL_DIMENSIONS)
         composite = max(0.0, min(100.0, composite))
 
-        # Step 5: Check abstain
+        # Step 4b: Suppress bullish signals in trending_down regime
+        # Data shows LONG trades in trending_down: 43% win rate, -31% PnL
+        # Cap composite at 50 (neutral) to prevent bullish calls against the trend
+        if regime.regime == "trending_down" and composite > 50.0:
+            composite = 50.0
+
+        # Step 5: Check abstain (with learned per-asset, per-direction adjustments)
+        learned_state = _load_learned_params()
+        learned_asset = learned_state.assets.get(asset) if learned_state else None
+
         regime_mult = cfg.regime.abstain_multiplier.get(regime.regime, 1.0)
+        base_bearish = cfg.scoring.abstain.bearish_min_distance
+        base_bullish = cfg.scoring.abstain.bullish_min_distance
+
+        # Apply learned direction confidence adjustments
+        if learned_asset:
+            eff_bearish = base_bearish + learned_asset.bearish.abstain_adjustment
+            eff_bullish = base_bullish + learned_asset.bullish.abstain_adjustment
+        else:
+            eff_bearish = base_bearish
+            eff_bullish = base_bullish
+
         abstained = check_abstain(
-            composite,
-            cfg.scoring.abstain.bearish_min_distance,
-            cfg.scoring.abstain.bullish_min_distance,
-            regime_mult,
+            composite, eff_bearish, eff_bullish, regime_mult,
         )
 
         # Step 7: Assign label
@@ -223,20 +256,63 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             labels_list = [{"name": l.name, "min_score": l.min_score} for l in cfg.scoring.labels]
             label, direction = assign_label(composite, labels_list)
 
-        # Step 6: Calculate targets (only for directional)
+        # Step 6: Calculate targets (using learned params when available)
         targets = None
         if not abstained and direction != "neutral":
-            atr_14 = (agent_data.get("technical") or {}).get(asset, {}).get("atr_14", 0)
-            entry_price = (agent_data.get("technical") or {}).get(asset, {}).get("price", 0)
-            if entry_price > 0 and atr_14 > 0:
-                targets = calculate_targets(
-                    entry_price=entry_price,
-                    composite=composite,
-                    direction=direction,
-                    atr_14=atr_14,
-                    sl_multiplier=asset_entry.sl_atr_multiplier,
-                    cfg=cfg.targets.model_dump(),
-                )
+            asset_tech = (agent_data.get("technical") or {}).get(asset, {})
+            entry_price = asset_tech.get("price", 0)
+
+            if entry_price > 0 and learned_asset:
+                # Use learned TP/SL distances (data-derived, per-direction)
+                dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
+                if dp.optimal_tp_pct > 0 and dp.optimal_sl_pct > 0:
+                    from scoring.types import TargetLevels
+                    if direction == "bullish":
+                        tp = entry_price * (1 + dp.optimal_tp_pct / 100)
+                        sl = entry_price * (1 - dp.optimal_sl_pct / 100)
+                    else:
+                        tp = entry_price * (1 - dp.optimal_tp_pct / 100)
+                        sl = entry_price * (1 + dp.optimal_sl_pct / 100)
+
+                    reward = abs(tp - entry_price)
+                    risk = abs(entry_price - sl)
+                    rr = reward / risk if risk > 0 else 0
+
+                    score_dist = abs(composite - 50)
+                    conf = "high" if score_dist > 20 else ("medium" if score_dist > 12 else "low")
+                    predicted_pct = (tp - entry_price) / entry_price * 100
+
+                    targets = TargetLevels(
+                        entry_price=round(entry_price, 2),
+                        target_price=round(tp, 2),
+                        stop_loss=round(sl, 2),
+                        risk_reward_ratio=round(rr, 2),
+                        predicted_move_pct=round(predicted_pct, 2),
+                        confidence=conf,
+                        timeframe_hours=cfg.targets.timeframe_hours,
+                    )
+
+            # Fallback to S/R-based targets if no learned params
+            if targets is None and entry_price > 0:
+                atr_14 = asset_tech.get("atr_14", 0)
+                if atr_14 > 0:
+                    sr_levels = {
+                        "ma7": asset_tech.get("ma7", 0),
+                        "ma30": asset_tech.get("ma30", 0),
+                        "bb_upper": asset_tech.get("bb_upper", 0),
+                        "bb_lower": asset_tech.get("bb_lower", 0),
+                        "swing_high": asset_tech.get("swing_high", 0),
+                        "swing_low": asset_tech.get("swing_low", 0),
+                    }
+                    targets = calculate_targets(
+                        entry_price=entry_price,
+                        composite=composite,
+                        direction=direction,
+                        atr_14=atr_14,
+                        sl_multiplier=asset_entry.sl_atr_multiplier,
+                        cfg=cfg.targets.model_dump(),
+                        sr_levels=sr_levels,
+                    )
 
         # Momentum
         prev = (prev_scores or {}).get(asset)

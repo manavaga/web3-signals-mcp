@@ -18,12 +18,12 @@ def _get_assets():
 def _mock_agent_data():
     return {
         "technical": {
-            "BTC": {"rsi_14": 35, "macd_histogram": 0.5, "bb_position": 0.2,
+            "BTC": {"rsi_14": 35, "macd_histogram": 0.5, "bb_bandwidth": 0.04,
                     "price": 84000, "ma7": 83000, "ma30": 82000,
-                    "volume_status": "normal", "atr_14": 2100},
-            "ETH": {"rsi_14": 55, "macd_histogram": -0.1, "bb_position": 0.6,
+                    "volume_status": "normal", "atr_14": 2100, "macd_zscore": 0.3},
+            "ETH": {"rsi_14": 55, "macd_histogram": -0.1, "bb_bandwidth": 0.06,
                     "price": 3200, "ma7": 3250, "ma30": 3100,
-                    "volume_status": "normal", "atr_14": 120},
+                    "volume_status": "normal", "atr_14": 120, "macd_zscore": -0.1},
         },
         "derivatives": {
             "BTC": {"long_short_ratio": 0.58, "funding_rate": 0.0001,
@@ -117,14 +117,14 @@ def _mock_agent_data_for_relative():
     """Agent data where ETH RSI is much higher than BTC RSI."""
     return {
         "technical": {
-            "BTC": {"rsi_14": 50, "macd_histogram": 0.0, "bb_position": 0.5,
+            "BTC": {"rsi_14": 50, "macd_histogram": 0.0, "bb_bandwidth": 0.06,
                     "price": 84000, "ma7": 83000, "ma30": 82000,
                     "volume_status": "normal", "atr_14": 2100,
-                    "roc_7d": 2.0},
-            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_position": 0.5,
+                    "roc_7d": 2.0, "macd_zscore": 0.0},
+            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_bandwidth": 0.06,
                     "price": 3200, "ma7": 3250, "ma30": 3100,
                     "volume_status": "normal", "atr_14": 120,
-                    "roc_7d": 5.0},
+                    "roc_7d": 5.0, "macd_zscore": 0.0},
         },
         "derivatives": {
             "BTC": {"long_short_ratio": 0.58, "funding_rate": 0.0001,
@@ -185,9 +185,9 @@ def test_relative_features_no_btc_data():
     assets = _get_assets()
     agent_data = {
         "technical": {
-            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_position": 0.5,
+            "ETH": {"rsi_14": 70, "macd_histogram": 0.0, "bb_bandwidth": 0.06,
                     "price": 3200, "ma7": 3250, "ma30": 3100,
-                    "volume_status": "normal", "atr_14": 120},
+                    "volume_status": "normal", "atr_14": 120, "macd_zscore": 0.0},
         },
         "derivatives": {
             "ETH": {"long_short_ratio": 0.62, "funding_rate": 0.0003,

@@ -89,12 +89,119 @@ def run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force
 
         logger.info(f"Fusion complete: {len(signals)} signals")
 
+        # --- Record trades for directional signals with targets ---
+        _record_trades(storage, signals)
+
+        # --- Evaluate open trades (check TP/SL against current prices) ---
+        _evaluate_open_trades(storage)
+
         # --- Learning layer: evaluate old signals, compute IC, propose weights ---
         _run_evaluation_cycle(config, assets_cfg, storage, signals)
 
         return now
 
     return last_fusion
+
+
+def _record_trades(storage, signals):
+    """Record directional signals as trades for P&L tracking."""
+    try:
+        for asset, sig in signals.items():
+            if sig.abstained or sig.direction == "neutral" or not sig.targets:
+                continue
+
+            t = sig.targets
+            if t.entry_price <= 0:
+                continue
+
+            trade_id = storage.save_trade(
+                asset=asset,
+                direction=sig.direction,
+                composite_score=sig.composite,
+                entry_price=t.entry_price,
+                target_price=t.target_price,
+                stop_loss=t.stop_loss,
+                risk_reward_ratio=t.risk_reward_ratio,
+                confidence=t.confidence,
+                regime=sig.regime.regime,
+                source="live",
+            )
+            logger.info(f"Trade recorded: {asset} {sig.direction} "
+                       f"entry=${t.entry_price} tp=${t.target_price} sl=${t.stop_loss} "
+                       f"(trade #{trade_id})")
+    except Exception as e:
+        logger.error(f"Trade recording error (non-fatal): {e}")
+
+
+def _evaluate_open_trades(storage):
+    """Check open trades against current prices for TP/SL hits."""
+    try:
+        open_trades = storage.get_open_trades()
+        if not open_trades:
+            return
+
+        for trade in open_trades:
+            asset = trade["asset"]
+            current_price = _get_current_price(asset, storage)
+            if current_price is None:
+                continue
+
+            direction = trade["direction"]
+            tp = trade["target_price"]
+            sl = trade["stop_loss"]
+            entry = trade["entry_price"]
+            entry_time = trade.get("entry_time", "")
+
+            # Check age — if > 48h, expire the trade
+            try:
+                entry_dt = datetime.fromisoformat(entry_time.replace("Z", "+00:00"))
+                age_hours = (datetime.now(timezone.utc) - entry_dt).total_seconds() / 3600
+            except Exception:
+                age_hours = 0
+
+            outcome = None
+            exit_price = current_price
+
+            if direction == "bullish":
+                if current_price >= tp:
+                    outcome = "tp_hit"
+                    exit_price = tp
+                elif current_price <= sl:
+                    outcome = "sl_hit"
+                    exit_price = sl
+                elif age_hours >= 48:
+                    outcome = "expired_win" if current_price > entry else "expired_loss"
+            else:  # bearish
+                if current_price <= tp:
+                    outcome = "tp_hit"
+                    exit_price = tp
+                elif current_price >= sl:
+                    outcome = "sl_hit"
+                    exit_price = sl
+                elif age_hours >= 48:
+                    outcome = "expired_win" if current_price < entry else "expired_loss"
+
+            if outcome:
+                if direction == "bullish":
+                    pnl_pct = (exit_price - entry) / entry * 100
+                else:
+                    pnl_pct = (entry - exit_price) / entry * 100
+
+                pos_size = trade.get("position_size_usd", 0) or 0
+                pnl_usd = pos_size * (pnl_pct / 100) if pos_size > 0 else 0
+
+                storage.close_trade(
+                    trade_id=trade["id"],
+                    exit_price=round(exit_price, 2),
+                    outcome=outcome,
+                    pnl_pct=round(pnl_pct, 2),
+                    pnl_usd=round(pnl_usd, 2),
+                )
+                logger.info(f"Trade closed: {asset} {direction} → {outcome} "
+                           f"PnL: {pnl_pct:+.2f}%")
+
+    except Exception as e:
+        logger.error(f"Trade evaluation error (non-fatal): {e}")
 
 
 def _run_evaluation_cycle(config, assets_cfg, storage, current_signals):
