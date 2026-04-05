@@ -1,6 +1,72 @@
 # Web3 Signals
 
-AI-powered crypto signal intelligence — 5 data agents score 20 assets, fused via 7-step pipeline.
+AI-powered crypto signal intelligence — data agents score assets, fused via 7-step pipeline.
+
+## HARD RULES (non-negotiable, override everything else)
+
+### 1. No deploy without backtest
+NO scoring, weight, threshold, agent, or pipeline change can be deployed without passing a backtest gate.
+- Run backtest on historical data BEFORE any deploy
+- Compare proposed accuracy vs current accuracy per asset
+- Only deploy if proposed >= current for overall CWA
+- Present backtest results to the user before deploying
+- This applies to ALL changes: config, weights, thresholds, new agents, removed agents, new indicators
+
+### 2. No hardcoded weights
+NEVER propose or hardcode dimension weights. All weights must be determined by backtesting at the per-asset level.
+- Different assets have different leading indicators
+- Only IC analysis and backtest optimization can determine weights
+- Start new dimensions at equal weight (1/N), let the optimizer find the right values
+- Per-asset weight profiles come from data, not human intuition
+
+### 3. No placeholder agents
+If an agent doesn't produce real data, cut it completely. Don't include it with weight=0, don't show it on dashboard, don't run it in orchestrator.
+- Only add an agent back when it has a real implementation AND backtest shows positive IC
+- Don't half-implement agents
+
+### 4. Research before code
+Stop making reactive code changes. Research and validate first, then implement.
+- When an issue is raised, RESEARCH first (read code, understand the problem fully)
+- Present findings and proposed approach to the user
+- Get explicit approval before making changes
+- Never chain multiple untested changes in one push
+
+### 5. Key research learnings (from 5-expert analysis, 2026-04-05)
+
+**Leading indicators by consensus (add these):**
+- OBV (On-Balance Volume) — volume-confirmed trend, leads price by 1-3 candles
+- MFI (Money Flow Index) — volume-weighted RSI, catches distribution before price drops
+- Bollinger/Keltner squeeze — volatility compression precedes breakouts
+- Funding rate extremes — >0.05% or <-0.03% mean crowded trades about to unwind
+- Stablecoin supply ratio — money entering/leaving crypto ecosystem
+- NASDAQ/QQQ correlation — crypto follows risk-on/risk-off macro moves
+- DXY (Dollar Index) — inverse correlation with crypto
+- Z-score transformations — normalize all indicators for cross-asset comparison
+
+**What NOT to add (low IC or noisy):**
+- Twitter/social sentiment — too noisy for quantitative scoring, save for qualitative LLM overlay
+- On-chain whale tracking — fundamentally broken architecture (monitors transfers, not flows)
+- Elliott Wave / harmonic patterns — subjective, not backtestable
+- Google Trends — too lagging for 24h/48h predictions
+
+**Asymmetries discovered:**
+- Whale/exchange_flow bullish signals are toxic (27% accuracy) but bearish signals are strong (61%)
+- Market dimension is strongest bullish predictor (IC=+0.31)
+- Technical dimension is strongest bearish predictor (IC=+0.64)
+- Different assets have different leading indicators — BTC is macro-driven, small caps are technical-driven
+
+**Optimal parameters (from research, to be validated by backtest):**
+- RSI: 14-period (standard), but add StochRSI for momentum divergence
+- MACD: 12/26/9 (standard), add histogram slope for momentum direction
+- Bollinger Bands: 20/2 (standard), add bandwidth for squeeze detection
+- ATR: 14-period for stop-loss calibration
+- Walk-forward embargo: 7+ days minimum between train/test sets
+- Minimum 20 evaluated signals per asset before learning kicks in
+
+### 6. Persistent context
+See `docs/CONTEXT.md` for current project state, decisions, and what's in progress. Updated each session.
+
+---
 
 ## File Map (decision tree)
 
