@@ -129,11 +129,14 @@ agents:
   market:
     cadence_minutes: 120
     scoring_weights:
-      fear_greed: 0.25
-      volume: 0.15
-      breadth: 0.15
-      macro: 0.20
-      order_book: 0.25
+      fear_greed: 0.15
+      volume: 0.10
+      macro: 0.15
+      order_book: 0.15
+      stablecoin: 0.15
+      dxy: 0.10
+      nasdaq: 0.10
+      vix_roc: 0.10
     volume_spike_threshold: 2.0
     macro_vix_risk_off: 25
     macro_vix_risk_on: 18

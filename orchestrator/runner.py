@@ -38,7 +38,7 @@ def _load_agents(config, assets_cfg, storage=None):
     try:
         from agents.market import MarketAgent
         coingecko_ids = {a: assets_cfg.get(a).coingecko_id for a in assets_cfg.enabled_assets()}
-        agents.append(("market_agent", MarketAgent(config.agents.market.model_dump(), symbols, coingecko_ids),
+        agents.append(("market_agent", MarketAgent(config.agents.market.model_dump(), symbols, coingecko_ids, storage=storage),
                        config.agents.market.cadence_minutes))
     except ImportError:
         pass

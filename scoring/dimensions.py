@@ -292,30 +292,66 @@ def _order_book_score(imbalance: float) -> float:
         return 50.0 - intensity * 20.0
 
 
+def _stablecoin_score(change_7d: float) -> float:
+    """Stablecoin supply growth: positive = money entering crypto = bullish."""
+    return _clamp(50 + min(max(change_7d * 5, -30), 30), 20, 80)
+
+
+def _dxy_score(dxy_change: float) -> float:
+    """DXY inverse correlation: DXY up = bearish for crypto."""
+    return _clamp(50 - min(max(dxy_change * 15, -30), 30), 20, 80)
+
+
+def _nasdaq_score(nasdaq_change: float) -> float:
+    """NASDAQ correlation: NASDAQ up = bullish for crypto."""
+    return _clamp(50 + min(max(nasdaq_change * 10, -30), 30), 20, 80)
+
+
+def _vix_roc_score(vix_roc: float) -> float:
+    """VIX rate of change: falling VIX = risk-on = bullish."""
+    return _clamp(50 - min(max(vix_roc * 2, -25), 25), 25, 75)
+
+
 def score_market(data: Optional[dict], cfg: dict) -> DimensionScore:
     if not data:
         return DimensionScore(name="market", score=50.0, detail="no data", tier="none")
 
     fg = data.get("fear_greed", 50)
     vol_ratio = data.get("volume_ratio", 1.0)
-    breadth = data.get("breadth_status", "neutral")
     macro = data.get("macro_status", "neutral")
     ob_imb = data.get("order_book_imbalance", 1.0)
+
+    stable_change = data.get("stablecoin_supply_change_7d", 0.0)
+    dxy_change = data.get("dxy_change", 0.0)
+    nasdaq_change = data.get("nasdaq_change", 0.0)
+    vix_roc = data.get("vix_roc", 0.0)
 
     weights = cfg.get("scoring_weights", {})
 
     fg_s = _fg_score(fg)
     vol_s = _volume_score(vol_ratio)
-    br_s = _breadth_score(breadth)
     mac_s = _macro_score(macro)
     ob_s = _order_book_score(ob_imb)
+    stable_s = _stablecoin_score(stable_change)
+    dxy_s = _dxy_score(dxy_change)
+    nasdaq_s = _nasdaq_score(nasdaq_change)
+    vix_s = _vix_roc_score(vix_roc)
 
-    score = (weights.get("fear_greed", 0.25) * fg_s +
-             weights.get("volume", 0.15) * vol_s +
-             weights.get("breadth", 0.15) * br_s +
-             weights.get("macro", 0.20) * mac_s +
-             weights.get("order_book", 0.25) * ob_s)
+    components = [
+        (fg_s, weights.get("fear_greed", 0.15)),
+        (vol_s, weights.get("volume", 0.10)),
+        (mac_s, weights.get("macro", 0.15)),
+        (ob_s, weights.get("order_book", 0.15)),
+        (stable_s, weights.get("stablecoin", 0.15)),
+        (dxy_s, weights.get("dxy", 0.10)),
+        (nasdaq_s, weights.get("nasdaq", 0.10)),
+        (vix_s, weights.get("vix_roc", 0.10)),
+    ]
+    total_w = sum(w for _, w in components)
+    score = sum(s * w for s, w in components) / total_w if total_w > 0 else 50.0
 
     score = _clamp(score)
-    detail = f"F&G={fg}, vol_ratio={vol_ratio:.1f}, macro={macro}, OB_imb={ob_imb:.2f}"
+    detail = (f"F&G={fg}, vol_ratio={vol_ratio:.1f}, macro={macro}, OB_imb={ob_imb:.2f}, "
+              f"stable_chg={stable_change:.1f}%, DXY={dxy_change:.1f}%, "
+              f"NASDAQ={nasdaq_change:.1f}%, VIX_ROC={vix_roc:.1f}%")
     return DimensionScore(name="market", score=score, detail=detail, tier="full")

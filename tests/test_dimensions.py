@@ -191,3 +191,107 @@ def test_detect_data_tier():
     assert detect_data_tier(50.0, "no data available") == "none"
     assert detect_data_tier(50.0, "error: API timeout") == "none"
     assert detect_data_tier(50.0, "partial data") == "partial"
+
+
+# --- New market scoring tests (Task 6) ---
+
+NEW_MARKET_WEIGHTS = {
+    "fear_greed": 0.15, "volume": 0.10, "macro": 0.15, "order_book": 0.15,
+    "stablecoin": 0.15, "dxy": 0.10, "nasdaq": 0.10, "vix_roc": 0.10,
+}
+
+def _base_market_data(**overrides):
+    """Neutral baseline market data."""
+    d = {
+        "fear_greed": 50, "volume_ratio": 1.0,
+        "breadth_status": "neutral", "macro_status": "neutral",
+        "order_book_imbalance": 1.0,
+        "stablecoin_supply_change_7d": 0.0,
+        "dxy_change": 0.0, "nasdaq_change": 0.0, "vix_roc": 0.0,
+    }
+    d.update(overrides)
+    return d
+
+
+def test_market_score_stablecoin_growth_bullish():
+    """Positive stablecoin supply growth should push score above neutral."""
+    data = _base_market_data(stablecoin_supply_change_7d=3.0)
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    neutral = score_market(_base_market_data(), cfg)
+    assert ds.score > neutral.score, f"Stablecoin growth should be bullish: {ds.score} vs {neutral.score}"
+
+
+def test_market_score_dxy_up_bearish():
+    """DXY up should push score below neutral (inverse correlation)."""
+    data = _base_market_data(dxy_change=1.5)
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    neutral = score_market(_base_market_data(), cfg)
+    assert ds.score < neutral.score, f"DXY up should be bearish: {ds.score} vs {neutral.score}"
+
+
+def test_market_score_nasdaq_up_bullish():
+    """NASDAQ up should push score above neutral."""
+    data = _base_market_data(nasdaq_change=2.0)
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    neutral = score_market(_base_market_data(), cfg)
+    assert ds.score > neutral.score, f"NASDAQ up should be bullish: {ds.score} vs {neutral.score}"
+
+
+def test_market_score_vix_falling_bullish():
+    """Falling VIX (negative ROC) should push score above neutral."""
+    data = _base_market_data(vix_roc=-5.0)
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    neutral = score_market(_base_market_data(), cfg)
+    assert ds.score > neutral.score, f"Falling VIX should be bullish: {ds.score} vs {neutral.score}"
+
+
+def test_market_score_full_bullish_data():
+    """All bullish inputs should produce score > 65."""
+    data = _base_market_data(
+        fear_greed=10,               # extreme fear = contrarian bullish
+        volume_ratio=2.5,            # high volume
+        macro_status="strong_risk_on",
+        order_book_imbalance=2.0,    # bid heavy
+        stablecoin_supply_change_7d=5.0,  # growing supply
+        dxy_change=-2.0,             # DXY falling = bullish
+        nasdaq_change=3.0,           # NASDAQ up
+        vix_roc=-10.0,              # VIX falling fast
+    )
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    assert ds.score > 65, f"Full bullish should score > 65, got {ds.score}"
+
+
+def test_market_score_full_bearish_data():
+    """All bearish inputs should produce score < 35."""
+    data = _base_market_data(
+        fear_greed=90,               # extreme greed = contrarian bearish
+        volume_ratio=0.3,            # low volume
+        macro_status="strong_risk_off",
+        order_book_imbalance=0.3,    # ask heavy
+        stablecoin_supply_change_7d=-5.0,  # shrinking supply
+        dxy_change=2.0,              # DXY rising = bearish
+        nasdaq_change=-3.0,          # NASDAQ down
+        vix_roc=10.0,               # VIX rising fast
+    )
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    assert ds.score < 35, f"Full bearish should score < 35, got {ds.score}"
+
+
+def test_market_score_backward_compatible():
+    """When new fields are missing, scoring should still work with defaults."""
+    data = {
+        "fear_greed": 50, "volume_ratio": 1.0,
+        "breadth_status": "neutral", "macro_status": "neutral",
+        "order_book_imbalance": 1.0,
+        # No stablecoin, dxy, nasdaq, vix_roc fields
+    }
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+    ds = score_market(data, cfg)
+    assert isinstance(ds, DimensionScore)
+    assert 40 < ds.score < 60, f"Missing new fields should default to neutral, got {ds.score}"

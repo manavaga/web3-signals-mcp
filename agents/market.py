@@ -20,15 +20,17 @@ logger = logging.getLogger(__name__)
 
 # Simple in-memory cache for macro data (30-minute TTL)
 _macro_cache: dict = {"data": None, "timestamp": 0}
+_stablecoin_cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 1800  # 30 minutes
 
 
 class MarketAgent(BaseAgent):
-    def __init__(self, config: dict, symbols: dict[str, str], coingecko_ids: dict[str, str]):
+    def __init__(self, config: dict, symbols: dict[str, str], coingecko_ids: dict[str, str], storage=None):
         super().__init__("market_agent")
         self.config = config
         self.symbols = symbols
         self.coingecko_ids = coingecko_ids
+        self.storage = storage
 
     def empty_data(self) -> dict[str, Any]:
         return {asset: {} for asset in self.symbols}
@@ -60,6 +62,13 @@ class MarketAgent(BaseAgent):
         btc_dominance = self._fetch_btc_dominance()
         breadth_status = self._compute_breadth_status(btc_dominance)
 
+        # Fetch stablecoin supply data
+        stablecoin = {}
+        try:
+            stablecoin = self._fetch_stablecoin_supply()
+        except Exception as e:
+            errors.append(f"Stablecoin: {e}")
+
         for asset, symbol in self.symbols.items():
             try:
                 result = {
@@ -71,6 +80,8 @@ class MarketAgent(BaseAgent):
                     "vix_roc": macro.get("vix_roc", 0.0),
                     "btc_dominance": btc_dominance,
                     "breadth_status": breadth_status,
+                    "stablecoin_supply_total": stablecoin.get("stablecoin_supply_total", 0),
+                    "stablecoin_supply_change_7d": stablecoin.get("stablecoin_supply_change_7d", 0.0),
                 }
 
                 # Volume from Binance klines
@@ -192,6 +203,43 @@ class MarketAgent(BaseAgent):
             return "gainer"
         else:
             return "neutral"
+
+    def _fetch_stablecoin_supply(self) -> dict:
+        """Fetch total stablecoin supply and 7-day change from DefiLlama (cached 30 min)."""
+        now = time.time()
+        if _stablecoin_cache["data"] and (now - _stablecoin_cache["timestamp"]) < CACHE_TTL:
+            return _stablecoin_cache["data"]
+
+        try:
+            resp = requests.get(
+                "https://stablecoins.llama.fi/stablecoins?includePrices=false",
+                timeout=10,
+            )
+            data = resp.json()
+            # Sum top stablecoins by circulating supply
+            top_names = {"USDT", "USDC", "DAI", "BUSD", "TUSD"}
+            total = 0.0
+            for asset in data.get("peggedAssets", []):
+                name = asset.get("symbol", "")
+                if name in top_names:
+                    total += asset.get("circulating", {}).get("peggedUSD", 0)
+
+            # Compute 7d change from stored previous value
+            change_pct = 0.0
+            if self.storage:
+                prev_supply = self.storage.load_kv("market", "stablecoin_supply")
+                if prev_supply and total > 0:
+                    prev = float(prev_supply)
+                    change_pct = ((total - prev) / prev) * 100
+                if total > 0:
+                    self.storage.save_kv("market", "stablecoin_supply", str(total))
+
+            result = {"stablecoin_supply_total": total, "stablecoin_supply_change_7d": change_pct}
+            _stablecoin_cache["data"] = result
+            _stablecoin_cache["timestamp"] = now
+            return result
+        except Exception:
+            return {"stablecoin_supply_total": 0, "stablecoin_supply_change_7d": 0.0}
 
     def _fetch_json(self, url: str) -> Any:
         req = Request(url, headers={"User-Agent": "web3-signals/1.0"})
