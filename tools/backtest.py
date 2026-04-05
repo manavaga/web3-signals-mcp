@@ -32,6 +32,7 @@ from tools.indicators import compute_technical_indicators, compute_market_indica
 from tools.walk_forward import generate_folds, gradient_score, compute_cwa, evaluate_neutral
 from tools.weight_optimizer import optimize_asset, run_optimization, get_confidence_tier
 from tools.deploy_gate import check_deploy_gate, load_baseline, save_baseline
+from tools.abstain_sweep import sweep_abstain_thresholds
 
 # Scoring functions
 from scoring.dimensions import score_technical, score_market
@@ -225,7 +226,8 @@ def run_backtest(
     assets: list[str] | None = None,
     quick: bool = False,
     db_path: str = DB_PATH,
-) -> dict:
+    return_raw_data: bool = False,
+) -> dict | tuple[dict, dict, dict]:
     """Run the full walk-forward backtest.
 
     1. Load historical data from SQLite
@@ -238,8 +240,10 @@ def run_backtest(
         assets: List of asset names (default: all enabled).
         quick: If True, use last 30 days only.
         db_path: Path to SQLite database.
+        return_raw_data: If True, return (results, all_asset_data, asset_configs)
+                         for downstream use (e.g., abstain sweep).
 
-    Returns: dict in baseline format (compatible with deploy gate).
+    Returns: dict in baseline format, or tuple if return_raw_data=True.
     """
     if quick:
         days = 30
@@ -335,7 +339,10 @@ def run_backtest(
 
     if not all_asset_data:
         print("\nNo assets had sufficient data for backtesting.")
-        return {"overall_cwa": 0.0, "assets": {}}
+        empty = {"overall_cwa": 0.0, "assets": {}}
+        if return_raw_data:
+            return empty, {}, {}
+        return empty
 
     # Run optimization
     print(f"\nOptimizing weights for {len(all_asset_data)} assets...")
@@ -345,6 +352,8 @@ def run_backtest(
     for asset, data in results.get("assets", {}).items():
         data["confidence"] = get_confidence_tier(data.get("n_signals", 0))
 
+    if return_raw_data:
+        return results, all_asset_data, asset_configs
     return results
 
 
@@ -423,6 +432,101 @@ def print_results(results: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Abstain Threshold Sweep
+# ---------------------------------------------------------------------------
+
+def run_abstain_sweep(
+    all_asset_data: dict,
+    asset_configs: dict,
+    optimized_weights: dict,
+) -> dict:
+    """Run abstain threshold sweep for all assets using optimized weights.
+
+    For each asset, computes composite scores using its optimized weights,
+    then sweeps abstain thresholds to find the optimal combination.
+
+    Args:
+        all_asset_data: Per-asset dimension scores and forward returns.
+        asset_configs: Per-asset noise/strong thresholds.
+        optimized_weights: Per-asset weights from weight optimization.
+
+    Returns: dict keyed by asset name with sweep results.
+    """
+    sweep_results = {}
+
+    for asset, data in all_asset_data.items():
+        dim_scores = data["dimension_scores"]
+        fwd_24h = data["forward_returns_24h"]
+        fwd_48h = data["forward_returns_48h"]
+
+        weights = optimized_weights.get(asset, {})
+        if not weights:
+            continue
+
+        cfg = asset_configs.get(asset, {})
+        noise = cfg.get("noise_threshold", 2.0)
+        strong = cfg.get("strong_threshold", 5.0)
+
+        # Compute composite scores using optimized weights
+        day_indices = sorted(
+            set(dim_scores.keys()) & set(fwd_24h.keys()) & set(fwd_48h.keys())
+        )
+
+        composites = []
+        returns_24h = []
+        returns_48h = []
+        dim_names = sorted(weights.keys())
+
+        for d in day_indices:
+            scores = dim_scores[d]
+            composite = sum(scores.get(dim, 50.0) * weights.get(dim, 0.0) for dim in dim_names)
+            composites.append(composite)
+            returns_24h.append(fwd_24h[d])
+            returns_48h.append(fwd_48h[d])
+
+        if not composites:
+            continue
+
+        # Estimate ATR as average absolute daily return
+        atr_pct = sum(abs(r) for r in returns_24h) / len(returns_24h) if returns_24h else 2.0
+
+        result = sweep_abstain_thresholds(
+            composite_scores=composites,
+            forward_returns_24h=returns_24h,
+            forward_returns_48h=returns_48h,
+            noise_threshold=noise,
+            strong_threshold=strong,
+            atr_pct=atr_pct,
+        )
+        sweep_results[asset] = result
+
+    return sweep_results
+
+
+def print_sweep_results(sweep_results: dict) -> None:
+    """Print formatted abstain sweep results."""
+    if not sweep_results:
+        print("No sweep results to display.")
+        return
+
+    print(f"\nABSTAIN THRESHOLD SWEEP")
+    sep = "=" * 100
+    print(sep)
+    print(f"{'Asset':<8} {'BearDist':>8} {'BullDist':>8} {'RegMult':>8} "
+          f"{'Combined':>9} {'CWA':>7} {'Acc24h':>7} {'MissRate':>9} {'Coverage':>9} {'Combos':>7}")
+    print("-" * 100)
+
+    for asset in sorted(sweep_results.keys()):
+        r = sweep_results[asset]
+        print(f"{asset:<8} {r['best_bearish_distance']:>8} {r['best_bullish_distance']:>8} "
+              f"{r['best_regime_multiplier']:>8.1f} {r['combined_score']:>8.4f} "
+              f"{r['cwa']:>6.4f} {r['accuracy_24h']:>6.1%} {r['abstain_miss_rate']:>8.1%} "
+              f"{r['coverage']:>8.1%} {r['combos_tested']:>7}")
+
+    print(sep)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -436,6 +540,8 @@ def main() -> None:
     parser.add_argument("--update-baseline", action="store_true", help="Save as new baseline")
     parser.add_argument("--db", type=str, default=DB_PATH, help="SQLite database path")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    parser.add_argument("--sweep-abstain", action="store_true",
+                        help="Run abstain threshold calibration sweep")
     args = parser.parse_args()
 
     logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(message)s")
@@ -448,17 +554,37 @@ def main() -> None:
     asset_list = [a.strip().upper() for a in args.assets.split(",")] if args.assets else None
     days = 30 if args.quick else args.days
 
-    results = run_backtest(
+    need_raw = args.sweep_abstain
+    raw_result = run_backtest(
         days=days,
         assets=asset_list,
         quick=args.quick,
         db_path=args.db,
+        return_raw_data=need_raw,
     )
 
-    if args.json:
+    if need_raw:
+        results, all_asset_data, asset_configs_raw = raw_result
+    else:
+        results = raw_result
+
+    if args.json and not args.sweep_abstain:
         print(json.dumps(results, indent=2))
     else:
         print_results(results)
+
+    # Abstain threshold sweep
+    if args.sweep_abstain:
+        optimized_weights = {
+            asset: data.get("weights", {})
+            for asset, data in results.get("assets", {}).items()
+        }
+        sweep_results = run_abstain_sweep(all_asset_data, asset_configs_raw, optimized_weights)
+        if args.json:
+            output = {"backtest": results, "abstain_sweep": sweep_results}
+            print(json.dumps(output, indent=2))
+        else:
+            print_sweep_results(sweep_results)
 
     # Deploy gate
     if args.gate or args.update_baseline:

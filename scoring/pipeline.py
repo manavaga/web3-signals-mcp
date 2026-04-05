@@ -13,6 +13,9 @@ Steps:
 Pure function: inputs in, signals out. No side effects.
 """
 from __future__ import annotations
+import json
+import time
+from pathlib import Path
 from scoring.types import DimensionScore, RegimeContext, Signal
 from scoring.config import AppConfig, AssetsConfig
 from scoring.dimensions import (
@@ -26,6 +29,44 @@ from scoring.modifiers import (
 )
 
 ALL_DIMENSIONS = ["technical", "derivatives", "market"]
+
+# Cache per-asset weights from backtest baseline (reload every 30 min)
+_baseline_cache: dict = {"data": None, "timestamp": 0.0,
+                         "path": Path(__file__).parent.parent / "backtest_baseline.json"}
+
+
+def _load_per_asset_weights(path_override: Path | None = None) -> dict:
+    """Load per-asset weights from backtest baseline, with caching.
+
+    Only returns weights for assets with 'high' or 'medium' confidence.
+    Caches for 30 minutes to avoid repeated disk reads.
+    """
+    now = time.time()
+    cache = _baseline_cache
+    if cache["data"] is not None and (now - cache["timestamp"]) < 1800 and path_override is None:
+        return cache["data"]
+
+    path = path_override or cache["path"]
+    if not path.exists():
+        return {}
+
+    try:
+        baseline = json.loads(path.read_text())
+        per_asset: dict[str, dict[str, float]] = {}
+        for asset, data in baseline.get("assets", {}).items():
+            confidence = data.get("confidence", "insufficient")
+            if confidence in ("high", "medium"):
+                weights = data.get("weights", {})
+                if weights:
+                    per_asset[asset] = weights
+        if path_override is None:
+            cache["data"] = per_asset
+            cache["timestamp"] = now
+        return per_asset
+    except Exception:
+        return {}
+
+
 SCORE_FNS = {
     "technical": score_technical,
     "derivatives": score_derivatives,
@@ -108,6 +149,9 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                 "relative_tech_adjustment": round(rel_adjustment, 4),
             }
 
+    # Load per-asset weights from backtest baseline (if available)
+    per_asset_weights = _load_per_asset_weights()
+
     for asset in enabled:
         asset_entry = assets_cfg.get(asset)
         dimensions = all_dimensions[asset]
@@ -117,25 +161,29 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                        if cfg.scoring.weights_default.get(dim, 0) > 0]
         raw_avg = (sum(ds.score for ds in active_dims) / len(active_dims)) if active_dims else 50.0
 
-        # Step 3a: Select direction-aware weights
-        tier_weights = None
-        if cfg.scoring.per_tier_weights:
-            for tier_name, tw in cfg.scoring.per_tier_weights.items():
-                if asset in tw.assets:
-                    tier_weights = tw
-                    break
-
-        if tier_weights and raw_avg > 50:
-            weights = dict(tier_weights.weights_bullish)
-        elif tier_weights and raw_avg < 50:
-            weights = dict(tier_weights.weights_bearish)
+        # Step 3a: Select weights
+        # Priority: per-asset backtest weights > per-tier weights > config weights
+        if asset in per_asset_weights:
+            weights = dict(per_asset_weights[asset])
         else:
-            weights = select_weights(
-                raw_avg,
-                cfg.scoring.weights_default,
-                cfg.scoring.weights_bullish,
-                cfg.scoring.weights_bearish,
-            )
+            tier_weights = None
+            if cfg.scoring.per_tier_weights:
+                for tier_name, tw in cfg.scoring.per_tier_weights.items():
+                    if asset in tw.assets:
+                        tier_weights = tw
+                        break
+
+            if tier_weights and raw_avg > 50:
+                weights = dict(tier_weights.weights_bullish)
+            elif tier_weights and raw_avg < 50:
+                weights = dict(tier_weights.weights_bearish)
+            else:
+                weights = select_weights(
+                    raw_avg,
+                    cfg.scoring.weights_default,
+                    cfg.scoring.weights_bullish,
+                    cfg.scoring.weights_bearish,
+                )
 
         # Step 3b: Apply regime shifts
         regime_shifts = cfg.regime.weight_shifts.get(regime.regime, {})
