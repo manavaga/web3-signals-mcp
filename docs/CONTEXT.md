@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-05
 **Branch**: v2
-**Status**: Design approved, implementation pending
+**Status**: Implementation complete, first baseline committed. Ready for Railway deploy + re-backtest with full data.
 
 ---
 
@@ -15,14 +15,23 @@
 - **Storage**: Dual-mode Postgres (Railway) / SQLite (local)
 - **Orchestrator**: 15-min scheduler running all agents
 
-### What's Broken
-- **2 dead agents**: narrative (hardcoded 50), exchange_flow (hardcoded 50) — must be cut
-- **91% ABSTAIN signals**: Over-aggressive gating, diluted scores from dead agents
-- **~46% directional accuracy**: Worse than coin flip
-- **No target prices**: Signals say BUY/SELL but no TP/SL
-- **No feedback loop**: IC optimizer disabled, weights are static
-- **Market agent gaps**: S&P never fetched, DXY never fetched, breadth hardcoded "neutral"
-- **Derivatives agent**: OI change % hardcoded to 0.0
+### What's Been Fixed (2026-04-05 implementation)
+- **Dead agents cut**: narrative + exchange_flow removed completely (3-agent system now)
+- **Technical agent**: 9 indicators (was 4). Added OBV, MFI, ROC, StochRSI, BB/Keltner squeeze, z-scores
+- **Market agent**: 8 factors (was 2). Added S&P, DXY, NASDAQ, stablecoin supply, BTC dominance, VIX ROC
+- **Derivatives agent**: OI change % now computed (was hardcoded 0.0), OI-weighted funding added
+- **Relative features**: 3 cross-sectional features (asset vs BTC momentum, strength, funding)
+- **Walk-forward backtest**: 7-day embargo, expanding window, gradient scoring, CWA metric
+- **Weight optimizer**: Grid search 141 combos, IC-driven sub-weights, confidence tiers
+- **Deploy gate**: Blocks changes that regress CWA (3-condition check)
+- **Abstain sweep**: 405 combinations per asset
+- **184 tests** passing (was 60)
+
+### What's Still Needed
+- **Full data backtest**: yfinance blocked locally — re-run on Railway with real macro data
+- **Derivatives historical data**: Need to collect 90+ days of live agent snapshots for Phase 2
+- **IC sub-weight optimization**: Per-indicator weights within each dimension
+- **Mean-reversion vs trend**: Current default sub-weights over-weight RSI/MFI in trending markets
 
 ### Blacklisted Assets (anti-predictive)
 INJ (20.7%), ATOM (24.5%), OP (41.9%) — keep blacklisted until per-asset backtest proves >50% CWA
