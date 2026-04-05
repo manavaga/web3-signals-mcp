@@ -22,14 +22,27 @@ def classify_fg(fg_value: int, thresholds: dict[str, int]) -> str:
 
 def detect_regime(btc_price: float, btc_ma30: float, fg_value: int,
                   fg_thresholds: dict, trending_threshold: float = 0.08,
-                  ranging_threshold: float = 0.03) -> RegimeContext:
+                  ranging_threshold: float = 0.03,
+                  btc_adx: float = 25.0, btc_ma7: float = 0.0,
+                  adx_trending: float = 25.0,
+                  adx_ranging: float = 20.0) -> RegimeContext:
+    """4-regime detection using ADX + price vs MA30.
+
+    Regimes:
+      trending_up   — ADX >= adx_trending AND price > MA30
+      trending_down — ADX >= adx_trending AND price <= MA30
+      ranging       — ADX < adx_ranging
+      volatile      — ADX between ranging and trending (transitional)
+    """
     pct_from_ma30 = abs((btc_price - btc_ma30) / btc_ma30) if btc_ma30 > 0 else 0
-    if pct_from_ma30 > trending_threshold:
-        regime = "trending"
-    elif pct_from_ma30 < ranging_threshold:
+    price_above_ma30 = btc_price > btc_ma30
+
+    if btc_adx >= adx_trending:
+        regime = "trending_up" if price_above_ma30 else "trending_down"
+    elif btc_adx < adx_ranging:
         regime = "ranging"
     else:
-        regime = "unknown"
+        regime = "volatile"
 
     fg_regime = classify_fg(fg_value, fg_thresholds)
     return RegimeContext(regime=regime, fg_value=fg_value, fg_regime=fg_regime,

@@ -1,8 +1,8 @@
 # Web3 Signals — Project Context
 
-**Last updated**: 2026-04-05
+**Last updated**: 2026-04-06
 **Branch**: v2
-**Status**: Implementation complete, first baseline committed. Ready for Railway deploy + re-backtest with full data.
+**Status**: Regime-aware scoring implemented. 3 critical fixes applied: ADX-based 4-regime detection, correlated indicator cleanup, mean-reversion suppression in trends. Ready for re-backtest.
 
 ---
 
@@ -14,6 +14,12 @@
 - **API + dashboard**: FastAPI with x402 micropayments, 5-tab dashboard
 - **Storage**: Dual-mode Postgres (Railway) / SQLite (local)
 - **Orchestrator**: 15-min scheduler running all agents
+
+### What's Been Fixed (2026-04-06 regime-aware update)
+- **ADX-based regime detection**: 4 regimes (trending_up, trending_down, ranging, volatile) replace old 2-state system
+- **Correlated indicators cut**: MFI and StochRSI removed from scoring (85% correlated with RSI). Weights redistributed to RSI, OBV, Trend
+- **Regime-aware technical scoring**: RSI/BB mean-reversion signals suppressed in trending regimes (the root cause of 17% accuracy)
+- **189 tests passing** (was 184)
 
 ### What's Been Fixed (2026-04-05 implementation)
 - **Dead agents cut**: narrative + exchange_flow removed completely (3-agent system now)

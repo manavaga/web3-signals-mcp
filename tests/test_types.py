@@ -20,8 +20,8 @@ def test_dimension_score_clamped():
 
 
 def test_regime_context_defaults():
-    rc = RegimeContext(regime="trending", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12)
-    assert rc.regime == "trending"
+    rc = RegimeContext(regime="trending_up", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12)
+    assert rc.regime == "trending_up"
     assert rc.fg_regime == "neutral"
 
 
@@ -35,7 +35,7 @@ def test_signal_has_all_fields():
     sig = Signal(
         asset="BTC", composite=63.2, label="MODERATE BUY", direction="bullish",
         dimensions=dims, weights_used={"technical": 0.40, "market": 0.55, "derivatives": 0.05},
-        regime=RegimeContext(regime="trending", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12),
+        regime=RegimeContext(regime="trending_up", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12),
         targets=target, momentum="stable", abstained=False
     )
     assert sig.composite == 63.2
@@ -47,7 +47,7 @@ def test_signal_to_dict():
     sig = Signal(
         asset="BTC", composite=63.2, label="MODERATE BUY", direction="bullish",
         dimensions=dims, weights_used={"technical": 1.0},
-        regime=RegimeContext(regime="trending", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12),
+        regime=RegimeContext(regime="trending_up", fg_value=45, fg_regime="neutral", btc_pct_from_ma30=0.12),
         targets=None, momentum="stable", abstained=False
     )
     d = sig.to_dict()

@@ -64,6 +64,8 @@ class RegimeConfig(BaseModel):
     btc_ma_period: int
     trending_threshold: float
     ranging_threshold: float
+    adx_trending_threshold: float = 25.0
+    adx_ranging_threshold: float = 20.0
     weight_shifts: dict[str, dict[str, float]]
     abstain_multiplier: dict[str, float]
     fg_thresholds: FGThresholds

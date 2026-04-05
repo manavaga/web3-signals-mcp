@@ -23,7 +23,7 @@ class DimensionScore:
 @dataclass(frozen=True)
 class RegimeContext:
     """Market regime snapshot at signal time."""
-    regime: str              # "trending", "ranging", "unknown"
+    regime: str              # "trending_up", "trending_down", "ranging", "volatile"
     fg_value: int            # raw Fear & Greed (0-100)
     fg_regime: str           # "extreme_fear", "fear", "neutral", "greed", "extreme_greed"
     btc_pct_from_ma30: float # absolute distance from MA30 as decimal (0.08 = 8%)

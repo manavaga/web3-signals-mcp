@@ -36,6 +36,7 @@ from tools.abstain_sweep import sweep_abstain_thresholds
 
 # Scoring functions
 from scoring.dimensions import score_technical, score_market
+from scoring.modifiers import detect_regime
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +164,22 @@ def compute_daily_scores(
         if not tech_data:
             continue
 
-        # Score technical dimension
-        tech_score = score_technical(tech_data, tech_cfg)
-
-        # Compute market indicators
+        # F&G for this date (needed by both regime detection and market scoring)
         fg_val = fg_by_date.get(current_date, 50)
+
+        # Detect regime from BTC-level data (uses ADX + price vs MA30)
+        btc_price = tech_data.get("price", 0)
+        btc_ma30 = tech_data.get("ma30", btc_price)
+        btc_adx = tech_data.get("adx_14", 25.0)
+        btc_ma7 = tech_data.get("ma7", btc_price)
+        regime_ctx = detect_regime(
+            btc_price=btc_price, btc_ma30=btc_ma30, fg_value=fg_val,
+            fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
+            btc_adx=btc_adx, btc_ma7=btc_ma7,
+        )
+
+        # Score technical dimension (regime-aware)
+        tech_score = score_technical(tech_data, tech_cfg, regime=regime_ctx.regime)
         market_data = {
             "fear_greed": fg_val,
             "volume_ratio": tech_data.get("volume_ratio", 1.0),

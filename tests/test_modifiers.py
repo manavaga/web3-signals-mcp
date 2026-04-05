@@ -6,15 +6,32 @@ from scoring.modifiers import (
 from scoring.types import RegimeContext
 
 
-def test_detect_regime_trending():
-    ctx = detect_regime(btc_price=90000, btc_ma30=82000, fg_value=45, fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80}, trending_threshold=0.08, ranging_threshold=0.03)
-    assert ctx.regime == "trending"
-    assert ctx.btc_pct_from_ma30 > 0.08
+def test_detect_regime_trending_up():
+    ctx = detect_regime(btc_price=90000, btc_ma30=82000, fg_value=45,
+                        fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
+                        btc_adx=30.0)
+    assert ctx.regime == "trending_up"
+
+
+def test_detect_regime_trending_down():
+    ctx = detect_regime(btc_price=75000, btc_ma30=82000, fg_value=25,
+                        fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
+                        btc_adx=35.0)
+    assert ctx.regime == "trending_down"
 
 
 def test_detect_regime_ranging():
-    ctx = detect_regime(btc_price=82500, btc_ma30=82000, fg_value=50, fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80}, trending_threshold=0.08, ranging_threshold=0.03)
+    ctx = detect_regime(btc_price=82500, btc_ma30=82000, fg_value=50,
+                        fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
+                        btc_adx=15.0)
     assert ctx.regime == "ranging"
+
+
+def test_detect_regime_volatile():
+    ctx = detect_regime(btc_price=82500, btc_ma30=82000, fg_value=50,
+                        fg_thresholds={"extreme_fear": 20, "fear": 40, "neutral": 60, "greed": 80},
+                        btc_adx=22.0)
+    assert ctx.regime == "volatile"
 
 
 def test_classify_fg():

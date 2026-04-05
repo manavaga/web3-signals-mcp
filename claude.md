@@ -24,14 +24,22 @@ If an agent doesn't produce real data, cut it completely. Don't include it with 
 - Only add an agent back when it has a real implementation AND backtest shows positive IC
 - Don't half-implement agents
 
-### 4. Research before code
+### 4. No complexity bloat
+Keep the codebase simple. Only make meaningful additions to existing code.
+- NEVER add code that complicates the system without proven value
+- When changing code: delete redundant lines, don't leave dead code
+- Nothing hardcoded — all parameters must be configurable or data-driven
+- Prefer modifying existing files over creating new ones
+- If a change doesn't directly improve signal accuracy (proven by backtest), don't make it
+
+### 5. Research before code
 Stop making reactive code changes. Research and validate first, then implement.
 - When an issue is raised, RESEARCH first (read code, understand the problem fully)
 - Present findings and proposed approach to the user
 - Get explicit approval before making changes
 - Never chain multiple untested changes in one push
 
-### 5. Key research learnings (from 5-expert analysis, 2026-04-05)
+### 6. Key research learnings (from 5-expert analysis, 2026-04-05)
 
 **Leading indicators by consensus (add these):**
 - OBV (On-Balance Volume) — volume-confirmed trend, leads price by 1-3 candles
@@ -63,7 +71,7 @@ Stop making reactive code changes. Research and validate first, then implement.
 - Walk-forward embargo: 7+ days minimum between train/test sets
 - Minimum 20 evaluated signals per asset before learning kicks in
 
-### 6. Persistent context
+### 7. Persistent context
 See `docs/CONTEXT.md` for current project state, decisions, and what's in progress. Updated each session.
 
 ---

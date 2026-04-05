@@ -74,7 +74,7 @@ def test_fuse_signal_has_regime():
     agent_data = _mock_agent_data()
 
     signals = fuse_signals(agent_data, cfg, assets)
-    assert signals["BTC"].regime.regime in ["trending", "ranging", "unknown"]
+    assert signals["BTC"].regime.regime in ["trending_up", "trending_down", "ranging", "volatile"]
     assert signals["BTC"].regime.fg_value == 35
 
 

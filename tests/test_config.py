@@ -37,12 +37,15 @@ regime:
   trending_threshold: 0.08
   ranging_threshold: 0.03
   weight_shifts:
-    trending: { technical: 1.2, derivatives: 0.9, market: 1.1 }
+    trending_up: { technical: 1.2, derivatives: 0.9, market: 1.1 }
+    trending_down: { technical: 1.2, derivatives: 1.1, market: 0.9 }
     ranging: { technical: 1.1, derivatives: 0.8, market: 1.2 }
+    volatile: { technical: 0.9, derivatives: 1.0, market: 1.1 }
   abstain_multiplier:
-    trending: 0.7
+    trending_up: 0.7
+    trending_down: 0.7
     ranging: 3.0
-    unknown: 1.0
+    volatile: 1.5
   fg_thresholds: { extreme_fear: 20, fear: 40, neutral: 60, greed: 80 }
 targets:
   timeframe_hours: 48
@@ -56,7 +59,7 @@ targets:
   model_max_age_hours: 24
   min_training_samples: 30
 agents:
-  technical: { cadence_minutes: 60, binance_kline_limit: 50, intervals: ["1d"], rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, macd_fast: 12, macd_slow: 26, macd_signal: 9, bb_period: 20, bb_std_dev: 2, bb_squeeze_threshold: 0.04, volume_ma_period: 20, volume_spike_threshold: 2.0, volume_elevated_threshold: 1.5, volume_low_threshold: 0.5, atr_period: 14, scoring_weights: { rsi: 0.25, macd: 0.25, bollinger: 0.20, trend: 0.30 }, volume_spike_bonus: 10 }
+  technical: { cadence_minutes: 60, binance_kline_limit: 50, intervals: ["1d"], rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, macd_fast: 12, macd_slow: 26, macd_signal: 9, bb_period: 20, bb_std_dev: 2, bb_squeeze_threshold: 0.04, volume_ma_period: 20, volume_spike_threshold: 2.0, volume_elevated_threshold: 1.5, volume_low_threshold: 0.5, atr_period: 14, scoring_weights: { rsi: 0.20, macd: 0.10, bollinger: 0.10, trend: 0.20, obv: 0.20, roc_7d: 0.10, squeeze: 0.10 }, volume_spike_bonus: 10 }
   derivatives: { cadence_minutes: 60, scoring_weights: { long_short: 0.20, funding: 0.25, open_interest: 0.15, liquidations: 0.20, taker_ratio: 0.20 }, ls_overcrowded: 0.65, ls_shorts_dominating: 0.55, ls_contrarian: 0.45, funding_extreme: 0.001, funding_extreme_negative: 0.005, oi_change_threshold_pct: 5.0, liq_imbalance_threshold: 0.3 }
   market: { cadence_minutes: 120, scoring_weights: { fear_greed: 0.15, volume: 0.10, macro: 0.15, order_book: 0.15, stablecoin: 0.15, dxy: 0.10, nasdaq: 0.10, vix_roc: 0.10 }, volume_spike_threshold: 2.0, macro_vix_risk_off: 25, macro_vix_risk_on: 18, macro_sp_risk_off_pct: -1.5, macro_sp_risk_on_pct: 0.5, macro_dxy_risk_off_pct: 0.5, macro_dxy_risk_on_pct: -0.3, stablecoin_inflow_threshold: 0.5 }
 evaluation:
@@ -79,6 +82,7 @@ learning:
     assert isinstance(cfg, AppConfig)
     assert cfg.scoring.weights_default["technical"] == 0.50
     assert cfg.regime.trending_threshold == 0.08
+    assert cfg.regime.adx_trending_threshold == 25.0
     assert cfg.targets.timeframe_hours == 48
     assert cfg.learning.shadow_mode is True
 
@@ -110,9 +114,9 @@ regime:
   trending_threshold: 0.08
   ranging_threshold: 0.03
   weight_shifts:
-    trending: { technical: 1.0, derivatives: 1.0, market: 1.0 }
+    trending_up: { technical: 1.0, derivatives: 1.0, market: 1.0 }
     ranging: { technical: 1.0, derivatives: 1.0, market: 1.0 }
-  abstain_multiplier: { trending: 0.7, ranging: 3.0, unknown: 1.0 }
+  abstain_multiplier: { trending_up: 0.7, ranging: 3.0, volatile: 1.0 }
   fg_thresholds: { extreme_fear: 20, fear: 40, neutral: 60, greed: 80 }
 targets:
   timeframe_hours: 48

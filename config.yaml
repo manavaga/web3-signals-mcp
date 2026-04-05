@@ -55,19 +55,30 @@ regime:
   btc_ma_period: 30
   trending_threshold: 0.08
   ranging_threshold: 0.03
+  adx_trending_threshold: 25.0
+  adx_ranging_threshold: 20.0
   weight_shifts:
-    trending:
+    trending_up:
       technical: 1.2
       derivatives: 0.9
       market: 1.1
+    trending_down:
+      technical: 1.2
+      derivatives: 1.1
+      market: 0.9
     ranging:
       technical: 1.1
       derivatives: 0.8
       market: 1.2
+    volatile:
+      technical: 0.9
+      derivatives: 1.0
+      market: 1.1
   abstain_multiplier:
-    trending: 0.7
+    trending_up: 0.7
+    trending_down: 0.7
     ranging: 1.2
-    unknown: 1.0
+    volatile: 1.5
   fg_thresholds:
     extreme_fear: 20
     fear: 40
@@ -106,10 +117,13 @@ agents:
     volume_low_threshold: 0.5
     atr_period: 14
     scoring_weights:
-      rsi: 0.25
-      macd: 0.25
-      bollinger: 0.20
-      trend: 0.30
+      rsi: 0.20
+      macd: 0.10
+      bollinger: 0.10
+      trend: 0.20
+      obv: 0.20
+      roc_7d: 0.10
+      squeeze: 0.10
     volume_spike_bonus: 10
   derivatives:
     cadence_minutes: 60

@@ -84,6 +84,8 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
     btc_tech = (agent_data.get("technical") or {}).get("BTC", {})
     btc_price = btc_tech.get("price", 0)
     btc_ma30 = btc_tech.get("ma30", btc_price)
+    btc_ma7 = btc_tech.get("ma7", btc_price)
+    btc_adx = btc_tech.get("adx_14", 25.0)
     btc_market = (agent_data.get("market") or {}).get("BTC", {})
     fg_value = btc_market.get("fear_greed", 50)
 
@@ -93,6 +95,9 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
         fg_thresholds=cfg.regime.fg_thresholds.model_dump(),
         trending_threshold=cfg.regime.trending_threshold,
         ranging_threshold=cfg.regime.ranging_threshold,
+        btc_adx=btc_adx, btc_ma7=btc_ma7,
+        adx_trending=cfg.regime.adx_trending_threshold,
+        adx_ranging=cfg.regime.adx_ranging_threshold,
     )
 
     # --- Step 1: Score all dimensions for all assets ---
@@ -103,7 +108,10 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             dim_data = (agent_data.get(dim) or {}).get(asset)
             agent_cfg = getattr(cfg.agents, dim, None)
             dim_cfg = agent_cfg.model_dump() if agent_cfg else {}
-            dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg)
+            if dim == "technical":
+                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg, regime=regime.regime)
+            else:
+                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg)
         all_dimensions[asset] = dimensions
 
     # --- Step 1b: Compute relative features (asset vs BTC) ---

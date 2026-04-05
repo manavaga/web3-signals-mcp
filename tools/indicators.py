@@ -110,6 +110,51 @@ def calc_atr(
     return atr
 
 
+def calc_adx(
+    highs: list[float], lows: list[float], closes: list[float], period: int = 14
+) -> float:
+    """Average Directional Index — measures trend strength (0-100).
+
+    ADX > 25 = trending market, ADX < 20 = ranging market.
+    Uses Wilder smoothing (same as ATR/RSI).
+    """
+    if len(highs) < period + 2:
+        return 25.0  # neutral default
+    plus_dm = []
+    minus_dm = []
+    trs = []
+    for i in range(1, len(highs)):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
+                 abs(lows[i] - closes[i - 1]))
+        trs.append(tr)
+    if len(trs) < period:
+        return 25.0
+    # Wilder smoothing
+    atr_s = sum(trs[:period]) / period
+    plus_s = sum(plus_dm[:period]) / period
+    minus_s = sum(minus_dm[:period]) / period
+    dx_values = []
+    for i in range(period, len(trs)):
+        atr_s = (atr_s * (period - 1) + trs[i]) / period
+        plus_s = (plus_s * (period - 1) + plus_dm[i]) / period
+        minus_s = (minus_s * (period - 1) + minus_dm[i]) / period
+        plus_di = (plus_s / atr_s * 100) if atr_s > 0 else 0
+        minus_di = (minus_s / atr_s * 100) if atr_s > 0 else 0
+        di_sum = plus_di + minus_di
+        dx = (abs(plus_di - minus_di) / di_sum * 100) if di_sum > 0 else 0
+        dx_values.append(dx)
+    if len(dx_values) < period:
+        return sum(dx_values) / len(dx_values) if dx_values else 25.0
+    adx = sum(dx_values[:period]) / period
+    for i in range(period, len(dx_values)):
+        adx = (adx * (period - 1) + dx_values[i]) / period
+    return adx
+
+
 def calc_volume_profile(volumes: list[float], ma_period: int = 20) -> dict:
     """Volume ratio and status vs moving average."""
     if len(volumes) < ma_period + 1:
@@ -317,7 +362,9 @@ def compute_technical_indicators(
         ema_fast, ema_slow, macd_signal_period, macd_fast, macd_slow
     )
     bb = calc_bollinger(closes, bb_period, bb_std)
-    atr = calc_atr(highs, lows, closes, cfg.get("atr_period", 14))
+    atr_period = cfg.get("atr_period", 14)
+    atr = calc_atr(highs, lows, closes, atr_period)
+    adx = calc_adx(highs, lows, closes, atr_period)
     vol_profile = calc_volume_profile(volumes, volume_ma)
     obv_slope = calc_obv_slope(closes, volumes)
     mfi = calc_mfi(highs, lows, closes, volumes, mfi_period)
@@ -346,6 +393,7 @@ def compute_technical_indicators(
         "bb_bandwidth": bb["bandwidth"],
         "bb_squeeze": bb["squeeze"],
         "atr_14": atr,
+        "adx_14": adx,
         "atr_pct": (atr / price * 100) if price > 0 else 0,
         "ma7": ma7,
         "ma30": ma30,

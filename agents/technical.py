@@ -56,6 +56,9 @@ class TechnicalAgent(BaseAgent):
                 vol_profile = self._calc_volume_profile(volumes, self.config.get("volume_ma_period", 20))
                 pivots = self._calc_pivots(highs[-1], lows[-1], closes[-1])
 
+                # ADX for regime detection
+                adx = self._calc_adx(highs, lows, closes, self.config.get("atr_period", 14))
+
                 # New indicators
                 obv_slope = self._calc_obv_slope(closes, volumes)
                 mfi = self._calc_mfi(highs, lows, closes, volumes,
@@ -92,6 +95,7 @@ class TechnicalAgent(BaseAgent):
                     "bb_squeeze": bb["squeeze"],
                     "atr_14": atr,
                     "atr_pct": (atr / price * 100) if price > 0 else 0,
+                    "adx_14": adx,
                     "ma7": ma7,
                     "ma30": ma30,
                     "volume_ratio": vol_profile["ratio"],
@@ -198,6 +202,10 @@ class TechnicalAgent(BaseAgent):
         for i in range(period, len(trs)):
             atr = (atr * (period - 1) + trs[i]) / period
         return atr
+
+    def _calc_adx(self, highs, lows, closes, period):
+        from tools.indicators import calc_adx
+        return calc_adx(highs, lows, closes, period)
 
     def _calc_volume_profile(self, volumes, ma_period):
         if len(volumes) < ma_period + 1:
