@@ -1,0 +1,188 @@
+{
+  "version": "2026-04-05T13:01:31Z",
+  "overall_cwa": 0.0511,
+  "overall_accuracy_24h": 0.1741,
+  "assets": {
+    "BTC": {
+      "cwa_24h": 0.0318,
+      "cwa_48h": 0.0508,
+      "accuracy_24h": 0.1852,
+      "accuracy_48h": 0.2963,
+      "coverage": 0.2269,
+      "abstain_miss_rate": 0.3043,
+      "n_signals": 27,
+      "combined_score": 0.1722,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "insufficient"
+    },
+    "ETH": {
+      "cwa_24h": 0.0494,
+      "cwa_48h": 0.0706,
+      "accuracy_24h": 0.2333,
+      "accuracy_48h": 0.3333,
+      "coverage": 0.2521,
+      "abstain_miss_rate": 0.382,
+      "n_signals": 30,
+      "combined_score": 0.1716,
+      "weights": {
+        "market": 0.55,
+        "technical": 0.45
+      },
+      "confidence": "low"
+    },
+    "SOL": {
+      "cwa_24h": 0.0672,
+      "cwa_48h": 0.0924,
+      "accuracy_24h": 0.1951,
+      "accuracy_48h": 0.2683,
+      "coverage": 0.3445,
+      "abstain_miss_rate": 0.4744,
+      "n_signals": 41,
+      "combined_score": 0.169,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "BNB": {
+      "cwa_24h": 0.0504,
+      "cwa_48h": 0.1261,
+      "accuracy_24h": 0.1538,
+      "accuracy_48h": 0.3846,
+      "coverage": 0.3277,
+      "abstain_miss_rate": 0.3125,
+      "n_signals": 39,
+      "combined_score": 0.2081,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "XRP": {
+      "cwa_24h": 0.0565,
+      "cwa_48h": 0.0847,
+      "accuracy_24h": 0.2667,
+      "accuracy_48h": 0.4,
+      "coverage": 0.2521,
+      "abstain_miss_rate": 0.4157,
+      "n_signals": 30,
+      "combined_score": 0.1733,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "AVAX": {
+      "cwa_24h": 0.042,
+      "cwa_48h": 0.1345,
+      "accuracy_24h": 0.098,
+      "accuracy_48h": 0.3137,
+      "coverage": 0.4286,
+      "abstain_miss_rate": 0.5735,
+      "n_signals": 51,
+      "combined_score": 0.1559,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "medium"
+    },
+    "LINK": {
+      "cwa_24h": 0.0205,
+      "cwa_48h": 0.0341,
+      "accuracy_24h": 0.1034,
+      "accuracy_48h": 0.1724,
+      "coverage": 0.2437,
+      "abstain_miss_rate": 0.4889,
+      "n_signals": 29,
+      "combined_score": 0.1241,
+      "weights": {
+        "market": 0.45,
+        "technical": 0.55
+      },
+      "confidence": "insufficient"
+    },
+    "UNI": {
+      "cwa_24h": 0.042,
+      "cwa_48h": 0.042,
+      "accuracy_24h": 0.1282,
+      "accuracy_48h": 0.1282,
+      "coverage": 0.3277,
+      "abstain_miss_rate": 0.6,
+      "n_signals": 39,
+      "combined_score": 0.1136,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "LTC": {
+      "cwa_24h": 0.0353,
+      "cwa_48h": 0.0494,
+      "accuracy_24h": 0.1667,
+      "accuracy_48h": 0.2333,
+      "coverage": 0.2521,
+      "abstain_miss_rate": 0.4045,
+      "n_signals": 30,
+      "combined_score": 0.153,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "FIL": {
+      "cwa_24h": 0.0504,
+      "cwa_48h": 0.1092,
+      "accuracy_24h": 0.1364,
+      "accuracy_48h": 0.2955,
+      "coverage": 0.3697,
+      "abstain_miss_rate": 0.56,
+      "n_signals": 44,
+      "combined_score": 0.1519,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "ARB": {
+      "cwa_24h": 0.084,
+      "cwa_48h": 0.1261,
+      "accuracy_24h": 0.2222,
+      "accuracy_48h": 0.3333,
+      "coverage": 0.3782,
+      "abstain_miss_rate": 0.5676,
+      "n_signals": 45,
+      "combined_score": 0.1705,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "low"
+    },
+    "SUI": {
+      "cwa_24h": 0.084,
+      "cwa_48h": 0.1513,
+      "accuracy_24h": 0.2,
+      "accuracy_48h": 0.36,
+      "coverage": 0.4202,
+      "abstain_miss_rate": 0.6522,
+      "n_signals": 50,
+      "combined_score": 0.1637,
+      "weights": {
+        "market": 0.3,
+        "technical": 0.7
+      },
+      "confidence": "medium"
+    }
+  },
+  "saved_at": "2026-04-05T13:01:31.825627+00:00"
+}
