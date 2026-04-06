@@ -41,6 +41,10 @@ _fitted_cache: dict = {"data": None, "timestamp": 0.0}
 # Cache learned params (reload every 30 min)
 _learned_cache: dict = {"data": None, "timestamp": 0.0}
 
+# Position cooldown: track active signals to avoid overlapping trades (same as trade simulator)
+# {asset: expiry_timestamp} — signal suppressed until position expires (48h)
+_active_positions: dict[str, float] = {}
+
 
 def _load_learned_params():
     """Load learned params with 30-min cache."""
@@ -310,13 +314,57 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                 label = "INSUFFICIENT EDGE"
                 direction = "neutral"
 
-        # Step 6: Calculate targets — ALWAYS use S/R structure
+        # Step 5c: Position cooldown — no overlapping trades on same asset (48h)
+        now = time.time()
+        if not abstained and direction != "neutral":
+            expiry = _active_positions.get(asset, 0)
+            if now < expiry:
+                abstained = True
+                label = "POSITION ACTIVE"
+                direction = "neutral"
+
+        # Step 6: Calculate targets
+        # Primary: learned params TP/SL (data-driven, matches trade simulator)
+        # Fallback: S/R-based targets (ATR + support/resistance)
         targets = None
         if not abstained and direction != "neutral":
             asset_tech = (agent_data.get("technical") or {}).get(asset, {})
             entry_price = asset_tech.get("price", 0)
 
-            if entry_price > 0:
+            if entry_price > 0 and learned_asset:
+                dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
+
+                if dp.optimal_tp_pct > 0 and dp.optimal_sl_pct > 0:
+                    # Learned TP/SL — same logic as trade simulator
+                    if direction == "bullish":
+                        target_price = entry_price * (1 + dp.optimal_tp_pct / 100)
+                        stop_loss = entry_price * (1 - dp.optimal_sl_pct / 100)
+                    else:
+                        target_price = entry_price * (1 - dp.optimal_tp_pct / 100)
+                        stop_loss = entry_price * (1 + dp.optimal_sl_pct / 100)
+
+                    rr = dp.realized_rr if dp.realized_rr > 0 else (dp.optimal_tp_pct / dp.optimal_sl_pct)
+
+                    if dp.direction_confidence > 0.7:
+                        conf = "high"
+                    elif dp.direction_confidence > 0.4:
+                        conf = "medium"
+                    else:
+                        conf = "low"
+
+                    from scoring.types import TargetLevels
+                    targets = TargetLevels(
+                        entry_price=round(entry_price, 2),
+                        target_price=round(target_price, 2),
+                        stop_loss=round(stop_loss, 2),
+                        risk_reward_ratio=round(rr, 2),
+                        predicted_move_pct=round(dp.optimal_tp_pct, 2),
+                        confidence=conf,
+                        timeframe_hours=48,
+                    )
+
+            # Fallback: S/R-based targets when no learned params
+            if targets is None and entry_price > 0:
                 atr_14 = asset_tech.get("atr_14", 0)
                 if atr_14 > 0:
                     sr_levels = {
@@ -337,26 +385,14 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                         sr_levels=sr_levels,
                     )
 
-                # Use learned params to adjust CONFIDENCE only (not TP/SL levels)
-                if targets and learned_asset:
-                    dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
-                    if dp.direction_confidence > 0:
-                        if dp.direction_confidence > 0.7:
-                            conf = "high"
-                        elif dp.direction_confidence > 0.4:
-                            conf = "medium"
-                        else:
-                            conf = "low"
-                        from scoring.types import TargetLevels
-                        targets = TargetLevels(
-                            entry_price=targets.entry_price,
-                            target_price=targets.target_price,
-                            stop_loss=targets.stop_loss,
-                            risk_reward_ratio=targets.risk_reward_ratio,
-                            predicted_move_pct=targets.predicted_move_pct,
-                            confidence=conf,
-                            timeframe_hours=targets.timeframe_hours,
-                        )
+        # Record active position for cooldown (48h = 172800s)
+        if targets and not abstained and direction != "neutral":
+            _active_positions[asset] = now + 172800
+
+        # Clean up expired positions
+        expired = [a for a, exp in _active_positions.items() if now >= exp]
+        for a in expired:
+            del _active_positions[a]
 
         # Momentum
         prev = (prev_scores or {}).get(asset)
