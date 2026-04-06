@@ -168,6 +168,130 @@ def evaluate_trade(
 
 
 # ---------------------------------------------------------------------------
+# Risk-adjusted metrics
+# ---------------------------------------------------------------------------
+
+def compute_risk_metrics(
+    trades: list[dict],
+    monte_carlo_n: int = 1000,
+    annualization_factor: float = 365.0,
+) -> dict:
+    """Compute risk-adjusted metrics from trade results.
+
+    Args:
+        trades: list of dicts with at minimum: pnl_pct, date. Optional: regime.
+        monte_carlo_n: Number of bootstrap iterations.
+        annualization_factor: Days per year for annualization.
+
+    Returns dict with sharpe_ratio, sortino_ratio, calmar_ratio, max_dd_duration_days,
+    monte_carlo: {p_value, median_pnl, pnl_5th, pnl_95th}, regime_split: {regime: {trades, win_rate, pnl}}
+    """
+    import random
+
+    if not trades:
+        return {
+            "sharpe_ratio": 0, "sortino_ratio": 0, "calmar_ratio": 0,
+            "max_dd_duration_days": 0,
+            "monte_carlo": {"p_value": 1.0, "median_pnl": 0, "pnl_5th": 0, "pnl_95th": 0},
+            "regime_split": {},
+        }
+
+    pnls = [t["pnl_pct"] for t in trades]
+    n = len(pnls)
+
+    # Daily PnL aggregation
+    daily_pnl: dict[str, float] = {}
+    for t in trades:
+        d = t.get("date", "")
+        daily_pnl[d] = daily_pnl.get(d, 0) + t["pnl_pct"]
+    daily_returns = list(daily_pnl.values())
+
+    # Sharpe Ratio
+    mean_ret = sum(daily_returns) / len(daily_returns)
+    variance = sum((r - mean_ret) ** 2 for r in daily_returns) / len(daily_returns)
+    std_ret = variance ** 0.5
+    if std_ret > 0:
+        sharpe = mean_ret / std_ret * (annualization_factor ** 0.5)
+    elif mean_ret < 0:
+        sharpe = -99.0  # All-loss constant returns
+    else:
+        sharpe = 0
+
+    # Sortino Ratio (downside deviation only)
+    downside = [r for r in daily_returns if r < 0]
+    if downside:
+        down_var = sum(r ** 2 for r in downside) / len(daily_returns)
+        down_std = down_var ** 0.5
+        sortino = (mean_ret / down_std * (annualization_factor ** 0.5)) if down_std > 0 else 0
+    else:
+        sortino = sharpe * 2 if sharpe > 0 else 0
+
+    # Max Drawdown + Duration
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    max_dd_duration = 0
+    current_dd_duration = 0
+
+    for pnl in pnls:
+        equity += pnl
+        if equity > peak:
+            peak = equity
+            current_dd_duration = 0
+        else:
+            current_dd_duration += 1
+            max_dd_duration = max(max_dd_duration, current_dd_duration)
+        dd = peak - equity
+        max_dd = max(max_dd, dd)
+
+    # Calmar Ratio
+    total_pnl = sum(pnls)
+    calmar = total_pnl / max_dd if max_dd > 0 else (total_pnl if total_pnl > 0 else 0)
+
+    # Monte Carlo bootstrap
+    actual_pnl = sum(pnls)
+    bootstrap_pnls = []
+    for _ in range(monte_carlo_n):
+        sample = random.choices(pnls, k=n)
+        bootstrap_pnls.append(sum(sample))
+
+    bootstrap_pnls.sort()
+    p_value = sum(1 for p in bootstrap_pnls if p >= actual_pnl) / len(bootstrap_pnls)
+
+    mc = {
+        "p_value": round(p_value, 4),
+        "median_pnl": round(bootstrap_pnls[len(bootstrap_pnls) // 2], 2),
+        "pnl_5th": round(bootstrap_pnls[int(len(bootstrap_pnls) * 0.05)], 2),
+        "pnl_95th": round(bootstrap_pnls[int(len(bootstrap_pnls) * 0.95)], 2),
+    }
+
+    # Regime Split
+    regime_groups: dict[str, list[float]] = {}
+    for t in trades:
+        regime = t.get("regime", "unknown")
+        if regime:
+            regime_groups.setdefault(regime, []).append(t["pnl_pct"])
+
+    regime_split = {}
+    for regime, rpnls in regime_groups.items():
+        wins = sum(1 for p in rpnls if p > 0)
+        regime_split[regime] = {
+            "trades": len(rpnls),
+            "win_rate": round(wins / len(rpnls), 4) if rpnls else 0,
+            "pnl": round(sum(rpnls), 2),
+        }
+
+    return {
+        "sharpe_ratio": round(sharpe, 3),
+        "sortino_ratio": round(sortino, 3),
+        "calmar_ratio": round(calmar, 3),
+        "max_dd_duration_days": max_dd_duration,
+        "monte_carlo": mc,
+        "regime_split": regime_split,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Signal generation from backtest scores
 # ---------------------------------------------------------------------------
 
