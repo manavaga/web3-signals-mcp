@@ -257,6 +257,17 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             labels_list = [{"name": l.name, "min_score": l.min_score} for l in cfg.scoring.labels]
             label, direction = assign_label(composite, labels_list)
 
+        # Step 5b: Suppress directions with proven negative EV
+        if not abstained and direction != "neutral" and learned_asset:
+            dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
+            min_samples = cfg.learning.min_signals_per_asset
+            if (dp.n_observations >= min_samples
+                    and dp.expected_value < 0
+                    and dp.win_rate < 0.45):
+                abstained = True
+                label = "INSUFFICIENT EDGE"
+                direction = "neutral"
+
         # Step 6: Calculate targets (using learned params when available)
         targets = None
         if not abstained and direction != "neutral":

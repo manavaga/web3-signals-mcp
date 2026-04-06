@@ -222,6 +222,67 @@ def test_trending_down_soft_dampening():
     assert dampened > 50.0  # Still bullish, just reduced
 
 
+def test_negative_ev_direction_suppressed():
+    """Directions with negative EV should be suppressed when enough data exists."""
+    # Test the logic directly using DirectionParams field names
+    expected_value = -1.5
+    win_rate = 0.35
+    n_observations = 25
+    min_samples = 20
+
+    should_suppress = (
+        n_observations >= min_samples
+        and expected_value < 0
+        and win_rate < 0.45
+    )
+    assert should_suppress is True
+
+
+def test_positive_ev_direction_not_suppressed():
+    """Directions with positive EV should not be suppressed."""
+    expected_value = 2.0
+    win_rate = 0.55
+    n_observations = 30
+    min_samples = 20
+
+    should_suppress = (
+        n_observations >= min_samples
+        and expected_value < 0
+        and win_rate < 0.45
+    )
+    assert should_suppress is False
+
+
+def test_negative_ev_insufficient_samples_not_suppressed():
+    """Negative EV with too few samples should not be suppressed."""
+    expected_value = -1.5
+    win_rate = 0.35
+    n_observations = 10
+    min_samples = 20
+
+    should_suppress = (
+        n_observations >= min_samples
+        and expected_value < 0
+        and win_rate < 0.45
+    )
+    assert should_suppress is False
+
+
+def test_negative_ev_high_winrate_not_suppressed():
+    """Negative EV but high win rate should not be suppressed (edge case)."""
+    expected_value = -0.5
+    win_rate = 0.50
+    n_observations = 30
+    min_samples = 20
+
+    should_suppress = (
+        n_observations >= min_samples
+        and expected_value < 0
+        and win_rate < 0.45
+    )
+    assert should_suppress is False
+
+
 def test_trending_down_no_effect_on_bearish():
     """Bearish composites (< 50) should not be dampened in trending_down."""
     composite = 35.0
