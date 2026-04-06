@@ -308,3 +308,81 @@ def test_trending_down_no_effect_on_bearish():
     composite = 35.0
     # Dampening only applies when composite > 50
     assert composite < 50.0  # No dampening needed
+
+
+# --- Per-asset walk-forward weights tests ---
+
+def test_per_asset_weights_loaded_from_baseline(tmp_path, monkeypatch):
+    """Per-asset weights from backtest baseline should override tier weights."""
+    import json
+    from scoring import pipeline
+
+    baseline = {
+        "per_asset_weights": {
+            "BTC": {"technical": 0.30, "derivatives": 0.20, "market": 0.50},
+        }
+    }
+    baseline_path = tmp_path / "backtest_baseline.json"
+    baseline_path.write_text(json.dumps(baseline))
+
+    # Monkeypatch the cache to force reload
+    monkeypatch.setitem(pipeline._baseline_cache, "data", None)
+    monkeypatch.setitem(pipeline._baseline_cache, "timestamp", 0.0)
+
+    result = pipeline._load_per_asset_weights(path_override=baseline_path)
+    assert "BTC" in result
+    assert result["BTC"]["technical"] == 0.30
+    assert result["BTC"]["derivatives"] == 0.20
+
+    # Non-existent asset should not be present
+    assert "UNKNOWN" not in result
+
+
+def test_per_asset_weights_priority_over_confidence_gated(tmp_path, monkeypatch):
+    """Walk-forward per_asset_weights should take priority over assets section."""
+    import json
+    from scoring import pipeline
+
+    baseline = {
+        "per_asset_weights": {
+            "BTC": {"technical": 0.30, "derivatives": 0.20, "market": 0.50},
+        },
+        "assets": {
+            "BTC": {
+                "confidence": "high",
+                "weights": {"technical": 0.70, "market": 0.30},
+            },
+            "ETH": {
+                "confidence": "high",
+                "weights": {"technical": 0.45, "market": 0.55},
+            },
+        },
+    }
+    baseline_path = tmp_path / "backtest_baseline.json"
+    baseline_path.write_text(json.dumps(baseline))
+
+    monkeypatch.setitem(pipeline._baseline_cache, "data", None)
+    monkeypatch.setitem(pipeline._baseline_cache, "timestamp", 0.0)
+
+    result = pipeline._load_per_asset_weights(path_override=baseline_path)
+
+    # BTC should use walk-forward weights, not assets section
+    assert result["BTC"]["technical"] == 0.30
+    assert result["BTC"]["derivatives"] == 0.20
+
+    # ETH should fall through to confidence-gated assets section
+    assert result["ETH"]["technical"] == 0.45
+    assert result["ETH"]["market"] == 0.55
+
+
+def test_per_asset_weights_missing_file(tmp_path, monkeypatch):
+    """Missing baseline file should return empty dict."""
+    from scoring import pipeline
+
+    monkeypatch.setitem(pipeline._baseline_cache, "data", None)
+    monkeypatch.setitem(pipeline._baseline_cache, "timestamp", 0.0)
+
+    result = pipeline._load_per_asset_weights(
+        path_override=tmp_path / "nonexistent.json"
+    )
+    assert result == {}

@@ -57,7 +57,10 @@ def _load_learned_params():
 def _load_per_asset_weights(path_override: Path | None = None) -> dict:
     """Load per-asset weights from backtest baseline, with caching.
 
-    Only returns weights for assets with 'high' or 'medium' confidence.
+    Priority order:
+    1. 'per_asset_weights' top-level key (walk-forward optimized, already validated)
+    2. 'assets.<ASSET>.weights' with 'high' or 'medium' confidence
+
     Caches for 30 minutes to avoid repeated disk reads.
     """
     now = time.time()
@@ -72,12 +75,22 @@ def _load_per_asset_weights(path_override: Path | None = None) -> dict:
     try:
         baseline = json.loads(path.read_text())
         per_asset: dict[str, dict[str, float]] = {}
+
+        # Priority 1: Walk-forward optimized per-asset weights
+        walk_forward = baseline.get("per_asset_weights", {})
+        if walk_forward:
+            per_asset.update(walk_forward)
+
+        # Priority 2: Per-asset weights from 'assets' section (confidence-gated)
         for asset, data in baseline.get("assets", {}).items():
+            if asset in per_asset:
+                continue  # Walk-forward weights take priority
             confidence = data.get("confidence", "insufficient")
             if confidence in ("high", "medium"):
                 weights = data.get("weights", {})
                 if weights:
                     per_asset[asset] = weights
+
         if path_override is None:
             cache["data"] = per_asset
             cache["timestamp"] = now
