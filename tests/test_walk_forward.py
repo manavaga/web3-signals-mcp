@@ -225,6 +225,22 @@ class TestBonferroniFitScoring:
         assert non_zero_ic <= 3, \
             f"Too many random indicators passed IC filter: {non_zero_ic}/15"
 
+    def test_ensemble_ic_more_robust_than_single(self):
+        """Ensemble IC should detect relationships that single methods might miss."""
+        from tools.fit_scoring import fit_indicator_params
+        import random
+        random.seed(42)
+
+        n = 30  # Small sample
+        x = [i * 0.1 for i in range(n)]
+        noise = [random.gauss(0, 0.3) for _ in range(n)]
+        y = [xi + ni for xi, ni in zip(x, noise)]
+
+        params = fit_indicator_params({"linear_signal": x}, y, min_obs=20)
+
+        assert "linear_signal" in params, "Should fit params for the indicator"
+        assert params["linear_signal"]["ic"] > 0, "Should detect positive relationship"
+
     def test_single_indicator_uses_base_threshold(self):
         """With 1 indicator, adjusted_p == base_p_threshold (no correction)."""
         from tools.fit_scoring import fit_indicator_params

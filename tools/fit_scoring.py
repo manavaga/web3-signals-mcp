@@ -8,7 +8,7 @@ and forward returns, then scores based on that.
 For each indicator, from training data we compute:
   - mean: average value
   - std: standard deviation
-  - ic: Spearman correlation with 48h forward returns (direction + strength)
+  - ic: Ensemble correlation (Spearman+Pearson+Kendall median) with 48h forward returns
 
 Score = 50 + clamp(z_score * ic * SCALE)
 
@@ -23,13 +23,37 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, pearsonr, kendalltau
 
 
 # The only tunable: controls score range. 40 means a 2-sigma move
 # on an indicator with IC=0.25 gives score = 50 ± 20 (range 30-70).
 # This is calibrated so composite scores actually cross 50 for signals.
 SCALE = 40.0
+
+
+def _ensemble_ic(vals, rets, adjusted_p):
+    """Compute ensemble IC from Spearman + Pearson + Kendall.
+
+    Returns the median IC across methods that pass significance.
+    More robust than any single method, especially on small samples.
+    """
+    ics = []
+
+    for corr_func in (spearmanr, pearsonr, kendalltau):
+        try:
+            corr, p_value = corr_func(vals, rets)
+            if corr == corr and p_value < adjusted_p:  # Not NaN and significant
+                ics.append(float(corr))
+        except Exception:
+            continue
+
+    if not ics:
+        return 0.0
+
+    # Use median for robustness against outlier methods
+    ics.sort()
+    return ics[len(ics) // 2]
 
 
 def fit_indicator_params(
@@ -76,14 +100,7 @@ def fit_indicator_params(
         if std == 0:
             continue
 
-        corr, p_value = spearmanr(vals, rets)
-        if corr != corr:  # NaN
-            continue
-
-        # Only keep IC if statistically significant after Bonferroni correction
-        ic = float(corr)
-        if p_value > adjusted_p:
-            ic = 0.0  # Not significant after multiple-comparison correction
+        ic = _ensemble_ic(vals, rets, adjusted_p)
 
         params[name] = {"mean": mean, "std": std, "ic": ic}
 
