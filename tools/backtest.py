@@ -283,6 +283,7 @@ def compute_daily_scores(
 
             fold_fitted_params = fit_indicator_params(
                 numeric_indicators, train_fwd_48h, min_obs=20,
+                base_p_threshold=0.30,  # Lenient: walk-forward prevents overfitting
             )
             # Keep the last fold's fitted params (most recent data)
             last_fitted_params = fold_fitted_params
@@ -327,7 +328,10 @@ def compute_daily_scores(
                     values.append(None)
             numeric_indicators[name] = values
 
-        fitted_params = fit_indicator_params(numeric_indicators, all_fwd_48h, min_obs=20)
+        fitted_params = fit_indicator_params(
+            numeric_indicators, all_fwd_48h, min_obs=20,
+            base_p_threshold=0.30,  # Lenient: fallback path, less data
+        )
         last_fitted_params = fitted_params
 
         available_tech = [i for i in TECHNICAL_INDICATORS if i in fitted_params]

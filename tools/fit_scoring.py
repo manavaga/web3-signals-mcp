@@ -32,7 +32,7 @@ from scipy.stats import spearmanr, pearsonr, kendalltau
 SCALE = 40.0
 
 
-def _ensemble_ic(vals, rets, adjusted_p):
+def _ensemble_ic(vals, rets, adjusted_p=0.05):
     """Compute ensemble IC from Spearman + Pearson + Kendall.
 
     Returns the median IC across methods that pass significance.
@@ -61,23 +61,29 @@ def fit_indicator_params(
     forward_returns: list[float],
     min_obs: int = 20,
     base_p_threshold: float = 0.05,
+    min_ic: float = 0.03,
 ) -> dict[str, dict]:
     """Fit scoring parameters from training data.
+
+    Uses ensemble IC (median of Spearman+Pearson+Kendall) with optional
+    BH FDR correction. Indicators below min_ic absolute value are zeroed
+    as noise regardless of p-value.
+
+    In walk-forward backtesting, the fold structure prevents overfitting,
+    so p-value filtering can be lenient. The IC magnitude itself determines
+    each indicator's weight in scoring (via abs(IC) weighting).
 
     Args:
         indicator_series: {indicator_name: [value_day0, value_day1, ...]}
         forward_returns: [return_day0, return_day1, ...]
         min_obs: Minimum observations for a valid fit.
-        base_p_threshold: Base significance level. Bonferroni-adjusted by
-            dividing by the number of indicators to control family-wise
-            error rate across multiple comparisons.
+        base_p_threshold: Significance level for BH FDR correction.
+        min_ic: Minimum absolute IC to keep (filters pure noise).
 
     Returns: {indicator_name: {"mean": float, "std": float, "ic": float}}
     """
-    n_indicators = len(indicator_series)
-    adjusted_p = base_p_threshold / max(n_indicators, 1)
-
-    params = {}
+    # Phase 1: Compute raw IC and p-values for all indicators
+    raw_results = {}
     for name, values in indicator_series.items():
         if len(values) < min_obs or len(forward_returns) < min_obs:
             continue
@@ -100,9 +106,77 @@ def fit_indicator_params(
         if std == 0:
             continue
 
-        ic = _ensemble_ic(vals, rets, adjusted_p)
+        # Compute ensemble IC with raw p-values
+        best_ic, best_p = _ensemble_ic_with_pvalue(vals, rets)
+        raw_results[name] = {"mean": mean, "std": std, "ic": best_ic, "p_value": best_p}
 
-        params[name] = {"mean": mean, "std": std, "ic": ic}
+    # Phase 2: Apply BH FDR correction, then min_ic filter
+    params = _apply_bh_correction(raw_results, base_p_threshold)
+
+    # Phase 3: Zero out ICs below minimum threshold (pure noise)
+    for name in params:
+        if abs(params[name]["ic"]) < min_ic:
+            params[name]["ic"] = 0.0
+
+    return params
+
+
+def _ensemble_ic_with_pvalue(vals, rets):
+    """Compute ensemble IC and return best (ic, p_value) pair.
+
+    Uses median IC across methods, minimum p-value for significance.
+    """
+    results = []
+    for corr_func in (spearmanr, pearsonr, kendalltau):
+        try:
+            corr, p_value = corr_func(vals, rets)
+            if corr == corr:  # Not NaN
+                results.append((float(corr), float(p_value)))
+        except Exception:
+            continue
+
+    if not results:
+        return 0.0, 1.0
+
+    # Median IC for robustness
+    ics = sorted([r[0] for r in results])
+    median_ic = ics[len(ics) // 2]
+
+    # Minimum p-value (most significant result across methods)
+    min_p = min(r[1] for r in results)
+
+    return median_ic, min_p
+
+
+def _apply_bh_correction(raw_results: dict, fdr_threshold: float) -> dict:
+    """Apply Benjamini-Hochberg FDR correction to IC p-values.
+
+    BH procedure:
+    1. Sort p-values ascending
+    2. For rank i of m tests, threshold = (i/m) * fdr_threshold
+    3. Find largest i where p_i <= threshold_i
+    4. All indicators with rank <= i are significant
+    """
+    if not raw_results:
+        return {}
+
+    # Sort by p-value
+    sorted_items = sorted(raw_results.items(), key=lambda x: x[1]["p_value"])
+    m = len(sorted_items)
+
+    # Find BH cutoff
+    max_significant_rank = -1
+    for rank_idx, (name, data) in enumerate(sorted_items):
+        rank = rank_idx + 1  # 1-based
+        bh_threshold = (rank / m) * fdr_threshold
+        if data["p_value"] <= bh_threshold:
+            max_significant_rank = rank_idx
+
+    # Build params dict — significant indicators keep their IC, others get 0
+    params = {}
+    for rank_idx, (name, data) in enumerate(sorted_items):
+        ic = data["ic"] if rank_idx <= max_significant_rank else 0.0
+        params[name] = {"mean": data["mean"], "std": data["std"], "ic": ic}
 
     return params
 

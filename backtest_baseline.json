@@ -1,188 +1,444 @@
 {
-  "version": "2026-04-05T13:01:31Z",
-  "overall_cwa": 0.0511,
-  "overall_accuracy_24h": 0.1741,
+  "version": "2026-04-06T13:47:38Z",
+  "overall_cwa": 0.0653,
+  "overall_accuracy_24h": 0.3229,
   "assets": {
     "BTC": {
-      "cwa_24h": 0.0318,
-      "cwa_48h": 0.0508,
-      "accuracy_24h": 0.1852,
-      "accuracy_48h": 0.2963,
-      "coverage": 0.2269,
-      "abstain_miss_rate": 0.3043,
-      "n_signals": 27,
-      "combined_score": 0.1722,
+      "cwa_24h": 0.0492,
+      "cwa_48h": 0.0716,
+      "accuracy_24h": 0.5789,
+      "accuracy_48h": 0.8421,
+      "coverage": 0.1597,
+      "abstain_miss_rate": 0.32,
+      "n_signals": 19,
+      "combined_score": 0.1843,
       "weights": {
-        "market": 0.3,
-        "technical": 0.7
+        "derivatives": 0.05,
+        "market": 0.7,
+        "technical": 0.25
       },
       "confidence": "insufficient"
     },
     "ETH": {
-      "cwa_24h": 0.0494,
-      "cwa_48h": 0.0706,
-      "accuracy_24h": 0.2333,
-      "accuracy_48h": 0.3333,
-      "coverage": 0.2521,
-      "abstain_miss_rate": 0.382,
-      "n_signals": 30,
-      "combined_score": 0.1716,
+      "cwa_24h": 0.0424,
+      "cwa_48h": 0.0565,
+      "accuracy_24h": 0.45,
+      "accuracy_48h": 0.6,
+      "coverage": 0.1681,
+      "abstain_miss_rate": 0.4141,
+      "n_signals": 20,
+      "combined_score": 0.1567,
       "weights": {
-        "market": 0.55,
-        "technical": 0.45
-      },
-      "confidence": "low"
-    },
-    "SOL": {
-      "cwa_24h": 0.0672,
-      "cwa_48h": 0.0924,
-      "accuracy_24h": 0.1951,
-      "accuracy_48h": 0.2683,
-      "coverage": 0.3445,
-      "abstain_miss_rate": 0.4744,
-      "n_signals": 41,
-      "combined_score": 0.169,
-      "weights": {
-        "market": 0.3,
-        "technical": 0.7
-      },
-      "confidence": "low"
-    },
-    "BNB": {
-      "cwa_24h": 0.0504,
-      "cwa_48h": 0.1261,
-      "accuracy_24h": 0.1538,
-      "accuracy_48h": 0.3846,
-      "coverage": 0.3277,
-      "abstain_miss_rate": 0.3125,
-      "n_signals": 39,
-      "combined_score": 0.2081,
-      "weights": {
-        "market": 0.3,
-        "technical": 0.7
-      },
-      "confidence": "low"
-    },
-    "XRP": {
-      "cwa_24h": 0.0565,
-      "cwa_48h": 0.0847,
-      "accuracy_24h": 0.2667,
-      "accuracy_48h": 0.4,
-      "coverage": 0.2521,
-      "abstain_miss_rate": 0.4157,
-      "n_signals": 30,
-      "combined_score": 0.1733,
-      "weights": {
-        "market": 0.3,
-        "technical": 0.7
-      },
-      "confidence": "low"
-    },
-    "AVAX": {
-      "cwa_24h": 0.042,
-      "cwa_48h": 0.1345,
-      "accuracy_24h": 0.098,
-      "accuracy_48h": 0.3137,
-      "coverage": 0.4286,
-      "abstain_miss_rate": 0.5735,
-      "n_signals": 51,
-      "combined_score": 0.1559,
-      "weights": {
-        "market": 0.3,
-        "technical": 0.7
-      },
-      "confidence": "medium"
-    },
-    "LINK": {
-      "cwa_24h": 0.0205,
-      "cwa_48h": 0.0341,
-      "accuracy_24h": 0.1034,
-      "accuracy_48h": 0.1724,
-      "coverage": 0.2437,
-      "abstain_miss_rate": 0.4889,
-      "n_signals": 29,
-      "combined_score": 0.1241,
-      "weights": {
-        "market": 0.45,
-        "technical": 0.55
+        "derivatives": 0.2,
+        "market": 0.7,
+        "technical": 0.1
       },
       "confidence": "insufficient"
     },
-    "UNI": {
-      "cwa_24h": 0.042,
-      "cwa_48h": 0.042,
-      "accuracy_24h": 0.1282,
-      "accuracy_48h": 0.1282,
-      "coverage": 0.3277,
-      "abstain_miss_rate": 0.6,
-      "n_signals": 39,
-      "combined_score": 0.1136,
+    "SOL": {
+      "cwa_24h": 0.0346,
+      "cwa_48h": 0.0544,
+      "accuracy_24h": 0.3333,
+      "accuracy_48h": 0.5238,
+      "coverage": 0.1765,
+      "abstain_miss_rate": 0.4592,
+      "n_signals": 21,
+      "combined_score": 0.1438,
       "weights": {
+        "derivatives": 0.05,
         "market": 0.3,
+        "technical": 0.65
+      },
+      "confidence": "insufficient"
+    },
+    "BNB": {
+      "cwa_24h": 0.0212,
+      "cwa_48h": 0.0353,
+      "accuracy_24h": 0.4,
+      "accuracy_48h": 0.6667,
+      "coverage": 0.1261,
+      "abstain_miss_rate": 0.2692,
+      "n_signals": 15,
+      "combined_score": 0.1688,
+      "weights": {
+        "derivatives": 0.05,
+        "market": 0.25,
         "technical": 0.7
       },
-      "confidence": "low"
+      "confidence": "insufficient"
     },
-    "LTC": {
-      "cwa_24h": 0.0353,
-      "cwa_48h": 0.0494,
-      "accuracy_24h": 0.1667,
-      "accuracy_48h": 0.2333,
-      "coverage": 0.2521,
-      "abstain_miss_rate": 0.4045,
-      "n_signals": 30,
-      "combined_score": 0.153,
+    "XRP": {
+      "cwa_24h": 0.024,
+      "cwa_48h": 0.032,
+      "accuracy_24h": 0.3529,
+      "accuracy_48h": 0.4706,
+      "coverage": 0.1429,
+      "abstain_miss_rate": 0.4118,
+      "n_signals": 17,
+      "combined_score": 0.1401,
       "weights": {
-        "market": 0.3,
-        "technical": 0.7
+        "derivatives": 0.05,
+        "market": 0.7,
+        "technical": 0.25
       },
-      "confidence": "low"
+      "confidence": "insufficient"
     },
-    "FIL": {
-      "cwa_24h": 0.0504,
-      "cwa_48h": 0.1092,
-      "accuracy_24h": 0.1364,
-      "accuracy_48h": 0.2955,
-      "coverage": 0.3697,
-      "abstain_miss_rate": 0.56,
-      "n_signals": 44,
-      "combined_score": 0.1519,
-      "weights": {
-        "market": 0.3,
-        "technical": 0.7
-      },
-      "confidence": "low"
-    },
-    "ARB": {
+    "AVAX": {
       "cwa_24h": 0.084,
       "cwa_48h": 0.1261,
-      "accuracy_24h": 0.2222,
-      "accuracy_48h": 0.3333,
-      "coverage": 0.3782,
-      "abstain_miss_rate": 0.5676,
-      "n_signals": 45,
-      "combined_score": 0.1705,
+      "accuracy_24h": 0.2778,
+      "accuracy_48h": 0.4167,
+      "coverage": 0.3025,
+      "abstain_miss_rate": 0.5301,
+      "n_signals": 36,
+      "combined_score": 0.178,
       "weights": {
-        "market": 0.3,
-        "technical": 0.7
+        "derivatives": 0.05,
+        "market": 0.7,
+        "technical": 0.25
       },
       "confidence": "low"
     },
-    "SUI": {
-      "cwa_24h": 0.084,
-      "cwa_48h": 0.1513,
-      "accuracy_24h": 0.2,
-      "accuracy_48h": 0.36,
-      "coverage": 0.4202,
-      "abstain_miss_rate": 0.6522,
-      "n_signals": 50,
-      "combined_score": 0.1637,
+    "LINK": {
+      "cwa_24h": 0.1008,
+      "cwa_48h": 0.1597,
+      "accuracy_24h": 0.3333,
+      "accuracy_48h": 0.5278,
+      "coverage": 0.3025,
+      "abstain_miss_rate": 0.4578,
+      "n_signals": 36,
+      "combined_score": 0.2126,
       "weights": {
-        "market": 0.3,
+        "derivatives": 0.05,
+        "market": 0.7,
+        "technical": 0.25
+      },
+      "confidence": "low"
+    },
+    "UNI": {
+      "cwa_24h": 0.2017,
+      "cwa_48h": 0.2689,
+      "accuracy_24h": 0.3582,
+      "accuracy_48h": 0.4776,
+      "coverage": 0.563,
+      "abstain_miss_rate": 0.5,
+      "n_signals": 67,
+      "combined_score": 0.2882,
+      "weights": {
+        "derivatives": 0.1,
+        "market": 0.2,
         "technical": 0.7
       },
       "confidence": "medium"
+    },
+    "LTC": {
+      "cwa_24h": 0.1429,
+      "cwa_48h": 0.2101,
+      "accuracy_24h": 0.3091,
+      "accuracy_48h": 0.4545,
+      "coverage": 0.4622,
+      "abstain_miss_rate": 0.3438,
+      "n_signals": 55,
+      "combined_score": 0.2724,
+      "weights": {
+        "derivatives": 0.4,
+        "market": 0.55,
+        "technical": 0.05
+      },
+      "confidence": "medium"
+    },
+    "FIL": {
+      "cwa_24h": 0.0,
+      "cwa_48h": 0.0,
+      "accuracy_24h": 0.0,
+      "accuracy_48h": 0.0,
+      "coverage": 0.0,
+      "abstain_miss_rate": 0.5462,
+      "n_signals": 0,
+      "combined_score": 0.0908,
+      "weights": {
+        "derivatives": 0.05,
+        "market": 0.25,
+        "technical": 0.7
+      },
+      "confidence": "insufficient"
+    },
+    "ARB": {
+      "cwa_24h": 0.0,
+      "cwa_48h": 0.0,
+      "accuracy_24h": 0.0,
+      "accuracy_48h": 0.0,
+      "coverage": 0.0,
+      "abstain_miss_rate": 0.5294,
+      "n_signals": 0,
+      "combined_score": 0.0941,
+      "weights": {
+        "derivatives": 0.05,
+        "market": 0.25,
+        "technical": 0.7
+      },
+      "confidence": "insufficient"
+    },
+    "SUI": {
+      "cwa_24h": 0.0826,
+      "cwa_48h": 0.1017,
+      "accuracy_24h": 0.4815,
+      "accuracy_48h": 0.5926,
+      "coverage": 0.2269,
+      "abstain_miss_rate": 0.5652,
+      "n_signals": 27,
+      "combined_score": 0.1607,
+      "weights": {
+        "derivatives": 0.15,
+        "market": 0.15,
+        "technical": 0.7
+      },
+      "confidence": "insufficient"
     }
   },
-  "saved_at": "2026-04-05T13:01:31.825627+00:00"
+  "saved_at": "2026-04-06T13:47:38.795466+00:00",
+  "fitted_params": {
+    "bb_upper": {
+      "mean": 86503.11896696108,
+      "std": 10702.479079973373,
+      "ic": -0.19185301239139724
+    },
+    "swing_high": {
+      "mean": 87322.24386554626,
+      "std": 9844.588825108898,
+      "ic": -0.19686498988793852
+    },
+    "squeeze_on": {
+      "mean": 0.5294117647058824,
+      "std": 0.49913419848462154,
+      "ic": 0.25075228176373116
+    },
+    "price": {
+      "mean": 78779.55941176468,
+      "std": 10728.206310113002,
+      "ic": -0.16735507762427007
+    },
+    "ma30": {
+      "mean": 81440.58074789918,
+      "std": 9609.267204007034,
+      "ic": -0.15311209229454498
+    },
+    "bb_middle": {
+      "mean": 80529.1601764706,
+      "std": 9992.786823436154,
+      "ic": -0.15168779376157243
+    },
+    "bb_bandwidth": {
+      "mean": 0.15038531535972235,
+      "std": 0.0996080618853645,
+      "ic": -0.14342686227033188
+    },
+    "fear_greed": {
+      "mean": 19.03361344537815,
+      "std": 10.578980882998342,
+      "ic": -0.1764135368496725
+    },
+    "obv_slope": {
+      "mean": -0.021132449357963372,
+      "std": 0.08175285993707627,
+      "ic": -0.11636519014385417
+    },
+    "dxy_change": {
+      "mean": 0.01380896834598751,
+      "std": 0.38557206363678215,
+      "ic": 0.16330825246693387
+    },
+    "macd_zscore": {
+      "mean": -0.10670747656272998,
+      "std": 1.2334416350162465,
+      "ic": 0.0
+    },
+    "ma7": {
+      "mean": 79362.48225690279,
+      "std": 10522.565045073305,
+      "ic": 0.0
+    },
+    "atr_pct": {
+      "mean": 4.118959834868487,
+      "std": 1.0933395568150188,
+      "ic": 0.0
+    },
+    "long_short_ratio": {
+      "mean": 0.40023865546218484,
+      "std": 0.72394423134824,
+      "ic": 0.0
+    },
+    "vix_roc": {
+      "mean": 0.8839126999718218,
+      "std": 8.288055426166643,
+      "ic": 0.0
+    },
+    "roc_30d": {
+      "mean": -6.4043013360992616,
+      "std": 11.678634544885414,
+      "ic": 0.0
+    },
+    "bb_lower": {
+      "mean": 74555.2013859802,
+      "std": 10760.41812109185,
+      "ic": 0.0
+    },
+    "macd_histogram": {
+      "mean": 86.64959644550227,
+      "std": 706.6311958734977,
+      "ic": 0.0
+    },
+    "swing_low": {
+      "mean": 73289.13386554625,
+      "std": 11125.240489892549,
+      "ic": 0.0
+    },
+    "roc_1d": {
+      "mean": -0.1988363310507525,
+      "std": 2.7426896483188927,
+      "ic": 0.0
+    },
+    "macd_signal": {
+      "mean": -1586.006798829539,
+      "std": 1788.1232576067086,
+      "ic": 0.0
+    },
+    "sp500_change": {
+      "mean": -0.0521655309895936,
+      "std": 0.8335396127221575,
+      "ic": 0.0
+    },
+    "rsi_zscore": {
+      "mean": 0.3883956964788947,
+      "std": 1.19007131097219,
+      "ic": 0.0
+    },
+    "nasdaq_change": {
+      "mean": -0.07772854957191941,
+      "std": 1.087273615521073,
+      "ic": 0.0
+    },
+    "funding_rate": {
+      "mean": 1.9267254901960793e-05,
+      "std": 3.901338538198188e-05,
+      "ic": 0.0
+    },
+    "oi_change_pct": {
+      "mean": 0.07703800586745646,
+      "std": 1.4747687718416902,
+      "ic": 0.0
+    },
+    "bb_position": {
+      "mean": 0.44075256809452473,
+      "std": 0.32349420357661013,
+      "ic": 0.0
+    },
+    "macd_line": {
+      "mean": -1499.3572023840359,
+      "std": 1938.3513040227012,
+      "ic": 0.0
+    },
+    "volume_ratio": {
+      "mean": 1.0268119023465656,
+      "std": 0.6565471698306821,
+      "ic": 0.0
+    },
+    "rsi_14": {
+      "mean": 44.37484626481626,
+      "std": 9.779098967735882,
+      "ic": 0.0
+    },
+    "adx_14": {
+      "mean": 32.493071860695515,
+      "std": 12.611864871166718,
+      "ic": 0.0
+    },
+    "taker_buy_sell_ratio": {
+      "mean": 0.25998487394957986,
+      "std": 0.43932933027908744,
+      "ic": 0.0
+    },
+    "bb_zscore": {
+      "mean": 0.21344395244573516,
+      "std": 1.1730031918919075,
+      "ic": 0.0
+    },
+    "atr_14": {
+      "mean": 3152.8892433750984,
+      "std": 576.0003961913575,
+      "ic": 0.0
+    },
+    "roc_7d": {
+      "mean": -1.5509207413771584,
+      "std": 5.655696409712844,
+      "ic": 0.0
+    },
+    "squeeze_momentum": {
+      "mean": -0.48848439722150017,
+      "std": 1.4045143073090804,
+      "ic": 0.0
+    }
+  },
+  "per_asset_weights": {
+    "BTC": {
+      "derivatives": 0.05,
+      "market": 0.7,
+      "technical": 0.25
+    },
+    "ETH": {
+      "derivatives": 0.2,
+      "market": 0.7,
+      "technical": 0.1
+    },
+    "SOL": {
+      "derivatives": 0.05,
+      "market": 0.3,
+      "technical": 0.65
+    },
+    "BNB": {
+      "derivatives": 0.05,
+      "market": 0.25,
+      "technical": 0.7
+    },
+    "XRP": {
+      "derivatives": 0.05,
+      "market": 0.7,
+      "technical": 0.25
+    },
+    "AVAX": {
+      "derivatives": 0.05,
+      "market": 0.7,
+      "technical": 0.25
+    },
+    "LINK": {
+      "derivatives": 0.05,
+      "market": 0.7,
+      "technical": 0.25
+    },
+    "UNI": {
+      "derivatives": 0.1,
+      "market": 0.2,
+      "technical": 0.7
+    },
+    "LTC": {
+      "derivatives": 0.4,
+      "market": 0.55,
+      "technical": 0.05
+    },
+    "FIL": {
+      "derivatives": 0.05,
+      "market": 0.25,
+      "technical": 0.7
+    },
+    "ARB": {
+      "derivatives": 0.05,
+      "market": 0.25,
+      "technical": 0.7
+    },
+    "SUI": {
+      "derivatives": 0.15,
+      "market": 0.15,
+      "technical": 0.7
+    }
+  }
 }

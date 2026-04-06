@@ -200,11 +200,11 @@ class TestComputeIC:
         assert ic_strict > 0.9
 
 
-# --- Bonferroni correction tests ---
+# --- FDR correction tests ---
 
-class TestBonferroniFitScoring:
-    def test_ic_with_bonferroni_correction(self):
-        """IC threshold should account for number of indicators tested."""
+class TestFDRFitScoring:
+    def test_ic_with_fdr_correction(self):
+        """IC threshold should control false discovery rate across indicators."""
         from tools.fit_scoring import fit_indicator_params
         import random
         random.seed(42)
@@ -219,8 +219,7 @@ class TestBonferroniFitScoring:
 
         params = fit_indicator_params(indicators, returns)
 
-        # With 15 random indicators and Bonferroni (0.05/15 = 0.0033),
-        # very few should pass
+        # With BH FDR correction at 5%, random indicators should mostly be filtered
         non_zero_ic = sum(1 for p in params.values() if p["ic"] != 0)
         assert non_zero_ic <= 3, \
             f"Too many random indicators passed IC filter: {non_zero_ic}/15"

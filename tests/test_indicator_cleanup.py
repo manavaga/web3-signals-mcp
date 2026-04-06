@@ -6,10 +6,11 @@ def test_cleaned_indicators_exclude_dead_weight():
     candles = [{"open": 100, "high": 105, "low": 95, "close": 100 + i * 0.1, "volume": 1000}
                for i in range(60)]
     result = compute_technical_indicators(candles)
-    for dead in ("bb_position", "stoch_rsi", "roc_1d", "roc_30d", "mfi", "bb_squeeze"):
+    for dead in ("stoch_rsi", "mfi", "bb_squeeze"):
         assert dead not in result, f"{dead} should have been removed"
-    for alive in ("rsi_14", "macd_histogram", "bb_bandwidth", "obv_slope",
-                   "roc_7d", "squeeze_on", "squeeze_momentum", "macd_zscore"):
+    for alive in ("rsi_14", "macd_histogram", "bb_bandwidth", "bb_position",
+                   "obv_slope", "roc_1d", "roc_7d", "roc_30d",
+                   "squeeze_on", "squeeze_momentum", "macd_zscore"):
         assert alive in result, f"{alive} should still exist"
 
 
