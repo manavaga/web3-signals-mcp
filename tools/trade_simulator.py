@@ -197,14 +197,20 @@ def compute_risk_metrics(
             "regime_split": {},
         }
 
-    pnls = [t["pnl_pct"] for t in trades]
+    def _get(t, key, default=0):
+        """Get attribute from dict or dataclass."""
+        if isinstance(t, dict):
+            return t.get(key, default)
+        return getattr(t, key, default)
+
+    pnls = [_get(t, "pnl_pct") for t in trades]
     n = len(pnls)
 
     # Daily PnL aggregation
     daily_pnl: dict[str, float] = {}
     for t in trades:
-        d = t.get("date", "")
-        daily_pnl[d] = daily_pnl.get(d, 0) + t["pnl_pct"]
+        d = _get(t, "date", "")
+        daily_pnl[d] = daily_pnl.get(d, 0) + _get(t, "pnl_pct")
     daily_returns = list(daily_pnl.values())
 
     # Sharpe Ratio
@@ -249,18 +255,32 @@ def compute_risk_metrics(
     total_pnl = sum(pnls)
     calmar = total_pnl / max_dd if max_dd > 0 else (total_pnl if total_pnl > 0 else 0)
 
-    # Monte Carlo bootstrap
+    # Monte Carlo: test if strategy returns are significantly different from zero
+    # Null hypothesis: mean PnL = 0 (strategy has no edge)
+    # Method: randomly flip signs of individual PnLs to destroy directional edge
     actual_pnl = sum(pnls)
+    actual_mean = actual_pnl / n if n > 0 else 0
+
+    # Permutation test: randomly flip signs of individual PnLs
+    null_pnls = []
+    for _ in range(monte_carlo_n):
+        shuffled = [p * random.choice([-1, 1]) for p in pnls]
+        null_pnls.append(sum(shuffled))
+
+    null_pnls.sort()
+    # p-value: fraction of null samples >= actual (one-tailed)
+    p_value = sum(1 for p in null_pnls if p >= actual_pnl) / len(null_pnls)
+
+    # Also compute bootstrap confidence interval for actual PnL
     bootstrap_pnls = []
     for _ in range(monte_carlo_n):
         sample = random.choices(pnls, k=n)
         bootstrap_pnls.append(sum(sample))
-
     bootstrap_pnls.sort()
-    p_value = sum(1 for p in bootstrap_pnls if p >= actual_pnl) / len(bootstrap_pnls)
 
     mc = {
         "p_value": round(p_value, 4),
+        "actual_mean_pnl": round(actual_mean, 4),
         "median_pnl": round(bootstrap_pnls[len(bootstrap_pnls) // 2], 2),
         "pnl_5th": round(bootstrap_pnls[int(len(bootstrap_pnls) * 0.05)], 2),
         "pnl_95th": round(bootstrap_pnls[int(len(bootstrap_pnls) * 0.95)], 2),
@@ -269,9 +289,9 @@ def compute_risk_metrics(
     # Regime Split
     regime_groups: dict[str, list[float]] = {}
     for t in trades:
-        regime = t.get("regime", "unknown")
+        regime = _get(t, "regime", "unknown")
         if regime:
-            regime_groups.setdefault(regime, []).append(t["pnl_pct"])
+            regime_groups.setdefault(regime, []).append(_get(t, "pnl_pct"))
 
     regime_split = {}
     for regime, rpnls in regime_groups.items():

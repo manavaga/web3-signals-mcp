@@ -67,3 +67,41 @@ def test_fee_model_default_config():
     pnl = apply_fee_model(5.0, {})
     # Default: 2 * (0.10 + 0.05) = 0.30
     assert abs(pnl - 4.70) < 0.01
+
+
+def test_monte_carlo_rejects_random_pnl():
+    """Monte Carlo should report low p-value for a clearly profitable strategy."""
+    import random
+    random.seed(42)
+
+    # Clearly profitable: 70% wins at +3%, 30% losses at -2%
+    trades = []
+    for i in range(100):
+        if i < 70:
+            trades.append({"pnl_pct": 3.0, "entry_price": 100, "exit_price": 103,
+                          "direction": "bullish", "asset": "BTC"})
+        else:
+            trades.append({"pnl_pct": -2.0, "entry_price": 100, "exit_price": 98,
+                          "direction": "bullish", "asset": "BTC"})
+
+    metrics = compute_risk_metrics(trades)
+    mc = metrics.get("monte_carlo", {})
+    assert mc.get("p_value", 1.0) < 0.05, \
+        f"Profitable strategy should have low p-value, got {mc.get('p_value')}"
+
+
+def test_monte_carlo_does_not_reject_random():
+    """Monte Carlo should have high p-value for break-even trades."""
+    import random
+    random.seed(42)
+
+    trades = []
+    for i in range(100):
+        pnl = 1.0 if i % 2 == 0 else -1.0
+        trades.append({"pnl_pct": pnl, "entry_price": 100,
+                      "exit_price": 100 + pnl, "direction": "bullish", "asset": "BTC"})
+
+    metrics = compute_risk_metrics(trades)
+    mc = metrics.get("monte_carlo", {})
+    assert mc.get("p_value", 0) > 0.05, \
+        f"Break-even strategy should have high p-value, got {mc.get('p_value')}"
