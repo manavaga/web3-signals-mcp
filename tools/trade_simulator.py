@@ -721,7 +721,7 @@ def run_simulation(
                 min_train=60,
             )
         else:
-            dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+            dim_scores, fwd_24h, fwd_48h, _ = compute_daily_scores(
                 candles, macro_data, fg_data, scoring_cfg,
                 start_idx=start_idx, derivatives_data=deriv_data,
             )

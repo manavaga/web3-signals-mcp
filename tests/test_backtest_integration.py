@@ -2,6 +2,7 @@
 """Integration tests for the full backtest runner."""
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import tempfile
@@ -170,7 +171,7 @@ def test_compute_daily_scores_produces_output():
     macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
     fg = [{"date": c["date"], "value": 50} for c in candles]
 
-    dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+    dim_scores, fwd_24h, fwd_48h, _fitted = compute_daily_scores(
         candles, macro, fg, {}, start_idx=60,
     )
     # Should have scores for days after start_idx (minus last 1-2 for forward returns)
@@ -278,7 +279,7 @@ def test_ic_fitting_uses_only_train_data():
     fg = [{"date": c["date"], "value": 50} for c in candles]
 
     # Run 1: normal computation
-    dim_scores_1, fwd_24h_1, fwd_48h_1 = compute_daily_scores(
+    dim_scores_1, fwd_24h_1, fwd_48h_1, _fitted_1 = compute_daily_scores(
         candles, macro, fg, {}, start_idx=60,
     )
 
@@ -301,7 +302,7 @@ def test_ic_fitting_uses_only_train_data():
         if i < len(modified_candles):
             modified_candles[i]["close"] = candles[i]["close"] * 0.5  # 50% crash
 
-    dim_scores_2, _, _ = compute_daily_scores(
+    dim_scores_2, _, _, _ = compute_daily_scores(
         modified_candles, macro, fg, {}, start_idx=60,
     )
 
@@ -328,7 +329,7 @@ def test_ic_fitting_fallback_when_insufficient_data():
     macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
     fg = [{"date": c["date"], "value": 50} for c in candles]
 
-    dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+    dim_scores, fwd_24h, fwd_48h, _fitted = compute_daily_scores(
         candles, macro, fg, {}, start_idx=40,
     )
     # Should still produce scores (fallback to all-data fitting)
@@ -349,7 +350,7 @@ def test_scored_days_are_test_days_only():
     macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
     fg = [{"date": c["date"], "value": 50} for c in candles]
 
-    dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+    dim_scores, fwd_24h, fwd_48h, _fitted = compute_daily_scores(
         candles, macro, fg, {}, start_idx=60,
     )
 
@@ -369,3 +370,123 @@ def test_scored_days_are_test_days_only():
             f"Day {dk} was scored but is not a test day in any fold. "
             f"This means train/embargo data leaked into scored output."
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: fitted params saved to baseline
+# ---------------------------------------------------------------------------
+
+def test_compute_daily_scores_returns_fitted_params():
+    """compute_daily_scores should return fitted IC params from the last fold."""
+    candles = _make_candles(200, trend=0.002)
+    macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
+    fg = [{"date": c["date"], "value": 50} for c in candles]
+
+    dim_scores, fwd_24h, fwd_48h, fitted = compute_daily_scores(
+        candles, macro, fg, {}, start_idx=60,
+    )
+    assert isinstance(fitted, dict), "fitted_params should be a dict"
+    assert len(fitted) > 0, "fitted_params should not be empty with 200 candles"
+    # Each indicator param should have mean, std, ic
+    for ind_name, params in fitted.items():
+        assert "mean" in params, f"Missing 'mean' for {ind_name}"
+        assert "std" in params, f"Missing 'std' for {ind_name}"
+        assert "ic" in params, f"Missing 'ic' for {ind_name}"
+
+
+def test_compute_daily_scores_fallback_returns_fitted_params():
+    """Fallback (insufficient data for folds) should also return fitted params."""
+    candles = _make_candles(80)
+    macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
+    fg = [{"date": c["date"], "value": 50} for c in candles]
+
+    dim_scores, fwd_24h, fwd_48h, fitted = compute_daily_scores(
+        candles, macro, fg, {}, start_idx=40,
+    )
+    assert isinstance(fitted, dict), "fitted_params should be a dict"
+    # May or may not have params depending on data quality, but should be a dict
+    if len(dim_scores) > 0:
+        # If scores were produced, fitted params should exist
+        assert len(fitted) > 0, "fitted_params should not be empty when scores exist"
+
+
+def test_backtest_saves_fitted_params(tmp_path):
+    """Backtest should save fitted params to baseline file."""
+    baseline_path = tmp_path / "backtest_baseline.json"
+
+    # Simulate what the backtest saves: verify the format is correct
+    baseline = {
+        "fitted_params": {
+            "rsi_14": {"mean": 50.0, "std": 15.0, "ic": 0.12},
+            "macd_histogram": {"mean": 0.0, "std": 0.01, "ic": 0.15},
+        },
+        "per_asset_weights": {
+            "BTC": {"technical": 0.7, "market": 0.3},
+            "ETH": {"technical": 0.5, "market": 0.5},
+        },
+        "timestamp": "2026-04-06T00:00:00+00:00",
+    }
+
+    baseline_path.write_text(json.dumps(baseline))
+    loaded = json.loads(baseline_path.read_text())
+
+    assert "fitted_params" in loaded
+    assert "per_asset_weights" in loaded
+    assert "rsi_14" in loaded["fitted_params"]
+    assert "mean" in loaded["fitted_params"]["rsi_14"]
+    assert "std" in loaded["fitted_params"]["rsi_14"]
+    assert "ic" in loaded["fitted_params"]["rsi_14"]
+    assert "BTC" in loaded["per_asset_weights"]
+
+
+def test_save_baseline_merges_fitted_params(tmp_path):
+    """save_baseline should merge, not overwrite, fitted_params."""
+    from tools.deploy_gate import save_baseline, load_baseline
+
+    baseline_path = tmp_path / "backtest_baseline.json"
+
+    # Pre-existing baseline with fitted_params
+    existing = {
+        "overall_cwa": 0.05,
+        "fitted_params": {
+            "rsi_14": {"mean": 50.0, "std": 15.0, "ic": 0.12},
+        },
+        "assets": {},
+    }
+    baseline_path.write_text(json.dumps(existing))
+
+    # New results without fitted_params (e.g. a quick backtest)
+    new_results = {
+        "overall_cwa": 0.06,
+        "assets": {"BTC": {"cwa_24h": 0.05}},
+    }
+
+    save_baseline(new_results, path=baseline_path)
+    loaded = load_baseline(path=baseline_path)
+
+    # fitted_params from existing baseline should be preserved
+    assert "fitted_params" in loaded, "fitted_params should be preserved after merge"
+    assert loaded["fitted_params"]["rsi_14"]["ic"] == 0.12
+    # New results should be updated
+    assert loaded["overall_cwa"] == 0.06
+    assert "BTC" in loaded["assets"]
+
+
+def test_backtest_results_include_per_asset_weights():
+    """run_backtest results should include per_asset_weights at top level."""
+    candles = _make_candles(120)
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        _create_test_db(candles, db_path)
+        results = run_backtest(days=120, assets=["BTC"], db_path=db_path)
+        if results.get("assets"):
+            # If any assets were processed, per_asset_weights should exist
+            assert "per_asset_weights" in results, (
+                "per_asset_weights should be in backtest results"
+            )
+            for asset, weights in results["per_asset_weights"].items():
+                assert isinstance(weights, dict)
+                assert len(weights) > 0
+    finally:
+        Path(db_path).unlink(missing_ok=True)

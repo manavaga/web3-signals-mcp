@@ -166,8 +166,9 @@ def compute_daily_scores(
         derivatives_data: {"2025-10-08": {"funding_rate": ..., ...}, ...}
 
     Returns:
-        (dimension_scores, forward_returns_24h, forward_returns_48h)
-        Each keyed by day index.
+        (dimension_scores, forward_returns_24h, forward_returns_48h, last_fitted_params)
+        Each keyed by day index.  last_fitted_params is the IC params dict
+        from the most recent fold (or the single fit in fallback mode).
     """
     # Build date -> value maps for macro/fg alignment
     fg_by_date = {e["date"]: e["value"] for e in fg_data}
@@ -241,7 +242,7 @@ def compute_daily_scores(
         forward_returns_48h[day_key] = ret_48h
 
     if not raw_indicators:
-        return {}, {}, {}
+        return {}, {}, {}, {}
 
     # -----------------------------------------------------------------------
     # Collect all indicator names (needed for consistent fitting)
@@ -259,6 +260,7 @@ def compute_daily_scores(
     folds = generate_folds(len(all_day_keys))
 
     dimension_scores: dict[int, dict] = {}
+    last_fitted_params: dict = {}
 
     if folds:
         # Per-fold fitting: fit IC on train days, score test days
@@ -282,6 +284,8 @@ def compute_daily_scores(
             fold_fitted_params = fit_indicator_params(
                 numeric_indicators, train_fwd_48h, min_obs=20,
             )
+            # Keep the last fold's fitted params (most recent data)
+            last_fitted_params = fold_fitted_params
 
             # Score TEST days using train-fitted params
             available_tech = [i for i in TECHNICAL_INDICATORS if i in fold_fitted_params]
@@ -324,6 +328,7 @@ def compute_daily_scores(
             numeric_indicators[name] = values
 
         fitted_params = fit_indicator_params(numeric_indicators, all_fwd_48h, min_obs=20)
+        last_fitted_params = fitted_params
 
         available_tech = [i for i in TECHNICAL_INDICATORS if i in fitted_params]
         available_market = [i for i in MARKET_INDICATORS if i in fitted_params]
@@ -349,7 +354,7 @@ def compute_daily_scores(
 
             dimension_scores[day_key] = scores
 
-    return dimension_scores, forward_returns_24h, forward_returns_48h
+    return dimension_scores, forward_returns_24h, forward_returns_48h, last_fitted_params
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +435,7 @@ def run_backtest(
     # Process each asset
     all_asset_data: dict = {}
     asset_configs: dict = {}
+    all_fitted_params: dict[str, dict] = {}  # per-asset fitted IC params
 
     for name, info in enabled.items():
         symbol = info["binance_symbol"]
@@ -457,7 +463,7 @@ def run_backtest(
         # Load derivatives data for this asset (if available)
         deriv_data = load_derivatives_data(db_path, symbol)
 
-        dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+        dim_scores, fwd_24h, fwd_48h, asset_fitted_params = compute_daily_scores(
             candles, macro_data, fg_data, scoring_cfg, start_idx=start_idx,
             derivatives_data=deriv_data,
         )
@@ -475,6 +481,8 @@ def run_backtest(
             "noise_threshold": info.get("noise_threshold_pct", 2.0),
             "strong_threshold": info.get("strong_threshold_pct", 5.0),
         }
+        if asset_fitted_params:
+            all_fitted_params[name] = asset_fitted_params
 
     if not all_asset_data:
         print("\nNo assets had sufficient data for backtesting.")
@@ -490,6 +498,28 @@ def run_backtest(
     # Enrich with confidence tiers
     for asset, data in results.get("assets", {}).items():
         data["confidence"] = get_confidence_tier(data.get("n_signals", 0))
+
+    # Attach fitted IC params and per-asset weights for baseline saving.
+    # Use a merged/representative fitted_params: pick the one from the asset
+    # with the most scored days (most data = most reliable IC estimates).
+    if all_fitted_params:
+        best_asset = max(
+            all_fitted_params,
+            key=lambda a: len(all_asset_data.get(a, {}).get("dimension_scores", {})),
+        )
+        results["fitted_params"] = {
+            k: {sk: sv for sk, sv in v.items()}
+            for k, v in all_fitted_params[best_asset].items()
+        }
+
+    # Collect per-asset optimized weights for pipeline consumption
+    per_asset_weights = {}
+    for asset, data in results.get("assets", {}).items():
+        w = data.get("weights")
+        if w:
+            per_asset_weights[asset] = w
+    if per_asset_weights:
+        results["per_asset_weights"] = per_asset_weights
 
     if return_raw_data:
         return results, all_asset_data, asset_configs

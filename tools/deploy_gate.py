@@ -26,10 +26,21 @@ def load_baseline(path: Path | None = None) -> dict | None:
 
 
 def save_baseline(results: dict, path: Path | None = None) -> Path:
-    """Save results as the new baseline. Only call if CWA improved."""
+    """Save results as the new baseline, merging with existing data.
+
+    Merges new results into the existing baseline so that fields not present
+    in the new results (e.g. fitted_params from a previous run) are preserved.
+    """
     p = path or BASELINE_PATH
-    results["saved_at"] = datetime.now(timezone.utc).isoformat()
-    p.write_text(json.dumps(results, indent=2))
+    existing: dict = {}
+    if p.exists():
+        try:
+            existing = json.loads(p.read_text())
+        except Exception:
+            pass
+    existing.update(results)
+    existing["saved_at"] = datetime.now(timezone.utc).isoformat()
+    p.write_text(json.dumps(existing, indent=2, default=str))
     return p
 
 
