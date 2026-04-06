@@ -20,43 +20,51 @@ from tools.walk_forward import (
 class TestGenerateFolds:
     def test_no_overlap(self):
         """Folds must have embargo gap between train and test."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
         for fold in folds:
-            assert fold.train_end + 7 <= fold.test_start
+            assert fold.train_end + 14 <= fold.test_start
 
     def test_expanding_window(self):
         """Each fold must have more training data than the previous."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
         for i in range(1, len(folds)):
             assert folds[i].train_end > folds[i - 1].train_end
 
     def test_fold_count(self):
-        """180 days with 90 min train, 7 embargo, 21 test -> 3-4 folds."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
-        assert 3 <= len(folds) <= 5
+        """180 days with 90 min train, 14 embargo, 21 test -> 2-3 folds."""
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
+        assert 2 <= len(folds) <= 4
 
     def test_embargo_contiguous(self):
         """Embargo must sit between train and test with no gaps."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
         for fold in folds:
             assert fold.embargo_start == fold.train_end + 1
-            assert fold.embargo_end == fold.embargo_start + 6  # 7 days, 0-indexed
+            assert fold.embargo_end == fold.embargo_start + 13  # 14 days, 0-indexed
             assert fold.test_start == fold.embargo_end + 1
 
     def test_too_few_days(self):
         """If total_days < min_train + embargo + test, return empty."""
-        folds = generate_folds(total_days=50, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=50, embargo_days=14, test_window=21, min_train=90)
         assert folds == []
 
     def test_test_window_coverage(self):
         """Each fold's test window should be exactly test_window days."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
         for fold in folds:
             assert fold.test_end - fold.test_start + 1 == 21
 
+    def test_default_embargo_is_14_days(self):
+        """Default embargo should be 14 days (3x the 48h forward return window)."""
+        folds = generate_folds(total_days=200)
+        assert len(folds) > 0
+        for fold in folds:
+            embargo_length = fold.embargo_end - fold.embargo_start + 1
+            assert embargo_length >= 14, f"Embargo too short: {embargo_length} days"
+
     def test_last_fold_within_bounds(self):
         """Last fold's test_end must not exceed total_days - 1."""
-        folds = generate_folds(total_days=180, embargo_days=7, test_window=21, min_train=90)
+        folds = generate_folds(total_days=180, embargo_days=14, test_window=21, min_train=90)
         for fold in folds:
             assert fold.test_end <= 179  # 0-based, so max index is 179
 

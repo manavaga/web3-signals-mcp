@@ -28,17 +28,16 @@ class Fold:
 
 def generate_folds(
     total_days: int,
-    embargo_days: int = 7,
+    embargo_days: int = 14,
     test_window: int = 21,
     min_train: int = 90,
 ) -> list[Fold]:
     """Generate expanding-window walk-forward folds.
 
-    Example with 180 days:
-      Fold 1: Train [0-89],  Embargo [90-96],  Test [97-117]
-      Fold 2: Train [0-110], Embargo [111-117], Test [118-138]
-      Fold 3: Train [0-131], Embargo [132-138], Test [139-159]
-      Fold 4: Train [0-152], Embargo [153-159], Test [160-180]
+    Example with 200 days:
+      Fold 1: Train [0-89],  Embargo [90-103],  Test [104-124]
+      Fold 2: Train [0-124], Embargo [125-138], Test [139-159]
+      Fold 3: Train [0-159], Embargo [160-173], Test [174-194]
 
     Critical rule: max(train_days) + embargo_days <= min(test_days)
     """
