@@ -375,11 +375,16 @@ def generate_signals_for_asset(
         eff_abstain_bearish = abstain_bearish
 
     day_keys = sorted(dim_scores.keys())
+    position_exit_day = -999  # No overlapping positions on same asset
 
     for day_key in day_keys:
         actual_idx = day_key + start_idx
         if actual_idx >= len(candles) - 2:
             continue  # Need at least 2 future candles
+
+        # Skip if still in previous position
+        if day_key <= position_exit_day:
+            continue
 
         scores = dim_scores[day_key]
 
@@ -478,6 +483,8 @@ def generate_signals_for_asset(
         future = candles[actual_idx + 1: actual_idx + 3]  # Next 2 days (48h)
         trade = evaluate_trade(trade, future, max_days=2)
         trades.append(trade)
+        # Block new trades until this position exits
+        position_exit_day = day_key + trade.days_held
 
     return trades
 

@@ -1,7 +1,7 @@
 {
   "version": "2026-04-06T13:47:38Z",
-  "overall_cwa": 0.0653,
-  "overall_accuracy_24h": 0.3229,
+  "overall_cwa": 0.1786,
+  "overall_accuracy_24h": 0.2363,
   "assets": {
     "BTC": {
       "cwa_24h": 0.0492,
@@ -196,7 +196,7 @@
       "confidence": "insufficient"
     }
   },
-  "saved_at": "2026-04-06T13:47:38.795466+00:00",
+  "saved_at": "2026-04-06T14:11:26.942605+00:00",
   "fitted_params": {
     "bb_upper": {
       "mean": 86503.11896696108,

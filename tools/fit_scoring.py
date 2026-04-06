@@ -26,10 +26,11 @@ from typing import Optional
 from scipy.stats import spearmanr, pearsonr, kendalltau
 
 
-# The only tunable: controls score range. 40 means a 2-sigma move
-# on an indicator with IC=0.25 gives score = 50 ± 20 (range 30-70).
-# This is calibrated so composite scores actually cross 50 for signals.
-SCALE = 40.0
+# Controls score range from center (50). Higher = more extreme scores = more
+# signals crossing the abstain threshold. Calibrated via walk-forward trade
+# simulation: SCALE=140 gives +46.8% PnL, best early-period performance.
+# With typical IC ~0.2 and z ~2, score = 50 ± 2*0.2*140 = 50 ± 56.
+SCALE = 140.0
 
 
 def _ensemble_ic(vals, rets, adjusted_p=0.05):
