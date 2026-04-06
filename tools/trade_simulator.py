@@ -78,6 +78,7 @@ class SimulationResult:
     win_rate: float = 0.0       # (tp_hits + expired_wins) / total
     tp_hit_rate: float = 0.0    # tp_hits / total
     total_pnl_pct: float = 0.0
+    fee_adjusted_pnl: float = 0.0
     avg_win_pct: float = 0.0
     avg_loss_pct: float = 0.0
     max_drawdown_pct: float = 0.0
@@ -289,6 +290,18 @@ def compute_risk_metrics(
         "monte_carlo": mc,
         "regime_split": regime_split,
     }
+
+
+def apply_fee_model(gross_pnl_pct: float, fee_cfg: dict) -> float:
+    """Adjust gross PnL for trading costs (fees + spread + slippage).
+    Costs per-leg, applied twice (entry + exit). All values from config.
+    """
+    fee = fee_cfg.get("base_fee_pct", 0.10)
+    spread = fee_cfg.get("spread_pct", 0.05)
+    slippage_mult = fee_cfg.get("slippage_multiplier", 1.0)
+    cost_per_leg = fee + spread * slippage_mult
+    total_cost = 2 * cost_per_leg
+    return gross_pnl_pct - total_cost
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +752,11 @@ def run_simulation(
         gross_wins = sum(t.pnl_pct for t in trades if t.pnl_pct > 0)
         gross_losses = abs(sum(t.pnl_pct for t in trades if t.pnl_pct < 0))
         result.total_pnl_pct = sum(t.pnl_pct for t in trades)
+
+        # Fee-adjusted PnL
+        trading_cfg = scoring_cfg.get("trading", {})
+        result.fee_adjusted_pnl = sum(apply_fee_model(t.pnl_pct, trading_cfg) for t in trades)
+
         result.avg_win_pct = gross_wins / wins if wins > 0 else 0
         result.avg_loss_pct = gross_losses / (result.total_trades - wins) if (result.total_trades - wins) > 0 else 0
         result.profit_factor = gross_wins / gross_losses if gross_losses > 0 else float('inf') if gross_wins > 0 else 0

@@ -203,3 +203,8 @@ learning:
     cwa_floor: 0.40
     cwa_critical: 0.30
     lookback_windows: 3
+
+trading:
+  base_fee_pct: 0.10       # Binance taker fee
+  spread_pct: 0.05          # Estimated bid-ask spread
+  slippage_multiplier: 1.0  # Spread * multiplier for slippage
