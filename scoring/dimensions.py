@@ -102,7 +102,8 @@ def _macd_zscore_score(zscore: float) -> float:
     return 50 + min(max(zscore * 15, -35), 35)
 
 
-def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> DimensionScore:
+def score_technical(data: Optional[dict], cfg: dict, regime: str = "",
+                    fitted_params: Optional[dict] = None) -> DimensionScore:
     """Score technical indicators, regime-aware.
 
     Key data-driven changes:
@@ -115,6 +116,24 @@ def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> Dimens
     if not data:
         return DimensionScore(name="technical", score=50.0, detail="no data", tier="none")
 
+    # IC-fitted scoring path (when fitted params available)
+    if fitted_params:
+        from tools.fit_scoring import score_dimension_fitted, TECHNICAL_INDICATORS
+        has_fitted = any(ind in fitted_params for ind in TECHNICAL_INDICATORS)
+        if has_fitted:
+            score = score_dimension_fitted(data, fitted_params, TECHNICAL_INDICATORS)
+            vol_status = data.get("volume_status", "normal")
+            if vol_status == "spike":
+                score += cfg.get("volume_spike_bonus", 10)
+            score = _clamp(score)
+            rsi = data.get("rsi_14", 50.0)
+            hist = data.get("macd_histogram", 0.0)
+            bb_bw = data.get("bb_bandwidth", 0.06)
+            detail = f"RSI={rsi:.0f}, MACD_hist={hist:.4f}, BB_bw={bb_bw:.4f} [IC-fitted]"
+            tier = "full" if rsi != 50 or hist != 0 else "partial"
+            return DimensionScore(name="technical", score=score, detail=detail, tier=tier)
+
+    # Legacy hardcoded path (fallback)
     rsi = data.get("rsi_14", 50.0)
     hist = data.get("macd_histogram", 0.0)
     price = data.get("price", 1.0)
@@ -193,10 +212,26 @@ def score_technical(data: Optional[dict], cfg: dict, regime: str = "") -> Dimens
 
 # --- Derivatives ---
 
-def score_derivatives(data: Optional[dict], cfg: dict) -> DimensionScore:
+def score_derivatives(data: Optional[dict], cfg: dict,
+                      fitted_params: Optional[dict] = None) -> DimensionScore:
     if not data:
         return DimensionScore(name="derivatives", score=50.0, detail="no data", tier="none")
 
+    # IC-fitted scoring path (when fitted params available)
+    if fitted_params:
+        from tools.fit_scoring import score_dimension_fitted, DERIVATIVES_INDICATORS
+        has_fitted = any(ind in fitted_params for ind in DERIVATIVES_INDICATORS)
+        if has_fitted:
+            score = score_dimension_fitted(data, fitted_params, DERIVATIVES_INDICATORS)
+            score = _clamp(score)
+            ls = data.get("long_short_ratio", 0.5)
+            fr = data.get("funding_rate", 0.0)
+            oi_chg = data.get("oi_change_pct", 0.0)
+            taker = data.get("taker_buy_sell_ratio", 1.0)
+            detail = f"L/S={ls:.2f}, FR={fr:.6f}, OI_chg={oi_chg:.1f}%, taker={taker:.2f} [IC-fitted]"
+            return DimensionScore(name="derivatives", score=score, detail=detail, tier="full")
+
+    # Legacy hardcoded path (fallback)
     ls = data.get("long_short_ratio", 0.5)
     fr = data.get("funding_rate", 0.0)
     oi_chg = data.get("oi_change_pct", 0.0)
@@ -344,10 +379,27 @@ def _vix_roc_score(vix_roc: float) -> float:
     return _clamp(50 - min(max(vix_roc * 2, -25), 25), 25, 75)
 
 
-def score_market(data: Optional[dict], cfg: dict) -> DimensionScore:
+def score_market(data: Optional[dict], cfg: dict,
+                 fitted_params: Optional[dict] = None) -> DimensionScore:
     if not data:
         return DimensionScore(name="market", score=50.0, detail="no data", tier="none")
 
+    # IC-fitted scoring path (when fitted params available)
+    if fitted_params:
+        from tools.fit_scoring import score_dimension_fitted, MARKET_INDICATORS
+        has_fitted = any(ind in fitted_params for ind in MARKET_INDICATORS)
+        if has_fitted:
+            score = score_dimension_fitted(data, fitted_params, MARKET_INDICATORS)
+            score = _clamp(score)
+            fg = data.get("fear_greed", 50)
+            vol_ratio = data.get("volume_ratio", 1.0)
+            macro = data.get("macro_status", "neutral")
+            ob_imb = data.get("order_book_imbalance", 1.0)
+            detail = (f"F&G={fg}, vol_ratio={vol_ratio:.1f}, macro={macro}, "
+                      f"OB_imb={ob_imb:.2f} [IC-fitted]")
+            return DimensionScore(name="market", score=score, detail=detail, tier="full")
+
+    # Legacy hardcoded path (fallback)
     fg = data.get("fear_greed", 50)
     vol_ratio = data.get("volume_ratio", 1.0)
     macro = data.get("macro_status", "neutral")

@@ -35,6 +35,9 @@ ALL_DIMENSIONS = ["technical", "derivatives", "market"]
 _baseline_cache: dict = {"data": None, "timestamp": 0.0,
                          "path": Path(__file__).parent.parent / "backtest_baseline.json"}
 
+# Cache fitted IC params (reload every 30 min)
+_fitted_cache: dict = {"data": None, "timestamp": 0.0}
+
 # Cache learned params (reload every 30 min)
 _learned_cache: dict = {"data": None, "timestamp": 0.0}
 
@@ -83,6 +86,27 @@ def _load_per_asset_weights(path_override: Path | None = None) -> dict:
         return {}
 
 
+def _load_fitted_params() -> dict | None:
+    """Load fitted IC params from backtest baseline, with 30-min cache."""
+    now = time.time()
+    if _fitted_cache["data"] is not None and (now - _fitted_cache["timestamp"]) < 1800:
+        return _fitted_cache["data"]
+
+    path = _baseline_cache["path"]
+    if not path.exists():
+        return None
+
+    try:
+        data = json.loads(path.read_text())
+        fitted = data.get("fitted_params")
+        if fitted:
+            _fitted_cache["data"] = fitted
+            _fitted_cache["timestamp"] = now
+        return fitted
+    except Exception:
+        return None
+
+
 SCORE_FNS = {
     "technical": score_technical,
     "derivatives": score_derivatives,
@@ -116,6 +140,9 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
         adx_ranging=cfg.regime.adx_ranging_threshold,
     )
 
+    # Load fitted IC params (if backtest_baseline.json has them)
+    fitted = _load_fitted_params()
+
     # --- Step 1: Score all dimensions for all assets ---
     all_dimensions: dict[str, dict[str, DimensionScore]] = {}
     for asset in enabled:
@@ -125,9 +152,10 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             agent_cfg = getattr(cfg.agents, dim, None)
             dim_cfg = agent_cfg.model_dump() if agent_cfg else {}
             if dim == "technical":
-                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg, regime=regime.regime)
+                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg, regime=regime.regime,
+                                                  fitted_params=fitted)
             else:
-                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg)
+                dimensions[dim] = SCORE_FNS[dim](dim_data, dim_cfg, fitted_params=fitted)
         all_dimensions[asset] = dimensions
 
     # --- Step 1b: Compute relative features (asset vs BTC) ---

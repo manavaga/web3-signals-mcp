@@ -355,6 +355,82 @@ def test_regime_trending_up_suppresses_rsi_sell():
     )
 
 
+def test_score_technical_with_fitted_params():
+    """When fitted_params provided, score_technical uses IC-based scoring."""
+    data = {"rsi_14": 25.0, "macd_histogram": 0.005, "price": 100.0,
+            "bb_bandwidth": 0.04, "ma7": 101.0, "ma30": 102.0,
+            "obv_slope": 0.01, "roc_7d": -2.0, "squeeze_on": False,
+            "squeeze_momentum": 0.5, "macd_zscore": 1.0}
+    cfg = {}
+
+    # Without fitted params
+    result_legacy = score_technical(data, cfg, regime="")
+
+    # With fitted params
+    fitted = {
+        "rsi_14": {"mean": 50.0, "std": 15.0, "ic": -0.15},
+        "macd_histogram": {"mean": 0.0, "std": 0.01, "ic": 0.12},
+        "bb_bandwidth": {"mean": 0.06, "std": 0.03, "ic": -0.22},
+    }
+    result_fitted = score_technical(data, cfg, regime="", fitted_params=fitted)
+
+    assert 0 <= result_legacy.score <= 100
+    assert 0 <= result_fitted.score <= 100
+    assert "[IC-fitted]" in result_fitted.detail
+
+
+def test_score_technical_fallback_without_fitted():
+    """Without fitted params, score_technical uses legacy hardcoded scoring."""
+    data = {"rsi_14": 25.0, "macd_histogram": 0.005, "price": 100.0,
+            "bb_bandwidth": 0.04, "ma7": 101.0, "ma30": 102.0}
+    cfg = {}
+
+    result = score_technical(data, cfg, regime="")
+    assert "[IC-fitted]" not in result.detail
+
+
+def test_score_derivatives_with_fitted_params():
+    """When fitted_params provided, score_derivatives uses IC-based scoring."""
+    data = {"long_short_ratio": 0.6, "funding_rate": 0.0005,
+            "oi_change_pct": 3.0, "taker_buy_sell_ratio": 1.1,
+            "liq_imbalance": 0.0}
+    cfg = {"scoring_weights": {"long_short": 0.20, "funding": 0.25,
+                                "open_interest": 0.15, "liquidations": 0.20,
+                                "taker_ratio": 0.20},
+           "ls_overcrowded": 0.65, "ls_shorts_dominating": 0.55,
+           "funding_extreme": 0.001, "liq_imbalance_threshold": 0.3}
+
+    result_legacy = score_derivatives(data, cfg)
+
+    fitted = {
+        "funding_rate": {"mean": 0.0003, "std": 0.0005, "ic": -0.18},
+        "long_short_ratio": {"mean": 0.55, "std": 0.08, "ic": -0.10},
+    }
+    result_fitted = score_derivatives(data, cfg, fitted_params=fitted)
+
+    assert 0 <= result_legacy.score <= 100
+    assert 0 <= result_fitted.score <= 100
+    assert "[IC-fitted]" in result_fitted.detail
+
+
+def test_score_market_with_fitted_params():
+    """When fitted_params provided, score_market uses IC-based scoring."""
+    data = _base_market_data(fear_greed=20, dxy_change=-1.0)
+    cfg = {"scoring_weights": NEW_MARKET_WEIGHTS}
+
+    result_legacy = score_market(data, cfg)
+
+    fitted = {
+        "fear_greed": {"mean": 50.0, "std": 20.0, "ic": -0.12},
+        "dxy_change": {"mean": 0.0, "std": 1.0, "ic": -0.08},
+    }
+    result_fitted = score_market(data, cfg, fitted_params=fitted)
+
+    assert 0 <= result_legacy.score <= 100
+    assert 0 <= result_fitted.score <= 100
+    assert "[IC-fitted]" in result_fitted.detail
+
+
 def test_regime_ranging_passes_through():
     """In ranging regime, all signals pass through normally (no clamping)."""
     data = {
