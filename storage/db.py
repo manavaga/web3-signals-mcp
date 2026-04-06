@@ -804,7 +804,7 @@ class Storage:
                 o = r.get("outcome", "unknown")
                 outcomes[o] = outcomes.get(o, 0) + 1
 
-            return {
+            stats = {
                 "total_trades": len(rows),
                 "open_trades": len(open_trades),
                 "closed_trades": len(closed),
@@ -824,5 +824,35 @@ class Storage:
                     for r in rows[:20]
                 ],
             }
+
+            # Compute risk metrics from closed trades
+            try:
+                from tools.trade_simulator import compute_risk_metrics
+                trade_dicts = [
+                    {"pnl_pct": t["pnl_pct"], "date": (t.get("exit_time") or "")[:10],
+                     "regime": t.get("regime", "")}
+                    for t in rows if t.get("outcome") and t["outcome"] != "open"
+                ]
+                if trade_dicts:
+                    risk_metrics = compute_risk_metrics(trade_dicts, monte_carlo_n=500)
+                    stats.update(risk_metrics)
+                else:
+                    stats.update({
+                        "sharpe_ratio": 0, "sortino_ratio": 0, "calmar_ratio": 0,
+                        "max_dd_duration_days": 0,
+                        "monte_carlo": {"p_value": 1.0, "median_pnl": 0, "pnl_5th": 0, "pnl_95th": 0},
+                        "regime_split": {},
+                    })
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Risk metrics computation error: {e}")
+                stats.update({
+                    "sharpe_ratio": 0, "sortino_ratio": 0, "calmar_ratio": 0,
+                    "max_dd_duration_days": 0,
+                    "monte_carlo": {"p_value": 1.0, "median_pnl": 0, "pnl_5th": 0, "pnl_95th": 0},
+                    "regime_split": {},
+                })
+
+            return stats
         finally:
             conn.close()

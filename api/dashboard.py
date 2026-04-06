@@ -234,6 +234,18 @@ async function loadTrades(){
       <div class="summary-item"><span class="label">Profit Factor</span><span class="value mono">${fmt(d.profit_factor)}</span></div>
     </div>`;
 
+    // Risk metric cards
+    const sharpe = d.sharpe_ratio || 0;
+    const sortino = d.sortino_ratio || 0;
+    const mc = d.monte_carlo || {};
+    const mcPval = mc.p_value !== undefined ? mc.p_value : 1;
+    html+=`<div class="summary-bar">
+      <div class="summary-item"><span class="label">Sharpe Ratio</span><span class="value mono" style="color:${sharpe > 1 ? 'var(--green)' : sharpe > 0 ? 'var(--yellow)' : 'var(--red)'}">${sharpe.toFixed(2)}</span></div>
+      <div class="summary-item"><span class="label">Sortino Ratio</span><span class="value mono" style="color:${sortino > 1 ? 'var(--green)' : sortino > 0 ? 'var(--yellow)' : 'var(--red)'}">${sortino.toFixed(2)}</span></div>
+      <div class="summary-item"><span class="label">Calmar Ratio</span><span class="value mono">${(d.calmar_ratio || 0).toFixed(2)}</span></div>
+      <div class="summary-item"><span class="label">Monte Carlo p-value</span><span class="value mono" style="color:${mcPval < 0.05 ? 'var(--green)' : mcPval < 0.2 ? 'var(--yellow)' : 'var(--red)'}">${mcPval.toFixed(3)}</span></div>
+    </div>`;
+
     // Outcome breakdown
     if(d.outcomes&&Object.keys(d.outcomes).length){
       html+=`<div class="section"><h3>Outcome Breakdown</h3><div class="stat-grid">`;
@@ -269,6 +281,24 @@ async function loadTrades(){
           <td class="mono" style="color:${v.win_rate>=0.5?'var(--green)':'var(--red)'}">${(v.win_rate*100).toFixed(0)}%</td>
           <td class="mono" style="color:${pnlColor(v.pnl_pct)}">${v.pnl_pct>=0?'+':''}${fmt(v.pnl_pct)}%</td>
           <td class="mono" style="color:${pnlColor(v.pnl_usd)}">${v.pnl_usd>=0?'+$':'-$'}${fmt(Math.abs(v.pnl_usd))}</td>
+        </tr>`;
+      }
+      html+=`</table></div>`;
+    }
+
+    // Regime performance split
+    const regimeSplit = d.regime_split || {};
+    if(Object.keys(regimeSplit).length > 0){
+      html+=`<div class="section"><h3>Performance by Regime</h3><table class="table">
+        <tr><th>Regime</th><th>Trades</th><th>Win Rate</th><th>P&L %</th></tr>`;
+      for(const [regime, rdata] of Object.entries(regimeSplit)){
+        const wr = ((rdata.win_rate || 0) * 100).toFixed(0);
+        const rpnl = (rdata.pnl || 0).toFixed(1);
+        html+=`<tr>
+          <td><strong>${regime}</strong></td>
+          <td class="mono">${rdata.trades}</td>
+          <td class="mono">${wr}%</td>
+          <td class="mono" style="color:${rdata.pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${rpnl}%</td>
         </tr>`;
       }
       html+=`</table></div>`;
