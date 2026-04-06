@@ -472,6 +472,65 @@ def test_save_baseline_merges_fitted_params(tmp_path):
     assert "BTC" in loaded["assets"]
 
 
+def test_full_pipeline_with_all_fixes():
+    """Full pipeline with all fixes should produce valid signals."""
+    from scoring.pipeline import fuse_signals
+    from scoring.config import load_config, load_assets
+
+    config = load_config()
+    assets_cfg = load_assets()
+
+    # Mock minimal agent data for BTC
+    agent_data = {
+        "technical": {"BTC": {
+            "price": 84000, "rsi_14": 45, "macd_histogram": 0.001,
+            "bb_bandwidth": 0.05, "ma7": 83500, "ma30": 82000,
+            "obv_slope": 0.01, "roc_7d": 2.0, "squeeze_on": False,
+            "squeeze_momentum": 0.3, "macd_zscore": 0.5,
+            "bb_upper": 86000, "bb_lower": 81000,
+            "swing_high": 87000, "swing_low": 80000,
+            "atr_14": 1500, "volume_status": "normal",
+            "bb_position": 0.6, "roc_1d": 0.5, "roc_30d": 5.0,
+            "adx_14": 30, "volume_ratio": 1.2, "atr_pct": 1.8,
+            "rsi_zscore": 0.3, "bb_zscore": -0.5,
+        }},
+        "derivatives": {"BTC": {
+            "long_short_ratio": 0.55, "funding_rate": 0.0003,
+            "oi_change_pct": 3.0, "taker_buy_sell_ratio": 1.05,
+            "liq_imbalance": 0.1,
+        }},
+        "market": {"BTC": {
+            "fear_greed": 45, "volume_ratio": 1.2,
+            "macro_status": "neutral", "order_book_imbalance": 1.1,
+            "stablecoin_supply_change_7d": 0.3,
+            "dxy_change": -0.1, "nasdaq_change": 0.5, "vix_roc": -2.0,
+        }},
+    }
+
+    signals = fuse_signals(agent_data, config, assets_cfg)
+
+    assert "BTC" in signals
+    sig = signals["BTC"]
+
+    # Signal should have valid structure
+    assert sig.composite >= 0 and sig.composite <= 100
+    assert sig.direction in ("bullish", "bearish", "neutral")
+    assert sig.label is not None
+
+    # If directional, should have S/R-based targets
+    if sig.direction != "neutral" and not sig.abstained:
+        assert sig.targets is not None
+        assert sig.targets.entry_price > 0
+        assert sig.targets.target_price > 0
+        assert sig.targets.stop_loss > 0
+        assert sig.targets.risk_reward_ratio >= 1.0
+        assert sig.targets.confidence in ("high", "medium", "low")
+
+    # Regime should be detected
+    assert sig.regime is not None
+    assert sig.regime.regime in ("trending_up", "trending_down", "ranging", "volatile")
+
+
 def test_backtest_results_include_per_asset_weights():
     """run_backtest results should include per_asset_weights at top level."""
     candles = _make_candles(120)
