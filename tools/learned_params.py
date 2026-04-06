@@ -229,6 +229,25 @@ def learn_asset_params(
     # 48h range
     typical_48h = percentile([abs(r) for r in forward_returns], 50)
 
+    # -----------------------------------------------------------------------
+    # Step 6: Enforce SL >= noise floor
+    # -----------------------------------------------------------------------
+    # A stop-loss below the noise floor gets hit by random noise on every trade.
+    # Minimum SL = max(noise_floor, daily_vol * 0.5) to survive normal fluctuations.
+    min_sl = max(noise_floor, daily_vol * 0.5)
+    best_bull["sl_pct"] = max(best_bull["sl_pct"], min_sl)
+    best_bear["sl_pct"] = max(best_bear["sl_pct"], min_sl)
+
+    # TP must be >= SL for positive R:R (otherwise we're guaranteed to lose)
+    best_bull["tp_pct"] = max(best_bull["tp_pct"], best_bull["sl_pct"] * 1.2)
+    best_bear["tp_pct"] = max(best_bear["tp_pct"], best_bear["sl_pct"] * 1.2)
+
+    # Recalculate R:R after adjustment
+    if best_bull["sl_pct"] > 0:
+        best_bull["realized_rr"] = round(best_bull["tp_pct"] / best_bull["sl_pct"], 4)
+    if best_bear["sl_pct"] > 0:
+        best_bear["realized_rr"] = round(best_bear["tp_pct"] / best_bear["sl_pct"], 4)
+
     params = AssetLearnedParams(
         asset="",
         bullish=DirectionParams(

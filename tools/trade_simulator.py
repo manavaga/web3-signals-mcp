@@ -629,7 +629,8 @@ def compute_walk_forward_scores(
                     values.append(None)
             numeric_indicators[name] = values
 
-        fitted_params = fit_indicator_params(numeric_indicators, train_fwd, min_obs=20)
+        fitted_params = fit_indicator_params(numeric_indicators, train_fwd, min_obs=20,
+                                               base_p_threshold=0.30)
 
         # Score today using params fitted on past data only
         raw = raw_indicators[day_key]
