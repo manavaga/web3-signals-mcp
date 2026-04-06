@@ -86,82 +86,6 @@ class SimulationResult:
 
 
 # ---------------------------------------------------------------------------
-# TP/SL calculation (mirrors scoring/modifiers.py but works on raw data)
-# ---------------------------------------------------------------------------
-
-def calculate_trade_targets(
-    entry_price: float,
-    direction: str,
-    atr_14: float,
-    sl_multiplier: float,
-    min_rr: float,
-    sr_levels: dict,
-) -> tuple[float, float, float]:
-    """Calculate target price and stop loss from S/R levels + ATR.
-
-    Returns: (target_price, stop_loss, risk_reward_ratio)
-    """
-    # --- STOP LOSS ---
-    atr_sl = atr_14 * sl_multiplier
-
-    if direction == "bullish":
-        # SL below nearest support
-        supports = []
-        for key in ("ma7", "ma30", "bb_lower", "swing_low"):
-            level = sr_levels.get(key, 0)
-            if 0 < level < entry_price:
-                supports.append(level)
-        if supports:
-            nearest_support = max(supports)
-            stop_loss = nearest_support - atr_14 * 0.3
-        else:
-            stop_loss = entry_price - atr_sl
-    else:
-        # SL above nearest resistance
-        resistances = []
-        for key in ("ma7", "ma30", "bb_upper", "swing_high"):
-            level = sr_levels.get(key, 0)
-            if level > entry_price:
-                resistances.append(level)
-        if resistances:
-            nearest_resistance = min(resistances)
-            stop_loss = nearest_resistance + atr_14 * 0.3
-        else:
-            stop_loss = entry_price + atr_sl
-
-    # --- TARGET PRICE ---
-    risk = abs(entry_price - stop_loss)
-    min_reward = risk * min_rr
-
-    if direction == "bullish":
-        targets = []
-        for key in ("ma30", "bb_upper", "swing_high"):
-            level = sr_levels.get(key, 0)
-            if level > entry_price + min_reward:
-                targets.append(level)
-        target_price = min(targets) if targets else entry_price + min_reward
-    else:
-        targets = []
-        for key in ("ma30", "bb_lower", "swing_low"):
-            level = sr_levels.get(key, 0)
-            if 0 < level < entry_price - min_reward:
-                targets.append(level)
-        target_price = max(targets) if targets else entry_price - min_reward
-
-    # Ensure minimum R:R
-    reward = abs(target_price - entry_price)
-    if reward < min_reward and risk > 0:
-        if direction == "bullish":
-            target_price = entry_price + min_reward
-        else:
-            target_price = entry_price - min_reward
-        reward = min_reward
-
-    rr = reward / risk if risk > 0 else 0
-    return target_price, stop_loss, round(rr, 2)
-
-
-# ---------------------------------------------------------------------------
 # Trade outcome evaluation
 # ---------------------------------------------------------------------------
 
@@ -327,7 +251,8 @@ def generate_signals_for_asset(
 
             rr = dp.realized_rr
         else:
-            # --- Fallback: S/R-based TP/SL ---
+            # --- Fallback: S/R-based TP/SL via modifiers ---
+            from scoring.modifiers import calculate_targets
             candle_slice = candles[:actual_idx + 1]
             tech_data = compute_technical_indicators(candle_slice, tech_cfg)
             if not tech_data:
@@ -338,7 +263,7 @@ def generate_signals_for_asset(
                 continue
 
             sl_mult = asset_cfg.get("sl_atr_multiplier", 1.5)
-            min_rr = scoring_cfg.get("targets", {}).get("min_rr_ratio", 1.5)
+            targets_cfg = scoring_cfg.get("targets", {})
             sr_levels = {
                 "ma7": tech_data.get("ma7", 0),
                 "ma30": tech_data.get("ma30", 0),
@@ -348,9 +273,15 @@ def generate_signals_for_asset(
                 "swing_low": tech_data.get("swing_low", 0),
             }
 
-            target_price, stop_loss, rr = calculate_trade_targets(
-                entry_price, direction, atr_14, sl_mult, min_rr, sr_levels,
+            tgt = calculate_targets(
+                entry_price, composite, direction, atr_14, sl_mult,
+                targets_cfg, sr_levels=sr_levels,
             )
+            if not tgt:
+                continue
+            target_price = tgt.target_price
+            stop_loss = tgt.stop_loss
+            rr = tgt.risk_reward_ratio
 
         # Sanity checks
         if direction == "bullish" and (target_price <= entry_price or stop_loss >= entry_price):
