@@ -69,6 +69,33 @@ def test_fee_model_default_config():
     assert abs(pnl - 4.70) < 0.01
 
 
+def test_sharpe_subtracts_risk_free():
+    """Sharpe should subtract risk-free rate, giving low Sharpe for marginal returns."""
+    import random
+    random.seed(99)
+    # Tiny returns with slight variance, barely above risk-free
+    trades = [{"pnl_pct": 0.03 + random.gauss(0, 0.01), "entry_price": 100,
+               "exit_price": 100.03, "direction": "bullish", "asset": "BTC",
+               "date": f"2026-01-{(i % 28) + 1:02d}"} for i in range(100)]
+
+    metrics = compute_risk_metrics(trades)
+    sharpe = metrics.get("sharpe_ratio", 999)
+
+    # Should be modest, not astronomical
+    assert -10 < sharpe < 10, f"Sharpe should be reasonable, got {sharpe}"
+
+
+def test_sharpe_negative_for_losing_strategy():
+    """Losing strategy should have negative Sharpe."""
+    trades = [{"pnl_pct": -1.0, "entry_price": 100, "exit_price": 99,
+               "direction": "bullish", "asset": "BTC",
+               "date": f"2026-01-{(i % 28) + 1:02d}"} for i in range(50)]
+
+    metrics = compute_risk_metrics(trades)
+    sharpe = metrics.get("sharpe_ratio", 0)
+    assert sharpe < 0, f"Losing strategy should have negative Sharpe, got {sharpe}"
+
+
 def test_monte_carlo_rejects_random_pnl():
     """Monte Carlo should report low p-value for a clearly profitable strategy."""
     import random

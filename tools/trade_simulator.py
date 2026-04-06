@@ -213,18 +213,30 @@ def compute_risk_metrics(
         daily_pnl[d] = daily_pnl.get(d, 0) + _get(t, "pnl_pct")
     daily_returns = list(daily_pnl.values())
 
-    # Sharpe Ratio
-    mean_ret = sum(daily_returns) / len(daily_returns)
-    variance = sum((r - mean_ret) ** 2 for r in daily_returns) / len(daily_returns)
-    std_ret = variance ** 0.5
-    if std_ret > 0:
-        sharpe = mean_ret / std_ret * (annualization_factor ** 0.5)
-    elif mean_ret < 0:
+    # Sharpe Ratio (annualized, excess returns over risk-free rate)
+    trades_per_year = 365 / 2  # 48h holding period = ~182.5 trades/year
+    risk_free_annual = 0.05  # 5% annual T-bill rate
+    risk_free_per_trade = risk_free_annual / trades_per_year
+
+    pnl_fractions = [p / 100 for p in pnls]  # Convert % to fraction
+    excess_returns = [p - risk_free_per_trade for p in pnl_fractions]
+
+    mean_excess = sum(excess_returns) / n if n > 0 else 0
+    if n > 1:
+        variance = sum((r - mean_excess) ** 2 for r in excess_returns) / (n - 1)
+        std_excess = variance ** 0.5
+    else:
+        std_excess = 0
+
+    if std_excess > 0:
+        sharpe = mean_excess / std_excess * (trades_per_year ** 0.5)
+    elif mean_excess < 0:
         sharpe = -99.0  # All-loss constant returns
     else:
         sharpe = 0
 
-    # Sortino Ratio (downside deviation only)
+    # Sortino Ratio (downside deviation only) — uses daily returns (not per-trade)
+    mean_ret = sum(daily_returns) / len(daily_returns)
     downside = [r for r in daily_returns if r < 0]
     if downside:
         down_var = sum(r ** 2 for r in downside) / len(daily_returns)
