@@ -78,6 +78,7 @@ class LearnedState:
     assets: dict[str, AssetLearnedParams] = field(default_factory=dict)
     version: str = ""
     learning_days: int = 0
+    risk_params: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +425,35 @@ def _compute_abstain_adjustment(confidence: float) -> float:
         return -3.0 * ((confidence - 0.5) / 0.5)
 
 
+def _learn_risk_params(assets: dict[str, AssetLearnedParams]) -> dict:
+    """Derive risk management parameters from learned asset data."""
+    if not assets:
+        return {}
+
+    vols = [a.daily_volatility_pct for a in assets.values() if a.daily_volatility_pct > 0]
+    avg_vol = sum(vols) / len(vols) if vols else 3.0
+    base_pct = max(3.0, min(20.0, 30.0 / avg_vol))
+
+    avg_concurrent = min(len(assets), 5)
+    daily_loss_cap = -(avg_vol * avg_concurrent * 0.5)
+
+    positive_ev_count = sum(
+        1 for a in assets.values()
+        if max(a.bullish.expected_value, a.bearish.expected_value) > 0
+    )
+    max_open = max(2, min(8, positive_ev_count))
+
+    return {
+        "base_position_pct": round(base_pct, 2),
+        "min_position_pct": round(base_pct * 0.3, 2),
+        "max_position_pct": round(base_pct * 2.0, 2),
+        "daily_loss_cap_pct": round(daily_loss_cap, 2),
+        "max_open_trades": max_open,
+        "max_correlated_trades": max(1, max_open // 2),
+        "correlation_threshold": 0.7,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Full learning run: all assets
 # ---------------------------------------------------------------------------
@@ -488,6 +518,7 @@ def learn_all_assets(
               f"WR={params.bearish.win_rate:.0%}, EV={bear_ev:+.2f}%)")
 
     conn.close()
+    state.risk_params = _learn_risk_params(state.assets)
     return state
 
 
@@ -512,6 +543,8 @@ def save_learned_state(state: LearnedState, path: Path | None = None) -> Path:
             "typical_48h_range_pct": params.typical_48h_range_pct,
             "last_updated": params.last_updated,
         }
+
+    data["risk_params"] = state.risk_params
 
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -543,6 +576,7 @@ def load_learned_state(path: Path | None = None) -> LearnedState | None:
             typical_48h_range_pct=asset_data.get("typical_48h_range_pct", 0),
             last_updated=asset_data.get("last_updated", ""),
         )
+    state.risk_params = data.get("risk_params", {})
     return state
 
 
@@ -694,6 +728,7 @@ def daily_learning_update(db_path: str = DB_PATH) -> LearnedState:
 
     # Incremental update
     updated = incremental_update(current, new_candles)
+    updated.risk_params = _learn_risk_params(updated.assets)
     save_learned_state(updated)
 
     print(f"Daily learning update complete. {len(updated.assets)} assets updated.")

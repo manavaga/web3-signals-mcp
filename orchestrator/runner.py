@@ -105,8 +105,28 @@ def run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force
 
 
 def _record_trades(storage, signals):
-    """Record directional signals as trades for P&L tracking."""
+    """Record directional signals as trades, with risk checks."""
     try:
+        from tools.learned_params import load_learned_state
+        from risk.manager import RiskManager
+
+        learned = load_learned_state()
+        risk_params = learned.risk_params if learned else {}
+        rm = RiskManager(learned_params={"risk": risk_params})
+
+        # Check daily loss cap
+        stats = storage.load_trade_stats(days=1)
+        daily_pnl = stats.get("total_pnl_pct", 0)
+        if not rm.check_daily_loss_cap(daily_pnl):
+            logger.warning(f"Daily loss cap hit ({daily_pnl:.1f}%), pausing new trades")
+            return
+
+        # Check max open trades
+        open_trades = storage.get_open_trades()
+        if not rm.check_max_open_trades(len(open_trades)):
+            logger.warning(f"Max open trades reached ({len(open_trades)}), pausing new trades")
+            return
+
         for asset, sig in signals.items():
             if sig.abstained or sig.direction == "neutral" or not sig.targets:
                 continue
@@ -114,6 +134,19 @@ def _record_trades(storage, signals):
             t = sig.targets
             if t.entry_price <= 0:
                 continue
+
+            # Correlation filter
+            open_trade_dicts = [{"asset": ot["asset"], "direction": ot["direction"]} for ot in open_trades]
+            if not rm.check_correlation_filter(asset, sig.direction, open_trade_dicts):
+                logger.info(f"Correlation filter blocked {asset} {sig.direction}")
+                continue
+
+            # Confidence-based sizing
+            confidence_val = 0.5
+            if learned and asset in learned.assets:
+                dp = learned.assets[asset].bullish if sig.direction == "bullish" else learned.assets[asset].bearish
+                confidence_val = dp.direction_confidence
+            position_pct = rm.size_position(asset, sig.direction, confidence_val)
 
             trade_id = storage.save_trade(
                 asset=asset,
@@ -129,7 +162,7 @@ def _record_trades(storage, signals):
             )
             logger.info(f"Trade recorded: {asset} {sig.direction} "
                        f"entry=${t.entry_price} tp=${t.target_price} sl=${t.stop_loss} "
-                       f"(trade #{trade_id})")
+                       f"size={position_pct}% (trade #{trade_id})")
     except Exception as e:
         logger.error(f"Trade recording error (non-fatal): {e}")
 
