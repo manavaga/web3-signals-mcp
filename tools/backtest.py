@@ -244,62 +244,110 @@ def compute_daily_scores(
         return {}, {}, {}
 
     # -----------------------------------------------------------------------
-    # FIT: Compute IC-based scoring params from ALL available data
+    # Collect all indicator names (needed for consistent fitting)
     # -----------------------------------------------------------------------
     all_day_keys = sorted(raw_indicators.keys())
-    all_fwd_48h = [forward_returns_48h[d] for d in all_day_keys]
 
-    # Build indicator series for fitting
     all_indicator_names = set()
     for raw in raw_indicators.values():
         all_indicator_names.update(raw.keys())
 
-    # Filter to numeric indicators only
-    numeric_indicators = {}
-    for name in all_indicator_names:
-        values = []
-        for d in all_day_keys:
-            v = raw_indicators[d].get(name)
-            if isinstance(v, (int, float)) and v == v:  # not NaN
-                values.append(v)
-            else:
-                values.append(None)
-        numeric_indicators[name] = values
-
-    fitted_params = fit_indicator_params(numeric_indicators, all_fwd_48h, min_obs=20)
-
     # -----------------------------------------------------------------------
-    # PASS 2: Score each day using fitted params (data-driven, no hardcoding)
+    # FIT + SCORE: Per-fold IC fitting on TRAIN data only (no look-ahead)
     # -----------------------------------------------------------------------
+    # Generate walk-forward folds so IC params are fitted only on train data
+    folds = generate_folds(len(all_day_keys))
+
     dimension_scores: dict[int, dict] = {}
 
-    # Determine which indicators are available for each dimension
-    available_tech = [i for i in TECHNICAL_INDICATORS if i in fitted_params]
-    available_market = [i for i in MARKET_INDICATORS if i in fitted_params]
-    available_deriv = [i for i in DERIVATIVES_INDICATORS if i in fitted_params]
+    if folds:
+        # Per-fold fitting: fit IC on train days, score test days
+        for fold in folds:
+            train_keys = all_day_keys[fold.train_start:fold.train_end + 1]
+            test_keys = all_day_keys[fold.test_start:fold.test_end + 1]
 
-    for day_key in all_day_keys:
-        raw = raw_indicators[day_key]
+            # Build indicator series from TRAIN data only
+            train_fwd_48h = [forward_returns_48h[d] for d in train_keys]
+            numeric_indicators = {}
+            for name in all_indicator_names:
+                values = []
+                for d in train_keys:
+                    v = raw_indicators[d].get(name)
+                    if isinstance(v, (int, float)) and v == v:  # not NaN
+                        values.append(v)
+                    else:
+                        values.append(None)
+                numeric_indicators[name] = values
 
-        scores: dict[str, float] = {}
+            fold_fitted_params = fit_indicator_params(
+                numeric_indicators, train_fwd_48h, min_obs=20,
+            )
 
-        # Technical dimension (data-fitted)
-        tech_score = score_dimension_fitted(raw, fitted_params, available_tech)
-        scores["technical"] = tech_score
+            # Score TEST days using train-fitted params
+            available_tech = [i for i in TECHNICAL_INDICATORS if i in fold_fitted_params]
+            available_market = [i for i in MARKET_INDICATORS if i in fold_fitted_params]
+            available_deriv = [i for i in DERIVATIVES_INDICATORS if i in fold_fitted_params]
 
-        # Market dimension (data-fitted)
-        if available_market:
-            market_score = score_dimension_fitted(raw, fitted_params, available_market)
-            scores["market"] = market_score
-        else:
-            scores["market"] = 50.0
+            for day_key in test_keys:
+                if day_key not in raw_indicators:
+                    continue
+                raw = raw_indicators[day_key]
+                scores: dict[str, float] = {}
 
-        # Derivatives dimension (data-fitted, only if we have data)
-        if available_deriv:
-            deriv_score = score_dimension_fitted(raw, fitted_params, available_deriv)
-            scores["derivatives"] = deriv_score
+                scores["technical"] = score_dimension_fitted(
+                    raw, fold_fitted_params, available_tech,
+                )
+                if available_market:
+                    scores["market"] = score_dimension_fitted(
+                        raw, fold_fitted_params, available_market,
+                    )
+                else:
+                    scores["market"] = 50.0
+                if available_deriv:
+                    scores["derivatives"] = score_dimension_fitted(
+                        raw, fold_fitted_params, available_deriv,
+                    )
 
-        dimension_scores[day_key] = scores
+                dimension_scores[day_key] = scores
+    else:
+        # Fallback: not enough data for folds, fit on all data
+        all_fwd_48h = [forward_returns_48h[d] for d in all_day_keys]
+        numeric_indicators = {}
+        for name in all_indicator_names:
+            values = []
+            for d in all_day_keys:
+                v = raw_indicators[d].get(name)
+                if isinstance(v, (int, float)) and v == v:  # not NaN
+                    values.append(v)
+                else:
+                    values.append(None)
+            numeric_indicators[name] = values
+
+        fitted_params = fit_indicator_params(numeric_indicators, all_fwd_48h, min_obs=20)
+
+        available_tech = [i for i in TECHNICAL_INDICATORS if i in fitted_params]
+        available_market = [i for i in MARKET_INDICATORS if i in fitted_params]
+        available_deriv = [i for i in DERIVATIVES_INDICATORS if i in fitted_params]
+
+        for day_key in all_day_keys:
+            raw = raw_indicators[day_key]
+            scores: dict[str, float] = {}
+
+            scores["technical"] = score_dimension_fitted(
+                raw, fitted_params, available_tech,
+            )
+            if available_market:
+                scores["market"] = score_dimension_fitted(
+                    raw, fitted_params, available_market,
+                )
+            else:
+                scores["market"] = 50.0
+            if available_deriv:
+                scores["derivatives"] = score_dimension_fitted(
+                    raw, fitted_params, available_deriv,
+                )
+
+            dimension_scores[day_key] = scores
 
     return dimension_scores, forward_returns_24h, forward_returns_48h
 

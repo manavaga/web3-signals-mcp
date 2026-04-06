@@ -256,3 +256,116 @@ def test_backtest_no_database():
     """Backtest with non-existent DB exits with helpful error."""
     with pytest.raises(SystemExit):
         run_backtest(db_path="/tmp/nonexistent_test_db_12345.db")
+
+
+# ---------------------------------------------------------------------------
+# Tests: IC fitting uses only train data (no look-ahead bias)
+# ---------------------------------------------------------------------------
+
+def test_ic_fitting_uses_only_train_data():
+    """IC params must be fitted on train fold data only, never on test fold data.
+
+    This test verifies that modifying test-fold forward returns does NOT change
+    the dimension scores for test days. If IC fitting used all data (including
+    test), changing test-fold returns would change the fitted params and thus
+    the scores -- that would be look-ahead bias.
+    """
+    from unittest.mock import patch
+    from tools.walk_forward import generate_folds
+
+    candles = _make_candles(200, trend=0.002)
+    macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
+    fg = [{"date": c["date"], "value": 50} for c in candles]
+
+    # Run 1: normal computation
+    dim_scores_1, fwd_24h_1, fwd_48h_1 = compute_daily_scores(
+        candles, macro, fg, {}, start_idx=60,
+    )
+
+    # Verify we got fold-based scoring (enough data for folds)
+    all_day_keys = sorted(fwd_48h_1.keys())
+    folds = generate_folds(len(all_day_keys))
+    assert len(folds) > 0, "Should generate folds with 200 candles"
+
+    # Get the last fold's test range
+    last_fold = folds[-1]
+    test_keys = all_day_keys[last_fold.test_start:last_fold.test_end + 1]
+    assert len(test_keys) > 0, "Last fold should have test days"
+
+    # Run 2: modify forward returns in the LAST fold's test range
+    # If IC fitting is correct (train-only), this should NOT change scores
+    # for earlier folds' test days
+    modified_candles = [dict(c) for c in candles]
+    # Flip the price trend dramatically for the last test window
+    for i in range(len(candles) - 20, len(candles)):
+        if i < len(modified_candles):
+            modified_candles[i]["close"] = candles[i]["close"] * 0.5  # 50% crash
+
+    dim_scores_2, _, _ = compute_daily_scores(
+        modified_candles, macro, fg, {}, start_idx=60,
+    )
+
+    # Check scores for EARLIER folds' test days -- they should be identical
+    # because their train data didn't include the modified region
+    if len(folds) >= 2:
+        first_fold = folds[0]
+        first_test_keys = all_day_keys[first_fold.test_start:first_fold.test_end + 1]
+        for dk in first_test_keys:
+            if dk in dim_scores_1 and dk in dim_scores_2:
+                for dim in dim_scores_1[dk]:
+                    assert dim_scores_1[dk][dim] == dim_scores_2[dk][dim], (
+                        f"Look-ahead bias detected! Score for day {dk}, "
+                        f"dimension '{dim}' changed when future data was modified. "
+                        f"Original: {dim_scores_1[dk][dim]}, "
+                        f"Modified: {dim_scores_2[dk][dim]}"
+                    )
+
+
+def test_ic_fitting_fallback_when_insufficient_data():
+    """When data is too short for folds, IC fitting falls back to all data."""
+    # Use only 80 candles -- not enough for folds (need min_train=90 + embargo + test)
+    candles = _make_candles(80)
+    macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
+    fg = [{"date": c["date"], "value": 50} for c in candles]
+
+    dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+        candles, macro, fg, {}, start_idx=40,
+    )
+    # Should still produce scores (fallback to all-data fitting)
+    assert len(dim_scores) > 0, "Fallback should still produce scores"
+    for k, scores in dim_scores.items():
+        assert "technical" in scores
+        assert "market" in scores
+
+
+def test_scored_days_are_test_days_only():
+    """With fold-based scoring, only test-fold days should have scores.
+
+    Train days should NOT be scored (they were used for fitting).
+    """
+    from tools.walk_forward import generate_folds
+
+    candles = _make_candles(200, trend=0.002)
+    macro = {"sp500": [], "dxy": [], "nasdaq": [], "vix": []}
+    fg = [{"date": c["date"], "value": 50} for c in candles]
+
+    dim_scores, fwd_24h, fwd_48h = compute_daily_scores(
+        candles, macro, fg, {}, start_idx=60,
+    )
+
+    all_day_keys = sorted(fwd_48h.keys())
+    folds = generate_folds(len(all_day_keys))
+    assert len(folds) > 0
+
+    # Collect all test day keys across folds
+    test_day_set = set()
+    for fold in folds:
+        for dk in all_day_keys[fold.test_start:fold.test_end + 1]:
+            test_day_set.add(dk)
+
+    # All scored days must be test days
+    for dk in dim_scores:
+        assert dk in test_day_set, (
+            f"Day {dk} was scored but is not a test day in any fold. "
+            f"This means train/embargo data leaked into scored output."
+        )
