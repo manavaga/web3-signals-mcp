@@ -129,7 +129,8 @@ def assign_label(composite: float, labels: list[dict]) -> tuple[str, str]:
 def calculate_targets(entry_price: float, composite: float, direction: str,
                       atr_14: float, sl_multiplier: float,
                       cfg: dict,
-                      sr_levels: Optional[dict] = None) -> Optional[TargetLevels]:
+                      sr_levels: Optional[dict] = None,
+                      atr_percentile: Optional[float] = None) -> Optional[TargetLevels]:
     """Calculate TP/SL using support/resistance levels when available.
 
     S/R levels (from price structure):
@@ -137,9 +138,22 @@ def calculate_targets(entry_price: float, composite: float, direction: str,
     - bb_upper, bb_lower: volatility-based levels
     - swing_high, swing_low: recent swing points
     - ATR: fallback when no S/R data
+
+    atr_percentile: 0-1 value indicating where current ATR sits relative to
+        historical range. >0.75 = high volatility (tighten SL), <0.25 = low
+        volatility (widen SL). None = no adjustment.
     """
     if direction == "neutral":
         return None
+
+    # Adjust SL multiplier based on ATR percentile (volatility regime)
+    if atr_percentile is not None:
+        if atr_percentile > 0.75:
+            # High volatility: tighten multiplier (stops would be too wide)
+            sl_multiplier *= 0.8
+        elif atr_percentile < 0.25:
+            # Low volatility: widen multiplier (avoid noise stop-outs)
+            sl_multiplier *= 1.3
 
     # --- STOP LOSS: nearest S/R level against direction, or ATR-based ---
     atr_sl = atr_14 * sl_multiplier

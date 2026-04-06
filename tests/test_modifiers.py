@@ -111,3 +111,67 @@ def test_calculate_targets_bullish():
 
 def test_calculate_targets_neutral_returns_none():
     assert calculate_targets(84000, 50, "neutral", 2100, 2.0, {}) is None
+
+
+def test_volatility_scaled_sl_high_vol():
+    """High-volatility regime should produce tighter SL multiplier."""
+    cfg = {"min_rr_ratio": 1.5, "timeframe_hours": 48}
+
+    # Normal volatility (no percentile)
+    targets_normal = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=3.0, sl_multiplier=1.5, cfg=cfg,
+    )
+
+    # High volatility (90th percentile)
+    targets_high = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=3.0, sl_multiplier=1.5, cfg=cfg, atr_percentile=0.90,
+    )
+
+    assert targets_normal is not None and targets_high is not None
+    # High-vol should have tighter multiplier -> closer SL
+    sl_dist_normal = abs(targets_normal.entry_price - targets_normal.stop_loss)
+    sl_dist_high = abs(targets_high.entry_price - targets_high.stop_loss)
+    assert sl_dist_high < sl_dist_normal, \
+        f"High-vol SL ({sl_dist_high}) should be tighter than normal ({sl_dist_normal})"
+
+
+def test_volatility_scaled_sl_low_vol():
+    """Low-volatility regime should produce wider SL multiplier."""
+    cfg = {"min_rr_ratio": 1.5, "timeframe_hours": 48}
+
+    # Normal
+    targets_normal = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=1.0, sl_multiplier=1.5, cfg=cfg,
+    )
+
+    # Low volatility (10th percentile)
+    targets_low = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=1.0, sl_multiplier=1.5, cfg=cfg, atr_percentile=0.10,
+    )
+
+    assert targets_normal is not None and targets_low is not None
+    sl_dist_normal = abs(targets_normal.entry_price - targets_normal.stop_loss)
+    sl_dist_low = abs(targets_low.entry_price - targets_low.stop_loss)
+    assert sl_dist_low > sl_dist_normal, \
+        f"Low-vol SL ({sl_dist_low}) should be wider than normal ({sl_dist_normal})"
+
+
+def test_volatility_scaling_no_effect_mid_range():
+    """Mid-range ATR percentile should not adjust multiplier."""
+    cfg = {"min_rr_ratio": 1.5, "timeframe_hours": 48}
+
+    targets_none = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=2.0, sl_multiplier=1.5, cfg=cfg,
+    )
+    targets_mid = calculate_targets(
+        entry_price=100, composite=65, direction="bullish",
+        atr_14=2.0, sl_multiplier=1.5, cfg=cfg, atr_percentile=0.50,
+    )
+
+    assert targets_none is not None and targets_mid is not None
+    assert targets_none.stop_loss == targets_mid.stop_loss
