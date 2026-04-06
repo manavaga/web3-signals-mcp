@@ -318,6 +318,48 @@ def calc_zscores(
     }
 
 
+def calc_funding_accel(funding_rates: list[float]) -> list[float]:
+    """Funding rate acceleration (delta of funding rate).
+    Positive accel = crowding increasing, negative = unwinding.
+    """
+    if len(funding_rates) < 2:
+        return []
+    return [funding_rates[i] - funding_rates[i - 1] for i in range(1, len(funding_rates))]
+
+
+def calc_oi_accel(oi_changes: list[float]) -> list[float]:
+    """Open interest acceleration (2nd derivative of OI).
+    Positive accel = positioning buildup accelerating.
+    Negative accel = positions unwinding.
+    """
+    if len(oi_changes) < 2:
+        return []
+    return [oi_changes[i] - oi_changes[i - 1] for i in range(1, len(oi_changes))]
+
+
+def calc_vol_price_divergence(
+    price_changes: list[float],
+    volumes: list[float],
+    window: int = 5,
+) -> float:
+    """Volume-price divergence: correlation between price change and volume.
+    Negative = price moving without volume support (fake breakout).
+    Positive = moves confirmed by volume.
+    """
+    if len(price_changes) < window or len(volumes) < window:
+        return 0.0
+    pc = price_changes[-window:]
+    vol = volumes[-window:]
+    mean_p = sum(pc) / len(pc)
+    mean_v = sum(vol) / len(vol)
+    cov = sum((p - mean_p) * (v - mean_v) for p, v in zip(pc, vol)) / len(pc)
+    std_p = (sum((p - mean_p) ** 2 for p in pc) / len(pc)) ** 0.5
+    std_v = (sum((v - mean_v) ** 2 for v in vol) / len(vol)) ** 0.5
+    if std_p == 0 or std_v == 0:
+        return 0.0
+    return cov / (std_p * std_v)
+
+
 # ---------------------------------------------------------------------------
 # High-level: compute all technical indicators from a candle slice
 # ---------------------------------------------------------------------------

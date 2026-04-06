@@ -160,4 +160,5 @@ MARKET_INDICATORS = [
 DERIVATIVES_INDICATORS = [
     "funding_rate", "long_short_ratio",
     "taker_buy_sell_ratio", "oi_change_pct",
+    "funding_accel", "oi_accel", "vol_price_div", "liq_density",
 ]

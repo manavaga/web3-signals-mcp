@@ -248,6 +248,46 @@ def fetch_fear_greed(days: int = 180) -> list[dict]:
         return []
 
 
+def fetch_liquidations(symbol: str, hours: int = 24) -> list[dict]:
+    """Fetch recent force liquidation orders from Binance Futures.
+    Endpoint: /fapi/v1/forceOrders (no API key needed).
+    """
+    try:
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/forceOrders",
+            params={"symbol": symbol, "limit": 100},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return [
+            {
+                "price": float(order["price"]),
+                "qty": float(order["origQty"]),
+                "side": order["side"],
+                "time": order["time"],
+            }
+            for order in resp.json()
+        ]
+    except Exception as e:
+        print(f"  Warning: Liquidation fetch failed for {symbol}: {e}")
+        return []
+
+
+def calc_liq_density(liquidations: list[dict], current_price: float, range_pct: float = 2.0) -> float:
+    """Count liquidation volume near current price.
+    High density near price = stop-hunt magnet zone.
+    """
+    if not liquidations or current_price <= 0:
+        return 0.0
+    range_abs = current_price * range_pct / 100
+    nearby_vol = sum(
+        l["qty"] for l in liquidations
+        if abs(l["price"] - current_price) <= range_abs
+    )
+    total_vol = sum(l["qty"] for l in liquidations)
+    return nearby_vol / total_vol if total_vol > 0 else 0.0
+
+
 # ---------------------------------------------------------------------------
 # SQLite storage
 # ---------------------------------------------------------------------------

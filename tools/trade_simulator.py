@@ -470,6 +470,37 @@ def compute_walk_forward_scores(
     if not raw_indicators:
         return {}, {}, {}
 
+    # Second pass: compute series-based lead indicators
+    from tools.indicators import calc_funding_accel, calc_oi_accel, calc_vol_price_divergence
+    all_sorted = sorted(raw_indicators.keys())
+
+    funding_series = [raw_indicators[d].get("funding_rate", 0.0) for d in all_sorted]
+    oi_series = [raw_indicators[d].get("oi_change_pct", 0.0) for d in all_sorted]
+    funding_accels = calc_funding_accel(funding_series)
+    oi_accels = calc_oi_accel(oi_series)
+
+    for i, day_key in enumerate(all_sorted):
+        if i > 0 and i - 1 < len(funding_accels):
+            raw_indicators[day_key]["funding_accel"] = funding_accels[i - 1]
+        else:
+            raw_indicators[day_key]["funding_accel"] = 0.0
+
+        if i > 0 and i - 1 < len(oi_accels):
+            raw_indicators[day_key]["oi_accel"] = oi_accels[i - 1]
+        else:
+            raw_indicators[day_key]["oi_accel"] = 0.0
+
+        if i >= 5:
+            window_keys = all_sorted[i - 4:i + 1]
+            price_changes = [raw_indicators[wk].get("roc_7d", 0.0) for wk in window_keys]
+            volumes = [raw_indicators[wk].get("volume_ratio", 1.0) for wk in window_keys]
+            raw_indicators[day_key]["vol_price_div"] = calc_vol_price_divergence(price_changes, volumes)
+        else:
+            raw_indicators[day_key]["vol_price_div"] = 0.0
+
+        # liq_density defaults to 0 in backtesting (live data only)
+        raw_indicators[day_key].setdefault("liq_density", 0.0)
+
     # Walk-forward: for each day, fit on past data only
     all_day_keys = sorted(raw_indicators.keys())
     dimension_scores: dict[int, dict] = {}
