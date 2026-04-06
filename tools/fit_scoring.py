@@ -90,6 +90,23 @@ def fit_indicator_params(
     return params
 
 
+def fit_indicator_params_filtered(
+    indicator_series: dict[str, list[float]],
+    forward_returns: list[float],
+    min_obs: int = 20,
+    collinearity_threshold: float = 0.80,
+) -> dict[str, dict]:
+    """Fit params, then remove collinear indicators (keep higher IC)."""
+    params = fit_indicator_params(indicator_series, forward_returns, min_obs)
+
+    from tools.multicollinearity import find_collinear_pairs, drop_collinear
+    pairs = find_collinear_pairs(indicator_series, threshold=collinearity_threshold, min_obs=min_obs)
+    if pairs:
+        params = drop_collinear(params, pairs)
+
+    return params
+
+
 def fitted_score(value: float, mean: float, std: float, ic: float) -> float:
     """Convert indicator value to 0-100 score using data-fitted params.
 
