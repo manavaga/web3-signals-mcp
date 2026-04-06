@@ -66,6 +66,7 @@ regime:
       technical: 1.2
       derivatives: 1.1
       market: 0.9
+      bullish_dampen: 0.5
     ranging:
       technical: 1.1
       derivatives: 0.8

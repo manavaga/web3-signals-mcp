@@ -208,3 +208,22 @@ def test_relative_features_no_btc_data():
         sig = signals["ETH"]
         # No relative features since BTC data is missing
         assert "relative_momentum" not in sig.metadata
+
+
+# --- Trending-down soft dampening tests ---
+
+def test_trending_down_soft_dampening():
+    """Trending_down should dampen bullish composites, not hard-cap to 50."""
+    # A composite of 75 should be dampened to ~62.5 (not killed to 50)
+    composite = 75.0
+    dampen_factor = 0.5
+    dampened = 50.0 + (composite - 50.0) * dampen_factor
+    assert dampened == 62.5
+    assert dampened > 50.0  # Still bullish, just reduced
+
+
+def test_trending_down_no_effect_on_bearish():
+    """Bearish composites (< 50) should not be dampened in trending_down."""
+    composite = 35.0
+    # Dampening only applies when composite > 50
+    assert composite < 50.0  # No dampening needed

@@ -222,11 +222,12 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
         composite = sum(dimensions[dim].score * weights.get(dim, 0) for dim in ALL_DIMENSIONS)
         composite = max(0.0, min(100.0, composite))
 
-        # Step 4b: Suppress bullish signals in trending_down regime
+        # Step 4b: Soft-dampen bullish signals in trending_down regime
         # Data shows LONG trades in trending_down: 43% win rate, -31% PnL
-        # Cap composite at 50 (neutral) to prevent bullish calls against the trend
+        # Pull bullish composites toward 50 — reduces conviction without killing signal
         if regime.regime == "trending_down" and composite > 50.0:
-            composite = 50.0
+            dampen_factor = regime_shifts.get("bullish_dampen", 0.5) if regime_shifts else 0.5
+            composite = 50.0 + (composite - 50.0) * dampen_factor
 
         # Step 5: Check abstain (with learned per-asset, per-direction adjustments)
         learned_state = _load_learned_params()
