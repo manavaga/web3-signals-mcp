@@ -296,44 +296,13 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                 label = "INSUFFICIENT EDGE"
                 direction = "neutral"
 
-        # Step 6: Calculate targets (using learned params when available)
+        # Step 6: Calculate targets — ALWAYS use S/R structure
         targets = None
         if not abstained and direction != "neutral":
             asset_tech = (agent_data.get("technical") or {}).get(asset, {})
             entry_price = asset_tech.get("price", 0)
 
-            if entry_price > 0 and learned_asset:
-                # Use learned TP/SL distances (data-derived, per-direction)
-                dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
-                if dp.optimal_tp_pct > 0 and dp.optimal_sl_pct > 0:
-                    from scoring.types import TargetLevels
-                    if direction == "bullish":
-                        tp = entry_price * (1 + dp.optimal_tp_pct / 100)
-                        sl = entry_price * (1 - dp.optimal_sl_pct / 100)
-                    else:
-                        tp = entry_price * (1 - dp.optimal_tp_pct / 100)
-                        sl = entry_price * (1 + dp.optimal_sl_pct / 100)
-
-                    reward = abs(tp - entry_price)
-                    risk = abs(entry_price - sl)
-                    rr = reward / risk if risk > 0 else 0
-
-                    score_dist = abs(composite - 50)
-                    conf = "high" if score_dist > 20 else ("medium" if score_dist > 12 else "low")
-                    predicted_pct = (tp - entry_price) / entry_price * 100
-
-                    targets = TargetLevels(
-                        entry_price=round(entry_price, 2),
-                        target_price=round(tp, 2),
-                        stop_loss=round(sl, 2),
-                        risk_reward_ratio=round(rr, 2),
-                        predicted_move_pct=round(predicted_pct, 2),
-                        confidence=conf,
-                        timeframe_hours=cfg.targets.timeframe_hours,
-                    )
-
-            # Fallback to S/R-based targets if no learned params
-            if targets is None and entry_price > 0:
+            if entry_price > 0:
                 atr_14 = asset_tech.get("atr_14", 0)
                 if atr_14 > 0:
                     sr_levels = {
@@ -353,6 +322,27 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
                         cfg=cfg.targets.model_dump(),
                         sr_levels=sr_levels,
                     )
+
+                # Use learned params to adjust CONFIDENCE only (not TP/SL levels)
+                if targets and learned_asset:
+                    dp = learned_asset.bullish if direction == "bullish" else learned_asset.bearish
+                    if dp.direction_confidence > 0:
+                        if dp.direction_confidence > 0.7:
+                            conf = "high"
+                        elif dp.direction_confidence > 0.4:
+                            conf = "medium"
+                        else:
+                            conf = "low"
+                        from scoring.types import TargetLevels
+                        targets = TargetLevels(
+                            entry_price=targets.entry_price,
+                            target_price=targets.target_price,
+                            stop_loss=targets.stop_loss,
+                            risk_reward_ratio=targets.risk_reward_ratio,
+                            predicted_move_pct=targets.predicted_move_pct,
+                            confidence=conf,
+                            timeframe_hours=targets.timeframe_hours,
+                        )
 
         # Momentum
         prev = (prev_scores or {}).get(asset)

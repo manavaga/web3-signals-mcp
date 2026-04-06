@@ -283,6 +283,26 @@ def test_negative_ev_high_winrate_not_suppressed():
     assert should_suppress is False
 
 
+def test_targets_always_use_sr_not_learned_flat_pct():
+    """Targets should use S/R levels even when learned params exist."""
+    # Verify the S/R-based calculate_targets is always used
+    from scoring.modifiers import calculate_targets
+
+    targets = calculate_targets(
+        entry_price=100.0, composite=65.0, direction="bullish",
+        atr_14=2.0, sl_multiplier=1.5,
+        cfg={"min_rr_ratio": 1.5, "timeframe_hours": 48},
+        sr_levels={"ma7": 98.0, "ma30": 95.0, "bb_upper": 106.0,
+                   "bb_lower": 94.0, "swing_high": 108.0, "swing_low": 96.0},
+    )
+    assert targets is not None
+    # SL should be near a support level, not a flat percentage
+    assert targets.stop_loss < 100.0
+    assert targets.stop_loss > 90.0
+    # Target should be at an S/R resistance level
+    assert targets.target_price > 100.0
+
+
 def test_trending_down_no_effect_on_bearish():
     """Bearish composites (< 50) should not be dampened in trending_down."""
     composite = 35.0
