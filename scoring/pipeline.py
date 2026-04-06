@@ -182,8 +182,9 @@ def fuse_signals(agent_data: dict, cfg: AppConfig, assets_cfg: AssetsConfig,
             relative_funding = asset_deriv_data.get("funding_rate", 0.0) - btc_funding
 
             # Adjust technical dimension score by relative momentum
-            # Max adjustment: +/-5 points
-            rel_adjustment = min(max(relative_momentum * 0.15, -5), 5)
+            rel_mult = cfg.scoring.relative_momentum.multiplier
+            rel_max = cfg.scoring.relative_momentum.max_adjustment
+            rel_adjustment = min(max(relative_momentum * rel_mult, -rel_max), rel_max)
 
             old_dim = all_dimensions[asset]["technical"]
             new_tech_score = max(0.0, min(100.0, old_dim.score + rel_adjustment))

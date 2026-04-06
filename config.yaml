@@ -50,6 +50,9 @@ scoring:
     partial: 0.5
     none: 0.0
   momentum_threshold: 5
+  relative_momentum:
+    multiplier: 0.15
+    max_adjustment: 5.0
 
 regime:
   btc_ma_period: 30

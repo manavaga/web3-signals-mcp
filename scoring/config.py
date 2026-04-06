@@ -25,6 +25,10 @@ class TierWeightOverride(BaseModel):
     weights_bullish: dict[str, float]
     weights_bearish: dict[str, float]
 
+class RelativeMomentumConfig(BaseModel):
+    multiplier: float = 0.15
+    max_adjustment: float = 5.0
+
 class ScoringConfig(BaseModel):
     weights_default: dict[str, float]
     weights_bullish: dict[str, float]
@@ -34,6 +38,7 @@ class ScoringConfig(BaseModel):
     tier_multipliers: dict[str, float]
     momentum_threshold: float = 5.0
     per_tier_weights: Optional[dict[str, TierWeightOverride]] = None
+    relative_momentum: RelativeMomentumConfig = RelativeMomentumConfig()
 
     @model_validator(mode="after")
     def check_weights_sum(self):
