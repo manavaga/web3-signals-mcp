@@ -18,6 +18,7 @@ from storage.db import Storage
 logger = logging.getLogger(__name__)
 
 SIGNAL_CADENCE_HOURS = int(os.getenv("SIGNAL_CADENCE_HOURS", "12"))
+TRADE_EVAL_INTERVAL_MIN = int(os.getenv("TRADE_EVAL_INTERVAL_MIN", "15"))
 
 
 def _load_agents(config, assets_cfg, storage=None):
@@ -92,13 +93,13 @@ def run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force
         # --- Record trades for directional signals with targets ---
         _record_trades(storage, signals)
 
-        # --- Evaluate open trades (check TP/SL against current prices) ---
-        _evaluate_open_trades(storage)
-
         # --- Learning layer: evaluate old signals, compute IC, propose weights ---
         _run_evaluation_cycle(config, assets_cfg, storage, signals)
 
-        return now
+        last_fusion = now
+
+    # --- Evaluate open trades EVERY cycle (not just on fusion) ---
+    _evaluate_open_trades(storage)
 
     return last_fusion
 
@@ -261,7 +262,23 @@ def _run_evaluation_cycle(config, assets_cfg, storage, current_signals):
 
 
 def _get_current_price(asset: str, storage) -> float | None:
-    """Get current price from latest technical agent data."""
+    """Get current price — tries live Binance API first, falls back to stored data."""
+    # Try live Binance price first (most accurate for trade evaluation)
+    try:
+        import urllib.request, json as _json
+        from scoring.config import load_assets as _load_assets
+        assets_cfg = _load_assets()
+        symbol = assets_cfg.get(asset).binance_symbol
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = _json.loads(resp.read())
+            price = float(data["price"])
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.debug(f"Live price fetch failed for {asset}: {e}")
+
+    # Fallback to stored agent data
     try:
         data = storage.load_latest("technical_agent")
         if data and asset in data:
@@ -353,12 +370,25 @@ def main():
         run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion, force=True)
         return
 
+    last_trade_eval = 0.0
+    trade_eval_secs = TRADE_EVAL_INTERVAL_MIN * 60
+
     while True:
         try:
             last_fusion = run_cycle(config, assets_cfg, storage, agents, last_runs, last_fusion)
         except Exception as e:
             logger.error(f"Cycle error: {e}")
-        time.sleep(args.interval)
+
+        # Evaluate open trades on a faster cadence (default 15 min)
+        now = time.time()
+        if (now - last_trade_eval) >= trade_eval_secs:
+            try:
+                _evaluate_open_trades(storage)
+                last_trade_eval = now
+            except Exception as e:
+                logger.error(f"Trade eval error: {e}")
+
+        time.sleep(min(args.interval, trade_eval_secs))
 
 
 if __name__ == "__main__":
