@@ -135,7 +135,7 @@ class TestAbstainAdjustment:
     def test_low_confidence_widens_abstain(self):
         """Low confidence → positive adjustment → wider abstain zone."""
         adj = _compute_abstain_adjustment(0.1)
-        assert adj > 5.0  # Should strongly discourage signals
+        assert adj > 3.0  # Should strongly discourage signals
 
     def test_high_confidence_narrows_abstain(self):
         """High confidence → negative adjustment → narrower abstain zone."""
@@ -146,6 +146,29 @@ class TestAbstainAdjustment:
         """Mid confidence → near-zero adjustment."""
         adj = _compute_abstain_adjustment(0.5)
         assert abs(adj) < 1.0
+
+
+    def test_abstain_adjustment_range(self):
+        """Abstain adjustment should be bounded to [-2, +5] range."""
+        # Very low confidence → max positive adjustment
+        adj_low = _compute_abstain_adjustment(0.0)
+        assert adj_low == 5.0, f"Expected 5.0, got {adj_low}"
+
+        # Medium confidence → zero adjustment
+        adj_mid = _compute_abstain_adjustment(0.5)
+        assert adj_mid == 0.0, f"Expected 0.0, got {adj_mid}"
+
+        # High confidence → negative adjustment (more signals)
+        adj_high = _compute_abstain_adjustment(1.0)
+        assert adj_high == -2.0, f"Expected -2.0, got {adj_high}"
+
+        # Quarter confidence → +2.5
+        adj_quarter = _compute_abstain_adjustment(0.25)
+        assert abs(adj_quarter - 2.5) < 0.01, f"Expected 2.5, got {adj_quarter}"
+
+        # Three-quarter confidence → -1.0
+        adj_three_q = _compute_abstain_adjustment(0.75)
+        assert abs(adj_three_q - (-1.0)) < 0.01, f"Expected -1.0, got {adj_three_q}"
 
 
 class TestEMABlend:

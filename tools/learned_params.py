@@ -402,6 +402,9 @@ def _compute_confidence(win_rate: float, realized_rr: float) -> float:
 def _compute_abstain_adjustment(confidence: float) -> float:
     """Compute abstain threshold adjustment from confidence.
 
+    Narrowed range [-2, +5] to prevent excessive signal suppression.
+    Old range [-3, +10] caused 91% of signals to be neutral.
+
     Low confidence → larger positive adjustment → wider abstain zone
     → fewer signals for unreliable directions.
 
@@ -411,18 +414,14 @@ def _compute_abstain_adjustment(confidence: float) -> float:
     Returns: adjustment to add to base abstain threshold.
     Derived from confidence score — no hardcoded values.
     """
-    # Map confidence [0, 1] to adjustment [-3, +10]
-    # confidence=0 → +10 (rarely signal)
+    # Map confidence [0, 1] to adjustment [-2, +5]
+    # confidence=0 → +5 (cautious)
     # confidence=0.5 → 0 (use base threshold)
-    # confidence=1.0 → -3 (signal more freely)
-    # This is a linear mapping, the range comes from the data's own
-    # abstain sweep results (see abstain_sweep.py)
+    # confidence=1.0 → -2 (signal more freely)
     if confidence <= 0.5:
-        # Scale 0→10, 0.5→0
-        return 10.0 * (1.0 - confidence / 0.5)
+        return 5.0 * (1.0 - confidence / 0.5)
     else:
-        # Scale 0.5→0, 1.0→-3
-        return -3.0 * ((confidence - 0.5) / 0.5)
+        return -2.0 * ((confidence - 0.5) / 0.5)
 
 
 def _learn_risk_params(assets: dict[str, AssetLearnedParams]) -> dict:
