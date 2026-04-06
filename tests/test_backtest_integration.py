@@ -117,10 +117,10 @@ def test_compute_indicators_includes_all_fields():
     indicators = compute_technical_indicators(candles)
     expected_fields = [
         "price", "rsi_14", "macd_line", "macd_signal", "macd_histogram",
-        "bb_upper", "bb_lower", "bb_middle", "bb_position", "bb_bandwidth",
+        "bb_upper", "bb_lower", "bb_middle", "bb_bandwidth",
         "atr_14", "atr_pct", "ma7", "ma30", "volume_ratio", "volume_status",
-        "obv_slope", "mfi", "roc_1d", "roc_7d", "roc_30d",
-        "stoch_rsi", "squeeze_on", "squeeze_momentum",
+        "obv_slope", "roc_7d",
+        "squeeze_on", "squeeze_momentum",
         "rsi_zscore", "macd_zscore", "bb_zscore",
     ]
     for field in expected_fields:

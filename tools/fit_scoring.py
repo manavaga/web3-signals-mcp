@@ -146,8 +146,8 @@ def score_dimension_fitted(
 # ---------------------------------------------------------------------------
 
 TECHNICAL_INDICATORS = [
-    "rsi_14", "macd_histogram", "bb_bandwidth", "bb_position",
-    "obv_slope", "roc_7d", "roc_1d", "roc_30d",
+    "rsi_14", "macd_histogram", "bb_bandwidth",
+    "obv_slope", "roc_7d",
     "squeeze_momentum", "macd_zscore", "rsi_zscore", "bb_zscore",
     "adx_14", "volume_ratio", "atr_pct",
 ]

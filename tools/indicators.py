@@ -367,9 +367,7 @@ def compute_technical_indicators(
     adx = calc_adx(highs, lows, closes, atr_period)
     vol_profile = calc_volume_profile(volumes, volume_ma)
     obv_slope = calc_obv_slope(closes, volumes)
-    mfi = calc_mfi(highs, lows, closes, volumes, mfi_period)
     roc_1d, roc_7d, roc_30d = calc_roc(closes)
-    stoch_rsi = calc_stoch_rsi(closes, rsi_period)
     squeeze_on, squeeze_momentum = calc_squeeze(highs, lows, closes, bb_period, bb_std)
     zscores = calc_zscores(
         closes, highs, lows, rsi_period, macd_fast, macd_slow,
@@ -395,11 +393,7 @@ def compute_technical_indicators(
         "bb_upper": bb["upper"],
         "bb_lower": bb["lower"],
         "bb_middle": bb["middle"],
-        "bb_position": bb["position"],
         "bb_bandwidth": bb["bandwidth"],
-        "bb_squeeze": bb["squeeze"],
-        "bb_upper": bb["upper"],
-        "bb_lower": bb["lower"],
         "swing_high": swing_high,
         "swing_low": swing_low,
         "atr_14": atr,
@@ -410,11 +404,7 @@ def compute_technical_indicators(
         "volume_ratio": vol_profile["ratio"],
         "volume_status": vol_profile["status"],
         "obv_slope": obv_slope,
-        "mfi": mfi,
-        "roc_1d": roc_1d,
         "roc_7d": roc_7d,
-        "roc_30d": roc_30d,
-        "stoch_rsi": stoch_rsi,
         "squeeze_on": squeeze_on,
         "squeeze_momentum": squeeze_momentum,
         "rsi_zscore": zscores["rsi_zscore"],
