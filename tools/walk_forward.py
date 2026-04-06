@@ -179,6 +179,7 @@ def compute_ic(
     indicator_values: list,
     forward_returns: list,
     min_observations: int = 20,
+    p_threshold: float = 0.05,
 ) -> float:
     """Compute Information Coefficient (Spearman rank correlation).
 
@@ -186,7 +187,7 @@ def compute_ic(
     IC -0.05 to +0.05: Noise, consider removing
     IC < -0.10: Anti-predictive, remove or invert
 
-    Returns 0.0 if insufficient data or not statistically significant (p > 0.05).
+    Returns 0.0 if insufficient data or not statistically significant.
     """
     if len(indicator_values) < min_observations:
         return 0.0
@@ -207,7 +208,7 @@ def compute_ic(
     if corr != corr:  # NaN check
         return 0.0
 
-    return float(corr) if p_value < 0.05 else 0.0
+    return float(corr) if p_value < p_threshold else 0.0
 
 
 # ---------------------------------------------------------------------------

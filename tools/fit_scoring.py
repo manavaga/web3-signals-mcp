@@ -36,6 +36,7 @@ def fit_indicator_params(
     indicator_series: dict[str, list[float]],
     forward_returns: list[float],
     min_obs: int = 20,
+    base_p_threshold: float = 0.05,
 ) -> dict[str, dict]:
     """Fit scoring parameters from training data.
 
@@ -43,9 +44,15 @@ def fit_indicator_params(
         indicator_series: {indicator_name: [value_day0, value_day1, ...]}
         forward_returns: [return_day0, return_day1, ...]
         min_obs: Minimum observations for a valid fit.
+        base_p_threshold: Base significance level. Bonferroni-adjusted by
+            dividing by the number of indicators to control family-wise
+            error rate across multiple comparisons.
 
     Returns: {indicator_name: {"mean": float, "std": float, "ic": float}}
     """
+    n_indicators = len(indicator_series)
+    adjusted_p = base_p_threshold / max(n_indicators, 1)
+
     params = {}
     for name, values in indicator_series.items():
         if len(values) < min_obs or len(forward_returns) < min_obs:
@@ -73,10 +80,10 @@ def fit_indicator_params(
         if corr != corr:  # NaN
             continue
 
-        # Use IC even if p > 0.05, but dampen weak signals
+        # Only keep IC if statistically significant after Bonferroni correction
         ic = float(corr)
-        if p_value > 0.20:
-            ic = 0.0  # Too noisy, ignore
+        if p_value > adjusted_p:
+            ic = 0.0  # Not significant after multiple-comparison correction
 
         params[name] = {"mean": mean, "std": std, "ic": ic}
 
@@ -146,8 +153,8 @@ def score_dimension_fitted(
 # ---------------------------------------------------------------------------
 
 TECHNICAL_INDICATORS = [
-    "rsi_14", "macd_histogram", "bb_bandwidth",
-    "obv_slope", "roc_7d",
+    "rsi_14", "macd_histogram", "bb_bandwidth", "bb_position",
+    "obv_slope", "roc_7d", "roc_1d", "roc_30d",
     "squeeze_momentum", "macd_zscore", "rsi_zscore", "bb_zscore",
     "adx_14", "volume_ratio", "atr_pct",
 ]
@@ -160,5 +167,12 @@ MARKET_INDICATORS = [
 DERIVATIVES_INDICATORS = [
     "funding_rate", "long_short_ratio",
     "taker_buy_sell_ratio", "oi_change_pct",
+]
+
+# Lead indicators — computed and stored but NOT used in scoring until
+# proven via backtest. Including unproven indicators in IC fitting
+# destabilizes weight distribution across all indicators in the dimension.
+# liq_density has no data in backtests (live-only), so it introduces pure noise.
+DERIVATIVES_LEAD_CANDIDATES = [
     "funding_accel", "oi_accel", "vol_price_div", "liq_density",
 ]

@@ -192,6 +192,48 @@ class TestComputeIC:
         ic = compute_ic([None] * 30, [None] * 30)
         assert ic == 0.0
 
+    def test_custom_p_threshold(self):
+        """compute_ic should respect a custom p_threshold."""
+        # Perfect correlation — always significant
+        ic_strict = compute_ic(list(range(1, 21)), list(range(1, 21)),
+                               p_threshold=0.001)
+        assert ic_strict > 0.9
+
+
+# --- Bonferroni correction tests ---
+
+class TestBonferroniFitScoring:
+    def test_ic_with_bonferroni_correction(self):
+        """IC threshold should account for number of indicators tested."""
+        from tools.fit_scoring import fit_indicator_params
+        import random
+        random.seed(42)
+        n = 100
+
+        # Generate 15 random indicators (no real signal)
+        indicators = {
+            f"noise_{i}": [random.gauss(0, 1) for _ in range(n)]
+            for i in range(15)
+        }
+        returns = [random.gauss(0, 1) for _ in range(n)]
+
+        params = fit_indicator_params(indicators, returns)
+
+        # With 15 random indicators and Bonferroni (0.05/15 = 0.0033),
+        # very few should pass
+        non_zero_ic = sum(1 for p in params.values() if p["ic"] != 0)
+        assert non_zero_ic <= 3, \
+            f"Too many random indicators passed IC filter: {non_zero_ic}/15"
+
+    def test_single_indicator_uses_base_threshold(self):
+        """With 1 indicator, adjusted_p == base_p_threshold (no correction)."""
+        from tools.fit_scoring import fit_indicator_params
+        indicators = {"perfect": list(range(50))}
+        returns = list(range(50))
+
+        params = fit_indicator_params(indicators, returns)
+        assert params["perfect"]["ic"] > 0.9
+
 
 # --- Leakage guard tests ---
 
