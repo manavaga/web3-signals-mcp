@@ -762,32 +762,32 @@ async function fetchAll() {
       perfData = await perfRes.json();
     } catch(e) { perfData = null; }
 
-    // Fetch analytics data (non-blocking)
+    // Fetch analytics data (non-blocking) — days=3650 ≈ all-time
     try {
-      const analyticsRes = await fetch(API_BASE + '/analytics?days=7');
+      const analyticsRes = await fetch(API_BASE + '/analytics?days=3650');
       analyticsData = await analyticsRes.json();
     } catch(e) { analyticsData = null; }
 
     try {
-      const errRes = await fetch(API_BASE + '/analytics/errors?days=7');
+      const errRes = await fetch(API_BASE + '/analytics/errors?days=3650');
       window._errorData = await errRes.json();
     } catch(e) { window._errorData = null; }
 
-    // Fetch agent intelligence data (non-blocking)
+    // Fetch agent intelligence data (non-blocking) — days=3650 ≈ all-time
     try {
-      const agentsRes = await fetch(API_BASE + '/analytics/agents?days=30');
+      const agentsRes = await fetch(API_BASE + '/analytics/agents?days=3650');
       window._agentsData = await agentsRes.json();
     } catch(e) { window._agentsData = null; }
 
-    // Fetch pipeline health data (non-blocking)
+    // Fetch pipeline health data (non-blocking) — days=3650 ≈ all-time
     try {
-      const pipeRes = await fetch(API_BASE + '/analytics/pipeline-health?days=30');
+      const pipeRes = await fetch(API_BASE + '/analytics/pipeline-health?days=3650');
       window._pipelineData = await pipeRes.json();
     } catch(e) { window._pipelineData = null; }
 
-    // Fetch x402 diagnostics (non-blocking)
+    // Fetch x402 diagnostics (non-blocking) — days=3650 ≈ all-time
     try {
-      const x402Res = await fetch(API_BASE + '/analytics/x402/diagnostics?days=30');
+      const x402Res = await fetch(API_BASE + '/analytics/x402/diagnostics?days=3650');
       window._x402Diag = await x402Res.json();
     } catch(e) { window._x402Diag = null; }
 
@@ -1319,7 +1319,7 @@ function renderSignalHealth() {
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:12px; margin-bottom:16px;">
         <div style="background:var(--surface2); border-radius:8px; padding:12px; text-align:center;">
           <div style="font-size:22px; font-weight:700; color:var(--cyan);">${snapCount}</div>
-          <div style="font-size:11px; color:var(--text-dim);">Snapshots (30d)</div>
+          <div style="font-size:11px; color:var(--text-dim);">Snapshots (All Time)</div>
         </div>
         <div style="text-align:center; padding:12px; font-size:22px; color:var(--text-dim);">&#8594;</div>
         <div style="background:var(--surface2); border-radius:8px; padding:12px; text-align:center;">
@@ -1676,7 +1676,7 @@ function renderReputationCard() {
     <div class="portfolio-card" style="cursor:pointer" onclick="switchView('performance', document.querySelector('[data-view=performance]'))">
       <div class="label">Reputation Score</div>
       <div class="value" style="color:${repColor}">${rep}</div>
-      <div class="sub">${perfData.accuracy_30d || 0}% accuracy (30d)</div>
+      <div class="sub">${perfData.accuracy_30d || 0}% accuracy (All Time)</div>
     </div>`;
 }
 
@@ -1748,7 +1748,7 @@ function renderPerformance() {
       <div class="perf-methodology" style="margin-top:20px">
         <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
         After 24h/48h, we compare predicted direction vs actual price movement.
-        Price source: CoinGecko + Binance. Scoring: Gradient (0.0-1.0) based on direction AND magnitude. Window: 30-day rolling.
+        Price source: CoinGecko + Binance. Scoring: Gradient (0.0-1.0) based on direction AND magnitude. Window: All Time.
       </div>
     `;
     return;
@@ -1860,7 +1860,7 @@ function renderPerformance() {
     <div class="perf-methodology" style="margin-top:20px">
       <strong>Methodology:</strong> Direction is extracted from composite score (&gt;60 = bullish, &lt;40 = bearish, 40-60 = neutral).
       After 24h/48h, we compare predicted direction vs actual price movement.
-      <strong>Price source:</strong> CoinGecko + Binance. <strong>Scoring:</strong> Gradient (0.0-1.0) based on direction AND magnitude. <strong>Window:</strong> 30-day rolling.
+      <strong>Price source:</strong> CoinGecko + Binance. <strong>Scoring:</strong> Gradient (0.0-1.0) based on direction AND magnitude. <strong>Window:</strong> All Time.
       <strong>Scale:</strong> 1.0 = strong correct (&gt;5%), 0.7 = moderate (2-5%), 0.4 = weak correct (&lt;2%), 0.2 = weak wrong, 0.0 = clear wrong.
     </div>
   `;
@@ -2053,7 +2053,7 @@ function renderFunnel(d) {
 function renderErrorSummary() {
   const ed = window._errorData;
   if (!ed) return `
-    <div class="perf-section-title">Error Tracking (7d)</div>
+    <div class="perf-section-title">Error Tracking (All Time)</div>
     <div class="attr-section"><div style="color:var(--text-dim);font-size:13px;padding:8px 0;">Loading error data...</div></div>
   `;
   const api = ed.api_errors || {};
@@ -2083,7 +2083,7 @@ function renderErrorSummary() {
   }).join('');
 
   return `
-    <div class="perf-section-title">Error Tracking (7d)</div>
+    <div class="perf-section-title">Error Tracking (All Time)</div>
     <div class="attr-section">
       <div class="error-cards">
         <div class="error-card">
@@ -2162,7 +2162,7 @@ function renderAnalytics() {
   const summaryCards = `
     <div class="analytics-grid">
       <div class="analytics-card">
-        <div class="ac-label">Total Requests (7d)</div>
+        <div class="ac-label">Total Requests (All Time)</div>
         <div class="ac-value" style="color:var(--cyan)">${totalReqs.toLocaleString()}</div>
         <div class="ac-sub">${intReqs.toLocaleString()} internal &middot; ${extReqs.toLocaleString()} external${unkReqs > 0 ? ' &middot; ' + unkReqs.toLocaleString() + ' unclassified' : ''}</div>
       </div>
@@ -2299,7 +2299,7 @@ function renderAgentIntelligence() {
   const wowArrow = wowPct > 0 ? '&#9650;' : wowPct < 0 ? '&#9660;' : '&#8212;';
 
   let html = `
-    <div class="perf-section-title">Agent Intelligence (30d)</div>
+    <div class="perf-section-title">Agent Intelligence (All Time)</div>
     <div class="attr-section">
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin-bottom:16px;">
         <div style="background:var(--surface2); border-radius:8px; padding:14px; text-align:center;">

@@ -1895,9 +1895,14 @@ async def get_signal_trace(asset: str, request: Request):
 # ---------------------------------------------------------------------------
 @app.get("/api/performance/reputation", tags=["internal"], include_in_schema=False)
 async def get_reputation_internal(request: Request):
-    """Same data as /performance/reputation but free — used by dashboard UI."""
+    """Same data as /performance/reputation but free — used by dashboard UI.
+
+    Dashboard fetches all-time (days=3650) so the UI shows lifetime totals.
+    The public x402-paid endpoint /performance/reputation keeps its 30-day default
+    contract for external integrators.
+    """
     _require_internal(request)
-    return await get_reputation()
+    return await get_reputation(days=3650)
 
 
 # ---------------------------------------------------------------------------
@@ -1915,16 +1920,19 @@ async def get_reputation_internal(request: Request):
                  "402": {"description": "Payment Required — x402 micropayment needed"},
              },
          })
-async def get_reputation():
+async def get_reputation(days: int = 30):
     """
     Public reputation endpoint. AI agents use this to verify signal quality
-    before subscribing. Shows rolling 30-day accuracy across all timeframes.
+    before subscribing. Shows rolling N-day accuracy across all timeframes.
+
+    days defaults to 30 (public x402-paid contract). The internal dashboard
+    mirror passes days=3650 (~10y, effectively all-time) to surface lifetime totals.
     """
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
 
-    stats = _store.load_accuracy_stats(days=30)
-    total_snapshots = _store.count_snapshots(days=30)
+    stats = _store.load_accuracy_stats(days=days)
+    total_snapshots = _store.count_snapshots(days=days)
 
     if stats["total"] == 0:
         return {
@@ -1939,6 +1947,8 @@ async def get_reputation():
     accuracy = round(avg_gradient * 100, 1)
     reputation_score = int(round(accuracy))
 
+    window_label = "all-time" if days >= 365 else f"{days}-day rolling"
+
     return {
         "status": "active",
         "reputation_score": reputation_score,
@@ -1950,6 +1960,7 @@ async def get_reputation():
         "by_timeframe": stats["by_timeframe"],
         "by_asset": stats["by_asset"],
         "snapshots_collected_30d": total_snapshots,
+        "window_days": days,
         "methodology": {
             "direction_extraction": (
                 "from fusion engine: direction comes from YAML label thresholds. "
@@ -1975,7 +1986,7 @@ async def get_reputation():
             },
             "accuracy_formula": "AVG(gradient_score) × 100",
             "noise_threshold": "±2% — moves within this range are inconclusive",
-            "window": "30-day rolling",
+            "window": window_label,
             "timeframes": ["24h", "48h"],
             "price_source": "market agent (CoinGecko + Binance)",
         },
@@ -2034,7 +2045,7 @@ async def get_asset_performance(asset: str):
 # GET /analytics — API usage analytics (public)
 # ---------------------------------------------------------------------------
 @app.get("/analytics", tags=["analytics"])
-async def get_analytics(days: int = Query(7, ge=1, le=90, description="Number of days to aggregate")):
+async def get_analytics(days: int = Query(7, ge=1, le=3650, description="Number of days to aggregate (up to ~10y)")):
     """
     Public API usage analytics. Shows request counts, user-agent breakdown
     (AI agents vs browsers vs bots), endpoint popularity, and daily trends.
@@ -2088,7 +2099,7 @@ async def get_analytics(days: int = Query(7, ge=1, le=90, description="Number of
 # ---------------------------------------------------------------------------
 @app.get("/analytics/x402", tags=["analytics"])
 async def get_x402_analytics(
-    days: int = Query(30, ge=1, le=90, description="Number of days to aggregate"),
+    days: int = Query(30, ge=1, le=3650, description="Number of days to aggregate (up to ~10y)"),
 ):
     """
     x402 payment analytics — paid calls, revenue, conversion rate, top paying clients.
@@ -2133,7 +2144,7 @@ async def get_x402_analytics(
 # ---------------------------------------------------------------------------
 @app.get("/analytics/insights", tags=["analytics"])
 async def get_analytics_insights(
-    days: int = Query(30, ge=1, le=90, description="Number of days to analyze"),
+    days: int = Query(30, ge=1, le=3650, description="Number of days to analyze (up to ~10y)"),
 ):
     """Growth insights — external AI agent call trends, source segmentation, revenue split."""
     if not _store:
@@ -2369,7 +2380,7 @@ async def get_signal_health():
 # ---------------------------------------------------------------------------
 
 @app.get("/analytics/pipeline-health", tags=["analytics"])
-async def get_pipeline_health(days: int = Query(30, ge=1, le=90)):
+async def get_pipeline_health(days: int = Query(30, ge=1, le=3650)):
     """Diagnostic view of the snapshot → evaluation → IC pipeline."""
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
@@ -2424,7 +2435,7 @@ async def get_pipeline_health(days: int = Query(30, ge=1, le=90)):
 # ---------------------------------------------------------------------------
 
 @app.get("/analytics/agents", tags=["analytics"])
-async def get_agent_intelligence(days: int = Query(30, ge=1, le=90)):
+async def get_agent_intelligence(days: int = Query(30, ge=1, le=3650)):
     """Per-agent breakdown of external traffic with growth metrics."""
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
@@ -2478,7 +2489,7 @@ async def get_agent_intelligence(days: int = Query(30, ge=1, le=90)):
 # ---------------------------------------------------------------------------
 
 @app.get("/analytics/x402/diagnostics", tags=["analytics"])
-async def get_x402_diagnostics(days: int = Query(30, ge=1, le=90)):
+async def get_x402_diagnostics(days: int = Query(30, ge=1, le=3650)):
     """x402 payment flow diagnostics — who got 402'd, facilitator status."""
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
@@ -2523,7 +2534,7 @@ async def get_x402_diagnostics(days: int = Query(30, ge=1, le=90)):
 
 @app.get("/analytics/errors", tags=["analytics"])
 async def get_error_analytics(
-    days: int = Query(7, ge=1, le=90),
+    days: int = Query(7, ge=1, le=3650),
 ):
     """Error tracking — API errors, payment failures, agent errors."""
     if not _store:
