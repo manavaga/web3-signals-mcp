@@ -1314,9 +1314,9 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
     CACHE_RULES: dict = {
         "/health": "no-cache",
         "/signal": "public, max-age=900",            # 15 min — matches signal refresh
-        "/api/signal": "public, max-age=900",         # internal mirror
-        "/performance/reputation": "public, max-age=3600",  # 1 hour
-        "/api/performance/reputation": "public, max-age=3600",
+        "/api/signal": "no-cache",                    # internal mirror: always fresh for dashboard
+        "/performance/reputation": "public, max-age=3600",  # 1 hour (public paid contract)
+        "/api/performance/reputation": "no-cache",    # internal mirror: always fresh for dashboard
     }
 
     async def dispatch(self, request: Request, call_next):

@@ -1829,7 +1829,7 @@ function renderPerformance() {
         <div class="perf-big" style="color:${repColor(rep)}">${rep}</div>
         <div class="perf-label">Reputation Score</div>
         <div class="perf-sub">
-          ${acc}% accuracy over 30 days<br>
+          ${acc}% accuracy (All Time)<br>
           avg gradient: ${(avgGradient * 100).toFixed(1)}%<br>
           ${evaluated} directional / ${neutralSkipped} neutral skipped<br>
           ${snaps} snapshots collected
@@ -1851,7 +1851,7 @@ function renderPerformance() {
         <th>Asset</th>
         <th>Score</th>
         <th>Direction</th>
-        <th>30d Acc</th>
+        <th>All-Time Acc</th>
         <th>Reasoning (Why This Score)</th>
       </tr></thead>
       <tbody>${signalRows}</tbody>
