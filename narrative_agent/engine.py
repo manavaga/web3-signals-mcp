@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import time as _time_module
@@ -128,77 +129,85 @@ class NarrativeAgent(BaseAgent):
         influencer_hits: Dict[str, List[str]] = {sym: [] for sym in self.assets}
         trending: List[str] = []
 
-        # --- Source 1: Reddit (with authority weighting) ---
-        if is_source_enabled(self.profile, "reddit"):
-            try:
-                reddit_counts, reddit_weighted, reddit_headlines = self._fetch_reddit()
-                for sym in self.assets:
-                    headlines[sym].extend(reddit_headlines.get(sym, []))
-                data["sources_used"].append("reddit")
-            except Exception as exc:
-                errors.append(f"reddit: {exc}")
-
-        # --- Source 2: Twitter/X (via twikit) ---
-        if is_source_enabled(self.profile, "twitter"):
-            try:
-                twitter_counts, twitter_headlines, tw_influencers = self._fetch_twitter()
-                for sym in self.assets:
-                    headlines[sym].extend(twitter_headlines.get(sym, []))
-                    influencer_hits[sym].extend(tw_influencers.get(sym, []))
-                data["sources_used"].append("twitter")
-            except Exception as exc:
-                errors.append(f"twitter: {exc}")
-
-        # --- Source 3: Farcaster (via Neynar) ---
-        if is_source_enabled(self.profile, "farcaster"):
-            try:
-                farcaster_counts, fc_headlines, fc_influencers = self._fetch_farcaster()
-                for sym in self.assets:
-                    headlines[sym].extend(fc_headlines.get(sym, []))
-                    influencer_hits[sym].extend(fc_influencers.get(sym, []))
-                data["sources_used"].append("farcaster")
-            except Exception as exc:
-                errors.append(f"farcaster: {exc}")
-
-        # --- Source 4: CryptoPanic ---
-        if is_source_enabled(self.profile, "cryptopanic"):
-            try:
-                cryptopanic_counts, cp_headlines, community_sentiment = self._fetch_cryptopanic()
-                for sym in self.assets:
-                    headlines[sym].extend(cp_headlines.get(sym, []))
-                data["sources_used"].append("cryptopanic")
-            except Exception as exc:
-                errors.append(f"cryptopanic: {exc}")
-
-        # --- Source 5: Google News RSS ---
-        if is_source_enabled(self.profile, "google_news"):
-            try:
-                google_news_counts, gn_headlines = self._fetch_google_news()
-                for sym in self.assets:
-                    headlines[sym].extend(gn_headlines.get(sym, []))
-                data["sources_used"].append("google_news")
-            except Exception as exc:
-                errors.append(f"google_news: {exc}")
-
-        # --- Source 6: CoinGecko Trending ---
-        if is_source_enabled(self.profile, "coingecko_trending"):
-            try:
-                trending = self._fetch_trending()
-                data["trending_on_coingecko"] = trending
-                data["sources_used"].append("coingecko_trending")
-            except Exception as exc:
-                errors.append(f"coingecko_trending: {exc}")
-
-        # --- Source 7: LunarCrush Social Metrics ---
+        # --- Fetch all 7 sources concurrently ---
+        # These fetches are independent and I/O-bound. Running them serially
+        # (each with its own per-request urlopen timeout) could exceed the
+        # orchestrator's 120s ceiling and cause the whole agent to be killed.
+        # Run them in parallel with a per-source wall clock; the total time
+        # becomes ~= the slowest source instead of the sum of all sources.
         lunarcrush_data: Dict[str, Dict[str, Any]] = {}
-        lc_cfg = self.profile.get("lunarcrush", {})
-        if lc_cfg.get("enabled", False):
-            try:
-                lunarcrush_data = self._fetch_lunarcrush()
-                if lunarcrush_data:
-                    data["sources_used"].append("lunarcrush")
-            except Exception as exc:
-                errors.append(f"lunarcrush: {exc}")
+
+        source_jobs: List[Tuple[str, Any]] = []
+        if is_source_enabled(self.profile, "reddit"):
+            source_jobs.append(("reddit", self._fetch_reddit))
+        if is_source_enabled(self.profile, "twitter"):
+            source_jobs.append(("twitter", self._fetch_twitter))
+        if is_source_enabled(self.profile, "farcaster"):
+            source_jobs.append(("farcaster", self._fetch_farcaster))
+        if is_source_enabled(self.profile, "cryptopanic"):
+            source_jobs.append(("cryptopanic", self._fetch_cryptopanic))
+        if is_source_enabled(self.profile, "google_news"):
+            source_jobs.append(("google_news", self._fetch_google_news))
+        if is_source_enabled(self.profile, "coingecko_trending"):
+            source_jobs.append(("coingecko_trending", self._fetch_trending))
+        if self.profile.get("lunarcrush", {}).get("enabled", False):
+            source_jobs.append(("lunarcrush", self._fetch_lunarcrush))
+
+        per_source_timeout = int(self.profile.get("source_timeout_sec", 45))
+        source_results: Dict[str, Any] = {}
+        if source_jobs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(source_jobs)) as pool:
+                future_to_name = {pool.submit(fn): name for name, fn in source_jobs}
+                for future, name in future_to_name.items():
+                    try:
+                        source_results[name] = future.result(timeout=per_source_timeout)
+                    except concurrent.futures.TimeoutError:
+                        errors.append(f"{name}: timeout after {per_source_timeout}s")
+                    except Exception as exc:
+                        errors.append(f"{name}: {exc}")
+
+        # --- Assemble results (cheap, in-memory; preserves source ordering) ---
+        if "reddit" in source_results:
+            reddit_counts, reddit_weighted, reddit_headlines = source_results["reddit"]
+            for sym in self.assets:
+                headlines[sym].extend(reddit_headlines.get(sym, []))
+            data["sources_used"].append("reddit")
+
+        if "twitter" in source_results:
+            twitter_counts, twitter_headlines, tw_influencers = source_results["twitter"]
+            for sym in self.assets:
+                headlines[sym].extend(twitter_headlines.get(sym, []))
+                influencer_hits[sym].extend(tw_influencers.get(sym, []))
+            data["sources_used"].append("twitter")
+
+        if "farcaster" in source_results:
+            farcaster_counts, fc_headlines, fc_influencers = source_results["farcaster"]
+            for sym in self.assets:
+                headlines[sym].extend(fc_headlines.get(sym, []))
+                influencer_hits[sym].extend(fc_influencers.get(sym, []))
+            data["sources_used"].append("farcaster")
+
+        if "cryptopanic" in source_results:
+            cryptopanic_counts, cp_headlines, community_sentiment = source_results["cryptopanic"]
+            for sym in self.assets:
+                headlines[sym].extend(cp_headlines.get(sym, []))
+            data["sources_used"].append("cryptopanic")
+
+        if "google_news" in source_results:
+            google_news_counts, gn_headlines = source_results["google_news"]
+            for sym in self.assets:
+                headlines[sym].extend(gn_headlines.get(sym, []))
+            data["sources_used"].append("google_news")
+
+        if "coingecko_trending" in source_results:
+            trending = source_results["coingecko_trending"]
+            data["trending_on_coingecko"] = trending
+            data["sources_used"].append("coingecko_trending")
+
+        if "lunarcrush" in source_results:
+            lunarcrush_data = source_results["lunarcrush"]
+            if lunarcrush_data:
+                data["sources_used"].append("lunarcrush")
 
         # --- Score each asset ---
         score_min = float(get_threshold(self.profile, "thresholds", "narrative_score_min", default=0.40))

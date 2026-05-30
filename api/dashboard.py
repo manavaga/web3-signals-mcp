@@ -2023,6 +2023,8 @@ function renderFunnel(d) {
   if (!f) return '';
   const c402 = f.challenges_402 || 0;
   const paid = f.payment_succeeded || 0;
+  const paidExternal = f.payment_succeeded_external || 0;
+  const paidInternal = f.payment_succeeded_internal || 0;
   const failed = f.payment_failed || 0;
   const attempted = paid + failed;
   const attemptRate = c402 > 0 ? ((attempted / c402) * 100).toFixed(0) : '0';
@@ -2052,8 +2054,9 @@ function renderFunnel(d) {
         </div>
         <div class="funnel-rate">${successRate}% &rarr;</div>
         <div class="funnel-stage">
-          <div class="funnel-value" style="color:var(--green)">${paid}</div>
-          <div class="funnel-label">Paid</div>
+          <div class="funnel-value" style="color:var(--green)">${paidExternal}</div>
+          <div class="funnel-label">Paid (external)</div>
+          ${paidInternal > 0 ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">+${paidInternal} self-test</div>` : ''}
         </div>
         ${failed > 0 ? `<div class="funnel-stage" style="border-color:var(--red)">
           <div class="funnel-value" style="color:var(--red)">${failed}</div>

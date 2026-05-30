@@ -625,6 +625,7 @@ class Storage:
 
         result: Dict[str, Any] = {
             "total": 0, "avg_gradient": 0.0, "neutral_skipped": 0,
+            "last_evaluated_at": None,
             "by_timeframe": {},
             "by_asset": {},
         }
@@ -656,6 +657,16 @@ class Storage:
                             result["total"] = row[0]
                             result["avg_gradient"] = round(float(row[1] or 0), 3)
                             result["avg_abs_pct_change"] = round(float(row[2] or 0), 2)
+
+                        # Freshness: most recent DIRECTIONAL evaluation
+                        cur.execute(
+                            f"SELECT MAX(a.evaluated_at) FROM {acc_table} a "
+                            f"JOIN {snap_table} s ON a.snapshot_id = s.id "
+                            f"WHERE s.timestamp >= %s {directional_filter}",
+                            (since,),
+                        )
+                        fr = cur.fetchone()
+                        result["last_evaluated_at"] = fr[0] if fr else None
 
                         # By timeframe
                         cur.execute(
@@ -719,6 +730,15 @@ class Storage:
                         result["total"] = row[0]
                         result["avg_gradient"] = round(float(row[1] or 0), 3)
                         result["avg_abs_pct_change"] = round(float(row[2] or 0), 2)
+
+                    # Freshness: most recent DIRECTIONAL evaluation
+                    fr = conn.execute(
+                        f"SELECT MAX(a.evaluated_at) FROM {acc_table} a "
+                        f"JOIN {snap_table} s ON a.snapshot_id = s.id "
+                        f"WHERE s.timestamp >= ? {directional_filter}",
+                        (since,),
+                    ).fetchone()
+                    result["last_evaluated_at"] = fr[0] if fr else None
 
                     # By timeframe
                     rows = conn.execute(
@@ -1898,6 +1918,8 @@ class Storage:
                 "payment_attempted": 0,
                 "payment_succeeded": 0,
                 "payment_failed": 0,
+                "payment_succeeded_external": 0,
+                "payment_succeeded_internal": 0,
             },
         }
 
@@ -2048,6 +2070,19 @@ class Storage:
                         result["funnel"]["payment_attempted"] = (
                             result["funnel"]["payment_succeeded"] + result["funnel"]["payment_failed"]
                         )
+
+                        # --- Split paid calls by source (exclude self-test traffic) ---
+                        cur.execute(
+                            f"SELECT COALESCE(request_source, 'unknown'), COUNT(*) FROM {table} "
+                            f"WHERE timestamp >= %s AND payment_status = 'paid' "
+                            f"GROUP BY COALESCE(request_source, 'unknown')",
+                            (since,),
+                        )
+                        for row in cur.fetchall():
+                            if row[0] == "external":
+                                result["funnel"]["payment_succeeded_external"] = row[1]
+                            elif row[0] == "internal":
+                                result["funnel"]["payment_succeeded_internal"] = row[1]
 
                         # --- Bot-filtered conversion funnel ---
                         _BOT_PATTERN = (
@@ -2216,6 +2251,18 @@ class Storage:
                     result["funnel"]["payment_attempted"] = (
                         result["funnel"]["payment_succeeded"] + result["funnel"]["payment_failed"]
                     )
+
+                    # --- Split paid calls by source (exclude self-test traffic) ---
+                    for row in conn.execute(
+                        f"SELECT COALESCE(request_source, 'unknown'), COUNT(*) FROM {table} "
+                        f"WHERE timestamp >= ? AND payment_status = 'paid' "
+                        f"GROUP BY COALESCE(request_source, 'unknown')",
+                        (since,),
+                    ).fetchall():
+                        if row[0] == "external":
+                            result["funnel"]["payment_succeeded_external"] = row[1]
+                        elif row[0] == "internal":
+                            result["funnel"]["payment_succeeded_internal"] = row[1]
 
                     # --- Bot-filtered conversion funnel (SQLite uses LIKE) ---
                     _BOT_KEYWORDS = [

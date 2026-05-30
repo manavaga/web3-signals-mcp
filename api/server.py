@@ -1891,6 +1891,14 @@ async def get_signal_trace(asset: str, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Reputation confidence thresholds — a score is only published as a real
+# track record when it rests on enough RECENT directional calls. Otherwise the
+# engine's heavy abstention can leave it resting on a handful of stale samples.
+REPUTATION_MIN_DIRECTIONAL = int(os.getenv("REPUTATION_MIN_DIRECTIONAL", "100"))
+REPUTATION_STALE_HOURS = int(os.getenv("REPUTATION_STALE_HOURS", "72"))
+REPUTATION_MIN_COVERAGE = float(os.getenv("REPUTATION_MIN_COVERAGE", "0.10"))
+
+
 # GET /api/performance/reputation — Internal (free) for dashboard
 # ---------------------------------------------------------------------------
 @app.get("/api/performance/reputation", tags=["internal"], include_in_schema=False)
@@ -1949,31 +1957,70 @@ async def get_reputation(days: int = 30):
 
     window_label = "all-time" if days >= 365 else f"{days}-day rolling"
 
-    return {
-        "status": "active",
-        "reputation_score": reputation_score,
+    # --- Confidence / honesty guard ---
+    n_directional = stats["total"]
+    neutral_skipped = stats.get("neutral_skipped", 0)
+    denom = n_directional + neutral_skipped
+    coverage = round(n_directional / denom, 4) if denom else 0.0
+
+    last_eval = stats.get("last_evaluated_at")
+    hours_since_eval = None
+    if last_eval:
+        try:
+            hours_since_eval = round(
+                (datetime.now(timezone.utc) - datetime.fromisoformat(last_eval)).total_seconds() / 3600, 1
+            )
+        except (ValueError, TypeError):
+            hours_since_eval = None
+
+    caveats = []
+    if n_directional < REPUTATION_MIN_DIRECTIONAL:
+        caveats.append(
+            f"only {n_directional} directional signals evaluated ({window_label}) "
+            f"(need >={REPUTATION_MIN_DIRECTIONAL} for a statistically meaningful score)"
+        )
+    if hours_since_eval is None:
+        caveats.append("no recent directional evaluation on record")
+    elif hours_since_eval > REPUTATION_STALE_HOURS:
+        caveats.append(
+            f"most recent directional evaluation was {hours_since_eval:.0f}h ago "
+            f"(stale beyond {REPUTATION_STALE_HOURS}h)"
+        )
+    if coverage < REPUTATION_MIN_COVERAGE:
+        caveats.append(
+            f"directional coverage is {coverage:.1%} — the engine is abstaining on "
+            f"nearly all signals, so this sample is not representative"
+        )
+
+    confident = not caveats
+
+    response = {
+        "status": "active" if confident else "insufficient_data",
+        "confidence": "high" if confident else "low",
+        # Score is published only when it is a reliable track record. When the
+        # sample is too small, stale, or coverage-starved we withhold the number
+        # rather than present a coin-flip as a verified reputation.
+        "reputation_score": reputation_score if confident else None,
         "accuracy_30d": accuracy,
         "avg_gradient_score": avg_gradient,
-        "directional_signals_evaluated": stats["total"],
+        "directional_signals_evaluated": n_directional,
+        "directional_coverage": coverage,
+        "neutral_signals_skipped": neutral_skipped,
+        "last_evaluated_at": last_eval,
+        "hours_since_last_evaluation": hours_since_eval,
         "avg_abs_pct_change": stats.get("avg_abs_pct_change", 0),
-        "neutral_signals_skipped": stats.get("neutral_skipped", 0),
         "by_timeframe": stats["by_timeframe"],
         "by_asset": stats["by_asset"],
         "snapshots_collected_30d": total_snapshots,
         "window_days": days,
         "methodology": {
             "direction_extraction": (
-                "from fusion engine: direction comes from YAML label thresholds. "
-                "Abstain zone is DYNAMIC based on Fear & Greed index: "
-                "extreme fear/greed → threshold=5 (zone 45-55), "
-                "moderate fear/greed → threshold=6 (zone 44-56), "
-                "neutral → threshold=10 (zone 40-60). "
-                "Signals in the abstain zone are labelled INSUFFICIENT EDGE and skipped."
-            ),
-            "trend_override": (
-                "When BTC is >5% below its 30-day MA (confirmed downtrend), "
-                "contrarian boost on market and derivatives dimensions is dampened by 30%. "
-                "This allows bearish signals to emerge in sustained bear markets."
+                "Direction comes from the fusion engine's YAML label thresholds. "
+                "An asymmetric abstain zone around the neutral center (50) excludes "
+                "low-conviction signals; the zone widens in less-reliable market "
+                "regimes (e.g. ranging). Signals inside the abstain zone are labelled "
+                "INSUFFICIENT EDGE and are NOT evaluated. See directional_coverage for "
+                "the share of signals that were actually directional."
             ),
             "neutral_handling": "neutral/abstain signals are NOT evaluated — only directional calls count",
             "scoring": "gradient (0.0-1.0) based on direction AND magnitude",
@@ -1986,12 +2033,25 @@ async def get_reputation(days: int = 30):
             },
             "accuracy_formula": "AVG(gradient_score) × 100",
             "noise_threshold": "±2% — moves within this range are inconclusive",
+            "confidence_gate": (
+                f"reputation_score is published only with >={REPUTATION_MIN_DIRECTIONAL} "
+                f"directional evals, <{REPUTATION_STALE_HOURS}h freshness, and "
+                f">={REPUTATION_MIN_COVERAGE:.0%} directional coverage"
+            ),
             "window": window_label,
             "timeframes": ["24h", "48h"],
             "price_source": "market agent (CoinGecko + Binance)",
         },
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
+    if not confident:
+        response["data_quality_caveats"] = caveats
+        response["reputation_score_note"] = (
+            "Score withheld: the metrics above are provisional and NOT a reliable "
+            "track record (see data_quality_caveats). accuracy_30d is shown for "
+            "transparency only."
+        )
+    return response
 
 
 # ---------------------------------------------------------------------------
