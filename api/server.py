@@ -1498,7 +1498,7 @@ _ROOT_HTML = f"""<!DOCTYPE html>
 <li><a href="/performance/reputation">Reputation &amp; accuracy (free)</a> — confidence-gated track record</li>
 <li><a href="/signal">GET /signal</a> — all 20 assets ($0.001 USDC via x402)</li>
 <li><a href="/docs">API docs (OpenAPI)</a> · <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/x402">x402 card</a></li>
-<li><a href="https://github.com/manavaga/web3-signals-mcp">GitHub (MIT)</a> · MCP: <code>/mcp/sse</code> · <code>/mcp/stream</code></li>
+<li><a href="https://github.com/manavaga/web3-signals-mcp">GitHub (MIT)</a> · <a href="https://smithery.ai/server/web3signals/web3-signals">Smithery</a> · MCP: <code>/mcp/sse</code> · <code>/mcp/stream</code></li>
 </ul>
 </body></html>"""
 
@@ -2804,47 +2804,123 @@ async def agent_card():
 # our identity + tools without a live initialize round-trip.
 _ASSET_PARAM = {
     "type": "object",
-    "properties": {"asset": {"type": "string", "description": "Ticker, e.g. BTC"}},
+    "properties": {"asset": {"type": "string", "description": "Crypto ticker symbol, e.g. BTC, ETH, SOL (20 supported)"}},
     "required": ["asset"],
 }
+_RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+_JSON_TEXT_OUT = lambda desc, props: {
+    "type": "object",
+    "description": desc,
+    "properties": props,
+}
+_BASE_URL_PROD = "https://web3-signals-api-production.up.railway.app"
 _SERVER_CARD = {
-    "serverInfo": {"name": "Web3 Signals", "version": "0.4.1"},
+    "serverInfo": {"name": "Web3 Signals", "title": "Web3 Signals", "version": "0.4.1"},
+    "description": (
+        "AI crypto buy/sell signals for 20 major assets: whale, technical, derivatives, "
+        "narrative, market and trend data fused into 0-100 scores with honest, "
+        "confidence-gated accuracy reporting. Free score bands via MCP; exact scores "
+        "via x402-paid REST."
+    ),
+    "homepage": _BASE_URL_PROD,
+    "websiteUrl": _BASE_URL_PROD,
+    "iconUrl": f"{_BASE_URL_PROD}/icon.svg",
     "authentication": {"required": False, "schemes": []},
     "tools": [
         {"name": "get_market_briefing",
          "description": "Top 3 buy and top 3 sell recommendations from 20 cryptocurrencies, plus market regime, risk level, and momentum.",
-         "inputSchema": {"type": "object", "properties": {}}},
+         "inputSchema": {"type": "object", "properties": {}},
+         "outputSchema": _JSON_TEXT_OUT("Market briefing", {
+             "market_regime": {"type": "string"}, "risk_level": {"type": "string"},
+             "top_buys": {"type": "array"}, "top_sells": {"type": "array"},
+             "high_conviction_count": {"type": "object"}}),
+         "annotations": _RO},
         {"name": "get_crypto_price",
          "description": "Latest USD price, 24h change, volume, and market cap for any of 20 major crypto assets.",
-         "inputSchema": _ASSET_PARAM},
+         "inputSchema": _ASSET_PARAM,
+         "outputSchema": _JSON_TEXT_OUT("Price snapshot", {
+             "asset": {"type": "string"}, "price_usd": {"type": "number"},
+             "change_24h_pct": {"type": "number"}, "volume_24h_usd": {"type": "number"},
+             "market_cap_usd": {"type": "number"}}),
+         "annotations": _RO},
         {"name": "get_all_signals",
          "description": "Free-tier buy/sell signals for 20 assets: 5-point score band, direction, and label per asset, plus portfolio summary.",
-         "inputSchema": {"type": "object", "properties": {}}},
+         "inputSchema": {"type": "object", "properties": {}},
+         "outputSchema": _JSON_TEXT_OUT("Signal overview", {
+             "portfolio_summary": {"type": "object"},
+             "top_bullish": {"type": "array"}, "top_bearish": {"type": "array"}}),
+         "annotations": _RO},
         {"name": "get_asset_signal",
          "description": "Free 5-point score band, direction, label, and momentum for one asset. Exact scores + 6-dimension breakdown via paid x402 REST.",
-         "inputSchema": _ASSET_PARAM},
+         "inputSchema": _ASSET_PARAM,
+         "outputSchema": _JSON_TEXT_OUT("Single-asset signal", {
+             "asset": {"type": "string"}, "score_band": {"type": "string"},
+             "direction": {"type": "string"}, "label": {"type": "string"},
+             "momentum": {"type": "string"}}),
+         "annotations": _RO},
         {"name": "compare_assets",
          "description": "Rank 2-5 cryptocurrencies side-by-side by signal strength.",
-         "inputSchema": {"type": "object", "properties": {"assets": {"type": "string", "description": "Comma-separated tickers, e.g. 'BTC,ETH,SOL'"}}, "required": ["assets"]}},
+         "inputSchema": {"type": "object",
+             "properties": {"assets": {"type": "string", "description": "Comma-separated tickers, e.g. 'BTC,ETH,SOL' (2-5 assets)"}},
+             "required": ["assets"]},
+         "outputSchema": _JSON_TEXT_OUT("Ranked comparison", {
+             "comparison": {"type": "array"}, "verdict": {"type": "string"}}),
+         "annotations": _RO},
         {"name": "get_health",
          "description": "Real-time status of the 5 data pipelines and signal fusion engine.",
-         "inputSchema": {"type": "object", "properties": {}}},
+         "inputSchema": {"type": "object", "properties": {}},
+         "outputSchema": _JSON_TEXT_OUT("Pipeline health", {
+             "status": {"type": "string"}, "agents": {"type": "object"}, "fusion": {"type": "object"}}),
+         "annotations": _RO},
         {"name": "get_performance",
          "description": "30-day rolling signal accuracy with a published confidence gate — the score is withheld when the sample is too small or stale.",
-         "inputSchema": {"type": "object", "properties": {}}},
+         "inputSchema": {"type": "object", "properties": {}},
+         "outputSchema": _JSON_TEXT_OUT("Accuracy report", {
+             "status": {"type": "string"}, "reputation_score": {"type": ["integer", "null"]},
+             "accuracy_30d": {"type": "number"}, "directional_coverage": {"type": "number"}}),
+         "annotations": _RO},
         {"name": "get_asset_performance",
          "description": "Per-asset 30-day accuracy breakdown.",
-         "inputSchema": _ASSET_PARAM},
+         "inputSchema": _ASSET_PARAM,
+         "outputSchema": _JSON_TEXT_OUT("Per-asset accuracy", {
+             "asset": {"type": "string"}, "accuracy_30d": {"type": "number"},
+             "overall_accuracy_30d": {"type": "number"}}),
+         "annotations": _RO},
         {"name": "get_analytics",
          "description": "API usage statistics: requests, unique clients, client types, trends.",
-         "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "default": 7}}}},
+         "inputSchema": {"type": "object",
+             "properties": {"days": {"type": "integer", "default": 7, "minimum": 1, "maximum": 90,
+                            "description": "Lookback window in days (1-90, default 7)"}}},
+         "outputSchema": _JSON_TEXT_OUT("Usage analytics", {
+             "total_requests": {"type": "integer"}, "unique_clients": {"type": "integer"},
+             "by_client_type": {"type": "object"}}),
+         "annotations": _RO},
         {"name": "get_x402_stats",
          "description": "x402 micropayment analytics: paid calls (external vs internal), revenue, conversion.",
-         "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "default": 30}}}},
+         "inputSchema": {"type": "object",
+             "properties": {"days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 90,
+                            "description": "Lookback window in days (1-90, default 30)"}}},
+         "outputSchema": _JSON_TEXT_OUT("Payment analytics", {
+             "total_paid_calls": {"type": "integer"}, "external_paid_calls": {"type": "integer"},
+             "estimated_revenue_usdc": {"type": "number"}}),
+         "annotations": _RO},
     ],
     "resources": [],
     "prompts": [],
 }
+
+
+_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<rect width="64" height="64" rx="14" fill="#0f172a"/>
+<path d="M12 40 L22 26 L30 34 L42 18 L52 28" fill="none" stroke="#22d3ee" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="42" cy="18" r="4" fill="#4ade80"/>
+</svg>"""
+
+
+@app.get("/icon.svg", include_in_schema=False)
+async def icon_svg():
+    return Response(content=_ICON_SVG, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/.well-known/mcp/server-card.json", tags=["discovery"], include_in_schema=False)
