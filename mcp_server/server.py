@@ -42,9 +42,9 @@ from signal_fusion.engine import SignalFusion
 # MCP Server setup
 # ---------------------------------------------------------------------------
 mcp = FastMCP(
-    "Web3 Signals — AgentMarketSignal",
+    "Web3 Signals",
     instructions=(
-        "AgentMarketSignal: AI-powered crypto signal intelligence for 20 assets.\n\n"
+        "Web3 Signals: AI-powered crypto signal intelligence for 20 assets.\n\n"
         "WHAT YOU CAN DO:\n"
         "• Check crypto prices → get_crypto_price('BTC')\n"
         "• Get buy/sell recommendation → get_asset_signal('BTC')\n"
@@ -371,7 +371,7 @@ def compare_assets(assets: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_health() -> str:
-    """Is AgentMarketSignal working? Check the real-time status of all 5 AI data pipelines (whale tracking, technical analysis, derivatives, narrative sentiment, market data) and the signal fusion engine. Returns last run times, durations, and any errors."""
+    """Is Web3 Signals working? Check the real-time status of all 5 AI data pipelines (whale tracking, technical analysis, derivatives, narrative sentiment, market data) and the signal fusion engine. Returns last run times, durations, and any errors."""
     store = _get_store()
     agent_names = [
         "technical_agent", "derivatives_agent", "market_agent",
@@ -507,7 +507,7 @@ def get_asset_performance(asset: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_analytics(days: int = 7) -> str:
-    """Who is using AgentMarketSignal? See API usage statistics including total requests, unique clients, response times, breakdowns by endpoint and client type (AI agents, browsers, scripts). Useful for understanding adoption."""
+    """Who is using Web3 Signals? See API usage statistics including total requests, unique clients, response times, breakdowns by endpoint and client type (AI agents, browsers, scripts). Useful for understanding adoption."""
     if days < 1:
         days = 1
     if days > 90:
@@ -533,7 +533,7 @@ def get_analytics(days: int = 7) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_x402_stats(days: int = 30) -> str:
-    """How much revenue has AgentMarketSignal generated? View x402 micropayment analytics including total paid calls, revenue in USDC, payment conversion rate, and daily payment timeline."""
+    """How much revenue has Web3 Signals generated? View x402 micropayment analytics including total paid calls, revenue in USDC, payment conversion rate, and daily payment timeline."""
     if days < 1:
         days = 1
     if days > 90:

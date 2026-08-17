@@ -2663,7 +2663,7 @@ async def agent_card():
     """Agent-to-Agent discovery card (Google A2A protocol)."""
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     card: Dict[str, Any] = {
-        "name": "Web3 Signals Agent",
+        "name": "Web3 Signals",
         "description": (
             "AI-powered crypto signal intelligence. Fuses whale tracking, "
             "derivatives positioning, technical analysis, narrative momentum, "
@@ -2778,7 +2778,7 @@ async def mcp_discovery():
     """MCP server discovery — tells AI agents how to connect to our MCP tools."""
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     return {
-        "name": "Web3 Signals — AgentMarketSignal",
+        "name": "Web3 Signals",
         "description": (
             "AI-powered crypto signal intelligence for 20 assets. "
             "6 scoring dimensions (whale, technical, derivatives, narrative, market, trend), "
@@ -2845,7 +2845,7 @@ async def x402_discovery():
         return {"x402_enabled": False}
     return {
         "x402_version": 2,
-        "provider": "Web3 Signals Agent",
+        "provider": "Web3 Signals",
         "network": "eip155:8453",
         "token": "USDC",
         "token_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
