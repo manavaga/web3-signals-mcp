@@ -6,7 +6,7 @@ Endpoints:
     GET /health                     Agent status, last run, uptime
     GET /signal                     Full fusion (portfolio + 20 signals + LLM insights)  [x402 paid]
     GET /signal/{asset}             Single asset signal  [x402 paid]
-    GET /performance/reputation     Public reputation score (30-day rolling accuracy)  [x402 paid]
+    GET /performance/reputation     Public reputation score (free, confidence-gated)
     GET /performance/{asset}        Per-asset accuracy breakdown
     GET /analytics                  API usage analytics (user-agents, requests/day)
     GET /api/signal                 Internal free signal endpoint (dashboard)
@@ -514,16 +514,6 @@ if _X402_ENABLED:
             mime_type="application/json",
             extensions=_bazaar_signal_asset,
             unpaid_response_body=_unpaid_signal_asset_body,
-        ),
-        "GET /performance/reputation": X402RouteConfig(
-            accepts=[_payment_option],
-            description=(
-                "30-day rolling signal accuracy at 24h/48h windows, "
-                "per-asset breakdown. Verifiable reputation score."
-            ),
-            mime_type="application/json",
-            extensions=_bazaar_reputation,
-            unpaid_response_body=_unpaid_reputation_body,
         ),
     }
     logger.info("x402: configured %d paid routes (pay_to=%s...)", len(_x402_routes), _PAY_TO[:10])
@@ -1342,7 +1332,7 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
     """
 
     SKIP_PATHS = {"/favicon.ico", "/openapi.json"}
-    PAID_PATHS = {"/signal", "/performance/reputation"}  # prefix-matched
+    PAID_PATHS = {"/signal"}  # prefix-matched
 
     def _is_paid_path(self, path: str) -> bool:
         """Check if a path is an x402-gated route."""
@@ -1483,7 +1473,7 @@ async def root():
             "/health": "Agent status and uptime",
             "/signal": "Full fusion — portfolio + 20 signals + LLM insights",
             "/signal/{asset}": "Single asset signal (e.g. /signal/BTC)",
-            "/performance/reputation": "Public reputation score — 30-day signal accuracy",
+            "/performance/reputation": "Public reputation score — free, with confidence gate",
             "/performance": "Overall accuracy overview (free)",
             "/performance/{asset}": "Per-asset accuracy breakdown",
             "/analytics": "API usage analytics — who's using us, request trends",
@@ -1524,7 +1514,6 @@ async def root():
             "pricing": {
                 "/signal": _SIGNAL_PRICE_DISPLAY,
                 "/signal/{asset}": _SIGNAL_PRICE_DISPLAY,
-                "/performance/reputation": _SIGNAL_PRICE_DISPLAY,
             },
             "free_endpoints": [
                 "/health", "/dashboard", "/analytics",
@@ -1916,25 +1905,16 @@ async def get_reputation_internal(request: Request):
 # ---------------------------------------------------------------------------
 # GET /performance/reputation — Public reputation score (agent-facing)
 # ---------------------------------------------------------------------------
-@app.get("/performance/reputation", tags=["performance"],
-         openapi_extra={
-             "x-payment-info": {
-                 "protocols": ["x402"],
-                 "price": _SIGNAL_PRICE_DISPLAY,
-                 "network": "eip155:8453",
-                 "token": "USDC",
-             },
-             "responses": {
-                 "402": {"description": "Payment Required — x402 micropayment needed"},
-             },
-         })
+@app.get("/performance/reputation", tags=["performance"])
 async def get_reputation(days: int = 30):
     """
-    Public reputation endpoint. AI agents use this to verify signal quality
-    before subscribing. Shows rolling N-day accuracy across all timeframes.
+    Public reputation endpoint — FREE. Trust data must precede payment: AI agents
+    use this to verify signal quality before paying for /signal. Shows rolling
+    N-day accuracy with a confidence gate (score withheld when the sample is
+    too small, stale, or coverage-starved).
 
-    days defaults to 30 (public x402-paid contract). The internal dashboard
-    mirror passes days=3650 (~10y, effectively all-time) to surface lifetime totals.
+    days defaults to 30. The internal dashboard mirror passes days=3650
+    (~10y, effectively all-time) to surface lifetime totals.
     """
     if not _store:
         raise HTTPException(status_code=503, detail="Storage not initialized")
@@ -2572,7 +2552,7 @@ async def get_x402_diagnostics(days: int = Query(30, ge=1, le=3650)):
         "pay_to": _PAY_TO or None,
         "price_usdc": "0.001",
         "network": "Base mainnet (eip155:8453)",
-        "paid_routes": ["/signal", "/signal/{asset}", "/performance/reputation"],
+        "paid_routes": ["/signal", "/signal/{asset}"],
         "challenged_agents": challenged_agents,
         "total_402_challenges_all_time": x402_stats.get("total_402_challenges", 0),
         "total_paid_all_time": x402_stats.get("total_paid_calls", 0),
@@ -2697,7 +2677,7 @@ async def agent_card():
             },
             {
                 "name": "get_reputation",
-                "description": "Rolling 30-day signal accuracy — gradient + binary at 24h/48h windows, per-asset breakdown, full methodology",
+                "description": "Rolling 30-day signal accuracy with a published confidence gate — free, no payment required. Per-asset breakdown, full methodology.",
                 "endpoint": f"{base_url}/performance/reputation",
                 "method": "GET",
                 "response_fields": [
@@ -2762,8 +2742,8 @@ async def agent_card():
             "facilitator": _X402_FACILITATOR_URL,
         }
         card["pricing"] = {
-            "paid": {"/signal": _SIGNAL_PRICE_DISPLAY, "/signal/{asset}": _SIGNAL_PRICE_DISPLAY, "/performance/reputation": _SIGNAL_PRICE_DISPLAY},
-            "free": ["/health", "/performance", "/performance/{asset}", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
+            "paid": {"/signal": _SIGNAL_PRICE_DISPLAY, "/signal/{asset}": _SIGNAL_PRICE_DISPLAY},
+            "free": ["/health", "/performance", "/performance/reputation", "/performance/{asset}", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
         }
     else:
         card["pricing"] = "Free"
@@ -2854,9 +2834,8 @@ async def x402_discovery():
         "routes": {
             "/signal": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "Full 20-asset signal fusion with LLM insights"},
             "/signal/{asset}": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "Single asset signal (6 dimensions)"},
-            "/performance/reputation": {"method": "GET", "price": _SIGNAL_PRICE_DISPLAY, "description": "30-day rolling accuracy score"},
         },
-        "free_routes": ["/health", "/performance", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
+        "free_routes": ["/health", "/performance", "/performance/reputation", "/analytics", "/dashboard", "/docs", "/.well-known/*"],
         "discovery": {
             "agent_card": f"{base_url}/.well-known/agent.json",
             "agents_md": f"{base_url}/.well-known/agents.md",
@@ -2882,7 +2861,6 @@ async def x402_discovery_compat():
         "resources": [
             f"{base_url}/signal",
             f"{base_url}/signal/{{asset}}",
-            f"{base_url}/performance/reputation",
         ],
     }
 
@@ -2908,13 +2886,13 @@ async def llms_txt():
 ### Free (No Auth)
 - GET {base_url}/health — Service health and agent pipeline status
 - GET {base_url}/performance — Signal accuracy metrics (30-day rolling)
+- GET {base_url}/performance/reputation — Reputation score with published confidence gate
 - GET {base_url}/performance/{{asset}} — Per-asset accuracy (e.g. /performance/BTC)
 - GET {base_url}/analytics — API usage analytics
 
 ### Paid ({_SIGNAL_PRICE_DISPLAY} USDC on Base via x402 protocol)
 - GET {base_url}/signal — All 20 asset signals with portfolio summary
 - GET {base_url}/signal/{{asset}} — Single asset signal (e.g. /signal/BTC)
-- GET {base_url}/performance/reputation — Verified accuracy reputation score
 
 ### MCP Server (Free)
 - SSE: {base_url}/mcp/sse
@@ -2966,7 +2944,7 @@ Disallow: /admin/
 Disallow: /mcp/messages
 Disallow: /signal
 Disallow: /signal/
-Disallow: /performance/reputation
+Allow: /performance/reputation
 
 # AI Agent Discovery
 # MCP Server: /.well-known/mcp.json
@@ -3127,7 +3105,7 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Custom OpenAPI schema — inject x-agentcash-auth for x402scan discovery
 # ---------------------------------------------------------------------------
-_PAID_ROUTES = {"/signal", "/signal/{asset}", "/performance/reputation"}
+_PAID_ROUTES = {"/signal", "/signal/{asset}"}
 
 
 def custom_openapi():

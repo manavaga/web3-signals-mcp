@@ -77,6 +77,19 @@ def _get_fusion() -> SignalFusion:
     return _fusion
 
 
+def _band(score) -> str:
+    """Quantize an exact 0-100 score into a 5-point band for the free tier.
+
+    Exact composite scores + the 6-dimension breakdown are part of the paid
+    x402 REST responses; the free MCP tier shows the band, direction and label.
+    """
+    try:
+        lo = int(float(score) // 5 * 5)
+    except (TypeError, ValueError):
+        return "unknown"
+    return f"{lo}-{lo + 5}"
+
+
 # ---------------------------------------------------------------------------
 # Tool: get_market_briefing — Executive summary with actionable intelligence
 # ---------------------------------------------------------------------------
@@ -129,7 +142,7 @@ def get_market_briefing() -> str:
             strongest_dim = weakest_dim = "unknown"
         return {
             "asset": asset,
-            "score": score,
+            "score_band": _band(score),
             "direction": direction,
             "label": label,
             "strongest_dimension": strongest_dim,
@@ -208,7 +221,7 @@ def get_crypto_price(asset: str) -> str:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_all_signals() -> str:
-    """Get buy/sell signals for all 20 major cryptocurrencies including Bitcoin, Ethereum, Solana, and more. Returns a 0-100 composite score and direction (bullish/bearish/neutral) for each asset, plus portfolio summary with market regime and risk level. Updated every 15 minutes. For full dimension breakdown and AI insights, use the paid REST API."""
+    """Get buy/sell signals for all 20 major cryptocurrencies including Bitcoin, Ethereum, Solana, and more. Returns a free 5-point score band and direction (bullish/bearish/neutral) for top movers, plus portfolio summary with market regime and risk level. Updated every 15 minutes. For full dimension breakdown and AI insights, use the paid REST API."""
     fusion = _get_fusion()
     result = fusion.fuse()
 
@@ -230,7 +243,7 @@ def get_all_signals() -> str:
     def _teaser(asset, score, sig):
         return {
             "asset": asset,
-            "composite_score": score,
+            "score_band": _band(score),
             "direction": sig.get("direction", "?"),
             "label": sig.get("label", "?"),
         }
@@ -288,7 +301,7 @@ def get_asset_signal(asset: str) -> str:
     return json.dumps({
         "asset": asset,
         "timestamp": result.get("timestamp"),
-        "composite_score": sig.get("composite_score"),
+        "score_band": _band(sig.get("composite_score")),
         "direction": sig.get("direction"),
         "label": sig.get("label"),
         "momentum": momentum_direction,
@@ -333,16 +346,18 @@ def compare_assets(assets: str) -> str:
         momentum_direction = momentum.get("direction", "unknown") if isinstance(momentum, dict) else "unknown"
         comparison.append({
             "asset": asset,
-            "composite_score": score,
+            "_exact": score,  # internal ranking only, stripped below
+            "score_band": _band(score),
             "direction": sig.get("direction", "?"),
             "label": sig.get("label", "?"),
             "momentum": momentum_direction,
         })
 
-    # Rank by score
-    comparison.sort(key=lambda x: x["composite_score"], reverse=True)
+    # Rank by exact score, then strip it (free tier shows bands)
+    comparison.sort(key=lambda x: x["_exact"], reverse=True)
     for i, c in enumerate(comparison):
         c["rank"] = i + 1
+        del c["_exact"]
 
     return json.dumps({
         "comparison": comparison,
@@ -352,9 +367,9 @@ def compare_assets(assets: str) -> str:
         },
         "timestamp": result.get("timestamp"),
         "verdict": (
-            f"Strongest: {comparison[0]['asset']} ({comparison[0]['composite_score']}/100 — "
+            f"Strongest: {comparison[0]['asset']} (band {comparison[0]['score_band']} — "
             f"{comparison[0]['direction']}). "
-            f"Weakest: {comparison[-1]['asset']} ({comparison[-1]['composite_score']}/100 — "
+            f"Weakest: {comparison[-1]['asset']} (band {comparison[-1]['score_band']} — "
             f"{comparison[-1]['direction']})."
         ),
         "_upgrade": (
