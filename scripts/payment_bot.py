@@ -118,6 +118,12 @@ def main():
     args = parser.parse_args()
 
     # Setup wallet
+    if not args.key or not args.key.strip():
+        print("ERROR: no wallet key provided.")
+        print("  Either:   export AGENT_WALLET_KEY=0x<64-hex-chars>   (then rerun)")
+        print("  Or:       python3 scripts/payment_bot.py --key 0x<64-hex-chars> ...")
+        print("  The wallet needs a small USDC balance on Base mainnet (~$0.01+).")
+        return 1
     key = args.key if args.key.startswith("0x") else f"0x{args.key}"
     account = Account.from_key(key)
     signer = EthAccountSigner(account)
