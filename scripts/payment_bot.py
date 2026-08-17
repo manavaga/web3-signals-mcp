@@ -126,6 +126,18 @@ def main():
         return 1
     key = args.key if args.key.startswith("0x") else f"0x{args.key}"
     account = Account.from_key(key)
+
+    # The CDP facilitator rejects self-payments (self_send_not_allowed):
+    # the payer wallet must NOT be the service's receiving (PAY_TO) wallet.
+    PAY_TO = "0xdf0C4a88CF28E24Cd63a0d2aC54052c65F0C7700"
+    if account.address.lower() == PAY_TO.lower():
+        print("ERROR: this key belongs to the service's own revenue wallet "
+              f"({PAY_TO[:10]}...).")
+        print("  The facilitator blocks self-payments (self_send_not_allowed).")
+        print("  Use a DIFFERENT wallet: create a burner, fund it with ~$1 USDC")
+        print("  on Base (you can send it FROM this revenue wallet), and rerun")
+        print("  with the burner's key.")
+        return 1
     signer = EthAccountSigner(account)
     x402_client = x402ClientSync()
     x402_client.register("eip155:8453", ExactEvmClientScheme(signer))
