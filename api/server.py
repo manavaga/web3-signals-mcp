@@ -195,7 +195,10 @@ if _X402_ENABLED:
     from x402.extensions.bazaar.resource_service import OutputConfig
 
     # Bazaar discovery metadata: discoverable + category + tags (matching indexed services like x402.twit.sh)
-    _bazaar_tags = ["crypto", "signal", "market", "trading", "whale", "ai", "agent", "x402", "defi", "web3"]
+    _bazaar_tags = [
+        "crypto", "signals", "trading-signals", "prediction", "bitcoin", "ethereum",
+        "market", "trading", "whale", "ai", "agent", "x402", "defi", "web3",
+    ]
 
     _bazaar_signal_raw = (
         declare_discovery_extension(
@@ -497,9 +500,12 @@ if _X402_ENABLED:
         "GET /signal": X402RouteConfig(
             accepts=[_payment_option],
             description=(
-                "Full crypto signal fusion: 20 assets scored 0-100 with whale, "
-                "derivatives, technical, narrative, and market dimensions. "
-                "Portfolio summary + LLM insights."
+                "Live buy/sell signals for 20 crypto majors (BTC, ETH, SOL, ...): "
+                "each asset scored 0-100 from 6 fused dimensions — whale flows, "
+                "technicals, derivatives, narrative, market regime, trend — with "
+                "direction, conviction, entry/target/stop levels, and LLM insight. "
+                "Refreshed every 15 min. Verify accuracy first, free: "
+                "/performance/reputation (confidence-gated, no inflated claims)."
             ),
             mime_type="application/json",
             extensions=_bazaar_signal,
@@ -508,8 +514,11 @@ if _X402_ENABLED:
         "GET /signal/*": X402RouteConfig(
             accepts=[_payment_option],
             description=(
-                "Single asset crypto signal: 6-dimension composite score (0-100), "
-                "direction, momentum, and market context."
+                "Single-asset crypto signal (BTC, ETH, SOL + 17 more): exact 0-100 "
+                "composite score from 6 dimensions (whale, technical, derivatives, "
+                "narrative, market, trend), direction, momentum, price context, and "
+                "calibrated move prediction. Refreshed every 15 min. Free accuracy "
+                "audit at /performance/reputation."
             ),
             mime_type="application/json",
             extensions=_bazaar_signal_asset,
@@ -1461,12 +1470,50 @@ app.add_middleware(ProxySchemeMiddleware)
 # ---------------------------------------------------------------------------
 # GET /
 # ---------------------------------------------------------------------------
+_ROOT_DESCRIPTION = (
+    "AI-powered crypto signal intelligence for 20 major assets. Five data pipelines "
+    "(whale flows, technicals, derivatives, narrative, market) fuse into 0-100 "
+    "buy/sell scores with trading levels and LLM insights, refreshed every 15 minutes. "
+    "Accuracy is reported honestly at the free /performance/reputation endpoint — "
+    "scores are withheld unless statistically supported. Agent-payable via x402 "
+    "($0.001 USDC on Base); free MCP server for Claude/Cursor at /mcp/sse."
+)
+
+_ROOT_HTML = f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web3 Signals — AI Crypto Signal Intelligence API for Agents</title>
+<meta name="description" content="{_ROOT_DESCRIPTION}">
+<meta property="og:title" content="Web3 Signals — AI Crypto Signal Intelligence">
+<meta property="og:description" content="{_ROOT_DESCRIPTION}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://web3-signals-api-production.up.railway.app/">
+<link rel="canonical" href="https://web3-signals-api-production.up.railway.app/">
+</head><body style="font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.5">
+<h1>Web3 Signals</h1>
+<p>{_ROOT_DESCRIPTION}</p>
+<ul>
+<li><a href="/dashboard">Live dashboard</a> — signals, accuracy, analytics</li>
+<li><a href="/performance/reputation">Reputation &amp; accuracy (free)</a> — confidence-gated track record</li>
+<li><a href="/signal">GET /signal</a> — all 20 assets ($0.001 USDC via x402)</li>
+<li><a href="/docs">API docs (OpenAPI)</a> · <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/x402">x402 card</a></li>
+<li><a href="https://github.com/manavaga/web3-signals-mcp">GitHub (MIT)</a> · MCP: <code>/mcp/sse</code> · <code>/mcp/stream</code></li>
+</ul>
+</body></html>"""
+
+
 @app.get("/", tags=["info"])
-async def root():
+async def root(request: Request):
+    # Content negotiation: browsers and crawlers get HTML (title + meta
+    # description feed explorers/search/social previews); agents get JSON.
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/html" in accept:
+        return HTMLResponse(_ROOT_HTML)
     response = {
         "name": "Web3 Signals API",
-        "version": "0.3.0",
-        "description": "AI-powered crypto signal intelligence for 20 assets",
+        "version": "0.4.1",
+        "description": _ROOT_DESCRIPTION,
         "model_version": "v0.3.0-calibrated",
         "endpoints": {
             "/dashboard": "Live signal intelligence dashboard (open in browser)",
