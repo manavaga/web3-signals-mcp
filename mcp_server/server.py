@@ -41,8 +41,20 @@ from signal_fusion.engine import SignalFusion
 # ---------------------------------------------------------------------------
 # MCP Server setup
 # ---------------------------------------------------------------------------
+try:
+    from mcp.types import Icon as _McpIcon
+    _MCP_ICONS = [_McpIcon(
+        src="https://web3-signals-api-production.up.railway.app/icon.svg",
+        mimeType="image/svg+xml",
+        sizes=["any"],
+    )]
+except Exception:
+    _MCP_ICONS = None
+
 mcp = FastMCP(
     "Web3 Signals",
+    website_url="https://web3-signals-api-production.up.railway.app",
+    icons=_MCP_ICONS,
     instructions=(
         "Web3 Signals: AI-powered crypto signal intelligence for 20 assets.\n\n"
         "WHAT YOU CAN DO:\n"

@@ -1,10 +1,12 @@
 # Web3 Signals MCP
 
+[![smithery badge](https://smithery.ai/badge/@web3signals/web3-signals)](https://smithery.ai/server/web3signals/web3-signals)
+
 > Multi-agent crypto signal intelligence. 20 assets, 5 data dimensions, scored 0–100, refreshed every 15 min.
 
 **Live API** — https://web3-signals-api-production.up.railway.app
 **Dashboard** — https://web3-signals-api-production.up.railway.app/dashboard
-**MCP endpoint** — `https://web3-signals-api-production.up.railway.app/mcp/sse`
+**MCP endpoint** — `https://web3-signals-api-production.up.railway.app/mcp/stream` ([Smithery listing](https://smithery.ai/server/web3signals/web3-signals))
 
 ---
 
