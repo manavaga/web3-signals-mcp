@@ -51,7 +51,8 @@ mcp = FastMCP(
         "• See what's hot right now → get_market_briefing()\n"
         "• Compare assets → compare_assets('BTC,ETH,SOL')\n"
         "• Check signal accuracy → get_performance()\n\n"
-        "Signals scored 0-100: above 62 = buy, below 38 = sell. "
+        "Signals scored 0-100: 60+ = buy territory, below 42 = sell territory, "
+        "in between = neutral/abstain (labelled INSUFFICIENT EDGE). "
         "Based on whale tracking, technical analysis, derivatives data, "
         "social sentiment, and market trends. Updated every 15 minutes."
     ),
@@ -81,7 +82,7 @@ def _get_fusion() -> SignalFusion:
 # ---------------------------------------------------------------------------
 @mcp.tool(annotations={"readOnlyHint": True})
 def get_market_briefing() -> str:
-    """What should I buy or sell in crypto right now? Returns the top 3 buy and top 3 sell recommendations from 20 cryptocurrencies, plus market regime (trending/ranging), risk level, and momentum. Best starting point for portfolio decisions. Scores range 0-100: above 62 is a buy signal, below 38 is a sell signal."""
+    """What should I buy or sell in crypto right now? Returns the top 3 buy and top 3 sell recommendations from 20 cryptocurrencies, plus market regime (trending/ranging), risk level, and momentum. Best starting point for portfolio decisions. Scores range 0-100: 60+ is buy territory, below 42 is sell territory; scores in between are neutral/abstain (no trade recommended)."""
     fusion = _get_fusion()
     result = fusion.fuse()
 
@@ -102,13 +103,14 @@ def get_market_briefing() -> str:
     top_sells.reverse()  # lowest first
 
     # High conviction signals
+    # Buckets aligned with YAML label thresholds: buy >= 60, sell < 42
     high_conviction_bullish = [
-        (a, s, sig) for a, s, sig in scored if s >= 62
+        (a, s, sig) for a, s, sig in scored if s >= 60
     ]
     high_conviction_bearish = [
-        (a, s, sig) for a, s, sig in scored if s <= 38
+        (a, s, sig) for a, s, sig in scored if s < 42
     ]
-    neutral_count = len([1 for _, s, _ in scored if 38 < s < 62])
+    neutral_count = len([1 for _, s, _ in scored if 42 <= s < 60])
 
     def _signal_summary(asset, score, sig):
         """Build a concise summary for one asset."""
@@ -373,7 +375,7 @@ def get_health() -> str:
     store = _get_store()
     agent_names = [
         "technical_agent", "derivatives_agent", "market_agent",
-        "narrative_agent", "exchange_flow_agent",
+        "narrative_agent", "whale_agent",
     ]
     agent_status: dict[str, Any] = {}
 
@@ -421,25 +423,44 @@ def get_performance() -> str:
             "snapshots_collected": total_snapshots,
         })
 
-    accuracy = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+    # Gradient accuracy (0.0-1.0 avg) — matches the REST /performance/reputation
+    avg_gradient = stats.get("avg_gradient", 0.0)
+    accuracy = round(avg_gradient * 100, 1)
+    n_directional = stats["total"]
+    neutral_skipped = stats.get("neutral_skipped", 0)
+    denom = n_directional + neutral_skipped
+    coverage = round(n_directional / denom, 4) if denom else 0.0
+
+    # Honesty gate — same rules as the REST endpoint: don't present a
+    # small/stale/coverage-starved sample as a verified track record.
+    confident = n_directional >= 100 and coverage >= 0.10
 
     return json.dumps({
-        "status": "active",
-        "reputation_score": int(round(accuracy)),
+        "status": "active" if confident else "insufficient_data",
+        "confidence": "high" if confident else "low",
+        "reputation_score": int(round(accuracy)) if confident else None,
         "accuracy_30d": accuracy,
-        "signals_evaluated": stats["total"],
-        "signals_correct": stats["hits"],
+        "signals_evaluated": n_directional,
+        "directional_coverage": coverage,
+        "neutral_signals_skipped": neutral_skipped,
         "by_timeframe": stats["by_timeframe"],
         "by_asset": stats["by_asset"],
         "snapshots_collected_30d": total_snapshots,
         "methodology": {
-            "direction_extraction": "score >60 = bullish, <40 = bearish, 40-60 = neutral",
-            "neutral_threshold": "price move <=2% = correct for neutral signals",
-            "scoring": "binary (hit/miss)",
+            "direction_extraction": (
+                "Direction comes from the fusion engine's YAML label thresholds; "
+                "signals inside the abstain zone are labelled INSUFFICIENT EDGE and NOT evaluated"
+            ),
+            "scoring": "gradient (0.0-1.0) based on direction AND magnitude; accuracy = AVG(gradient) x 100",
+            "confidence_gate": "reputation_score published only with >=100 directional evals and >=10% coverage",
             "window": "30-day rolling",
             "timeframes": ["24h", "48h"],
-            "price_source": "CoinGecko",
+            "price_source": "market agent (CoinGecko + Binance)",
         },
+        **({} if confident else {"note": (
+            "Score withheld: sample too small or coverage too low to be a reliable "
+            "track record. accuracy_30d shown for transparency only."
+        )}),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
 
@@ -469,13 +490,14 @@ def get_asset_performance(asset: str) -> str:
     if asset_accuracy is None:
         return json.dumps({"error": f"No accuracy data for '{asset}'"})
 
-    overall = round(stats["hits"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+    overall = round(stats.get("avg_gradient", 0.0) * 100, 1)
 
     return json.dumps({
         "asset": asset,
         "accuracy_30d": asset_accuracy,
         "overall_accuracy_30d": overall,
-        "reputation_score": int(round(overall)),
+        "signals_evaluated_30d": stats["total"],
+        "note": "Gradient accuracy (0-100). Small samples are not statistically meaningful — check signals_evaluated_30d.",
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
 
@@ -531,6 +553,9 @@ def get_x402_stats(days: int = 30) -> str:
         "price_per_call": "$0.001 USDC",
         "network": "Base (eip155:8453)",
         "total_paid_calls": total_paid,
+        "external_paid_calls": stats.get("external_paid_calls", 0),
+        "internal_paid_calls": stats.get("internal_paid_calls", 0),
+        "external_revenue_usdc": stats.get("external_revenue_usdc", 0),
         "estimated_revenue_usdc": stats["estimated_revenue_usdc"],
         "total_402_challenges": total_challenges,
         "total_payment_failures": stats["total_payment_failures"],
