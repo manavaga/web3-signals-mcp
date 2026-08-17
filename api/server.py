@@ -2899,7 +2899,9 @@ async def llms_txt():
 
 > Scored buy/sell signals for 20 crypto assets, updated every 15 minutes.
 > 6 scoring dimensions: whale activity, technicals, derivatives, narrative, market sentiment, trend.
-> Verifiable 30-day rolling accuracy (~67% binary directional accuracy).
+> Self-reported accuracy tracking with a published confidence gate: the reputation
+> score is only shown when backed by enough recent directional evaluations
+> (see /performance for live metrics, sample sizes, and methodology).
 
 ## API Endpoints
 
@@ -2923,7 +2925,7 @@ BTC, ETH, SOL, BNB, XRP, ADA, AVAX, DOT, MATIC, LINK, UNI, ATOM, LTC, FIL, NEAR,
 
 ## Signal Scoring
 - 0-100 composite score per asset
-- Above 62: High-conviction buy | Below 38: High-conviction sell
+- 60+: buy territory | Below 42: sell territory | In between: neutral/abstain (INSUFFICIENT EDGE)
 - Each signal includes: composite_score, direction, label, 6 dimension scores, momentum, llm_insight
 
 ## Payment Protocol
