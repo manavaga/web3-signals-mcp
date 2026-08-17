@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.manavaga/web3-signals",
   "title": "Web3 Signals",
-  "description": "AI-powered crypto signal intelligence for 20 assets. 6 scoring dimensions (whale, technical, derivatives, narrative, market, trend), scored 0-100 with honest accuracy reporting.",
+  "description": "AI crypto buy/sell signals for 20 assets: 6 data dimensions fused into 0-100 scores. x402 + MCP.",
   "repository": {
     "url": "https://github.com/manavaga/web3-signals-mcp",
     "source": "github"
