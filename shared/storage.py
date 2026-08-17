@@ -973,7 +973,11 @@ class Storage:
         # Phase B4: Increased minimum slice size from 3 to 5 assets for
         # meaningful Spearman correlation. With only 3 assets, IC is extremely
         # noisy and can produce misleading weight updates (I4 research finding).
-        MIN_SLICE_SIZE = 5
+        # Relaxed from 5 → 3 (2026-08-17): with realistic directional coverage the
+        # 5-asset requirement starved IC entirely (8 obs → 8 single-asset slices →
+        # overall_ic null → self-learner frozen). 3 is the statistical floor for
+        # a meaningful Spearman slice; noisier but computable.
+        MIN_SLICE_SIZE = 3
 
         for ts, observations in slices.items():
             if len(observations) < MIN_SLICE_SIZE:

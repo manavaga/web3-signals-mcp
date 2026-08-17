@@ -33,7 +33,7 @@ except ImportError:
 
 # Per-asset ATR multipliers for stop-loss
 ATR_SL_MULTIPLIERS: Dict[str, float] = {
-    "BTC": 1.5, "ETH": 1.5,
+    "BTC": 2.0, "ETH": 2.0,  # was 1.5 — backtest v2 showed 22-24% SL hit rate
     "SOL": 2.0, "BNB": 2.0, "XRP": 2.0, "ADA": 2.0, "LINK": 2.0,
     "LTC": 2.0, "DOT": 2.0, "AVAX": 2.0,
     "MATIC": 2.5, "UNI": 2.5, "FIL": 2.5, "NEAR": 2.5, "APT": 2.5,
@@ -224,14 +224,20 @@ class TargetCalculator:
         atr_pct = features.get("atr_pct", 3.0)
 
         # Base move: score distance maps to fraction of ATR
-        # Score 70 (+20 from center) → ~0.5 * ATR expected move
-        # Score 85 (+35 from center) → ~1.0 * ATR expected move
-        move_fraction = distance / 35.0  # normalize to roughly ±1.0
-        predicted_pct = move_fraction * atr_pct * 0.5  # half ATR per unit
+        # Backtest v2 recalibration: scores reach ±8 from center, actual moves avg 4.17%
+        # Old: distance/35 * atr_pct * 0.5 = 0.34% for score 58 (11x underprediction)
+        # New: distance/10 * atr_pct * 1.5 = 3.6% for score 58 (matches observed moves)
+        move_fraction = distance / 10.0  # was 35.0 — scores only reach ±8
+        predicted_pct = move_fraction * atr_pct * 1.5  # was 0.5 — actual moves are ~1-1.5 ATR
 
         # Clamp to reasonable range
         max_move = atr_pct * 2.0
         predicted_pct = max(-max_move, min(max_move, predicted_pct))
+
+        # Minimum prediction floor — no directional signal should predict < 30% of ATR
+        min_prediction = atr_pct * 0.3
+        if abs(predicted_pct) < min_prediction:
+            predicted_pct = min_prediction if predicted_pct >= 0 else -min_prediction
 
         return predicted_pct
 
@@ -406,7 +412,7 @@ class TargetCalculator:
         direction: str,
         predicted_move_pct: float,
         stop_loss: float,
-        min_rr_ratio: float = 1.5,
+        min_rr_ratio: float = 0.5,  # was 1.5 — backtest v2: only 2.2% TP rate with 1.5
     ) -> float:
         """Calculate target ensuring minimum risk/reward ratio."""
         risk = abs(entry_price - stop_loss)

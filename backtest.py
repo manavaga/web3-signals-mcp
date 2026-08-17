@@ -862,6 +862,7 @@ def compute_composite(
     agent_snapshots: Dict[str, Optional[Dict[str, Any]]],
     prev_dimensions: Optional[Dict[str, Dict[str, Any]]] = None,
     regime_shifts: Optional[Dict[str, float]] = None,
+    detected_regime: str = "unknown",
 ) -> Dict[str, Any]:
     """Re-score a single asset using current YAML config. Returns signal dict."""
 
@@ -1049,9 +1050,9 @@ def compute_composite(
         if dims_with_data < min_dims:
             data_quality_abstain = True
 
-    # Conviction multiplier
+    # Conviction multiplier — DISABLED (backtest v2: hurts accuracy by 12pp)
     conviction_applied = False
-    if CONVICTION_CFG.get("enabled", True):
+    if CONVICTION_CFG.get("enabled", False):  # was True, disabled based on backtest v2
         min_agreeing = int(CONVICTION_CFG.get("min_agreeing_dimensions", 3))
         boost_factor = float(CONVICTION_CFG.get("boost_factor", 1.25))
         center = 50.0
@@ -1149,11 +1150,18 @@ def compute_composite(
                     if zones:
                         resolved_distance = float(zones[-1].get("threshold", base_distance))
 
+        # Regime-based abstain modifier — widen in ranging, tighten in trending
+        regime_mod_cfg = ABSTAIN_CFG.get("regime_modifier", {})
+        if regime_mod_cfg.get("enabled", False):
+            regime_mult = float(regime_mod_cfg.get(detected_regime, 1.0))
+            resolved_distance = resolved_distance * regime_mult
+
         # Phase A1: Asymmetric abstain zones
         asym_abstain = ABSTAIN_CFG.get("asymmetric", {})
         if asym_abstain.get("enabled", False):
-            bearish_dist = float(asym_abstain.get("bearish_min_distance", resolved_distance))
-            bullish_dist = float(asym_abstain.get("bullish_min_distance", resolved_distance))
+            regime_mult_asym = float(regime_mod_cfg.get(detected_regime, 1.0)) if regime_mod_cfg.get("enabled", False) else 1.0
+            bearish_dist = float(asym_abstain.get("bearish_min_distance", resolved_distance)) * regime_mult_asym
+            bullish_dist = float(asym_abstain.get("bullish_min_distance", resolved_distance)) * regime_mult_asym
             if composite < 50.0 and (50.0 - composite) < bearish_dist:
                 abstain_applied = True
             elif composite > 50.0 and (composite - 50.0) < bullish_dist:
@@ -1346,6 +1354,7 @@ def run_backtest():
     # Map role names to agent storage names
     agent_names_cfg = PROFILE.get("agent_names", {})
     role_to_agent = {
+        "whale": agent_names_cfg.get("whale", "whale_agent"),
         "exchange_flow": agent_names_cfg.get("exchange_flow", "exchange_flow_agent"),
         "technical": agent_names_cfg.get("technical", "technical_agent"),
         "derivatives": agent_names_cfg.get("derivatives", "derivatives_agent"),
@@ -1413,14 +1422,39 @@ def run_backtest():
     prev_dims_by_asset: Dict[str, Dict] = {}  # Track previous dimensions for delta scoring
     prev_oi_by_asset.clear()  # Reset OI state for clean backtest run
     prev_btc_dom_val.clear()  # Reset BTC dominance state for clean backtest run
+    # Round 2 experiment (RANK_DIRECTION=1): direction from cross-sectional RANK
+    # instead of absolute score. Rationale: 176d backtest showed composite IC
+    # +0.11 (real ranking alpha) but 99.6% bullish absolute calls at 31%
+    # accuracy — the level is broken, the ordering is not. Top quartile =
+    # bullish, bottom quartile = bearish, middle = neutral.
+    _rank_direction = os.getenv("RANK_DIRECTION", "0") == "1"
+
     for idx, (ts, snapshot) in enumerate(aligned):
         # Detect regime once per time point (global, based on BTC)
         detected_regime, regime_shifts = detect_regime(snapshot)
+
+        # Pass 1: compute composites for every asset at this time point
+        results_this_ts = []
         for asset in assets_list:
-            result = compute_composite(asset, snapshot, prev_dims_by_asset.get(asset), regime_shifts)
+            result = compute_composite(asset, snapshot, prev_dims_by_asset.get(asset), regime_shifts, detected_regime)
             # Store current dimensions as previous for next iteration
             prev_dims_by_asset[asset] = result.get("dimensions", {})
+            results_this_ts.append((asset, result))
 
+        # Optional rank-based direction overlay
+        if _rank_direction and len(results_this_ts) >= 8:
+            ranked = sorted(results_this_ts, key=lambda ar: ar[1]["composite_score"], reverse=True)
+            n_side = max(1, len(ranked) // 4)
+            for i, (_a, r) in enumerate(ranked):
+                if i < n_side:
+                    r["direction"], r["label"], r["abstain"] = "bullish", "RANK BUY", False
+                elif i >= len(ranked) - n_side:
+                    r["direction"], r["label"], r["abstain"] = "bearish", "RANK SELL", False
+                else:
+                    r["direction"], r["label"], r["abstain"] = "neutral", "RANK NEUTRAL", True
+
+        # Pass 2: targets + bookkeeping per asset
+        for asset, result in results_this_ts:
             # Calculate target/SL for directional signals
             target_data = {}
             if result["direction"] in ("bullish", "bearish") and not result.get("abstain"):
@@ -1454,24 +1488,30 @@ def run_backtest():
                         stop_loss = entry_price - (atr_14 * sl_mult)
                         distance = result["composite_score"] - 50.0
                         atr_pct = (atr_14 / entry_price) * 100
-                        move_fraction = distance / 35.0
-                        predicted_pct = move_fraction * atr_pct * 0.5
+                        move_fraction = distance / 10.0  # was 35.0
+                        predicted_pct = move_fraction * atr_pct * 1.5  # was 0.5
+                        min_pred = atr_pct * 0.3
+                        if predicted_pct < min_pred:
+                            predicted_pct = min_pred
                         predicted_pct = max(0.1, min(atr_pct * 2.0, predicted_pct))
                         target_price = entry_price * (1 + predicted_pct / 100)
                         risk = entry_price - stop_loss
-                        if target_price - entry_price < risk * 1.5:
-                            target_price = entry_price + risk * 1.5
+                        if target_price - entry_price < risk * 0.5:  # was 1.5
+                            target_price = entry_price + risk * 0.5
                     else:
                         stop_loss = entry_price + (atr_14 * sl_mult)
                         distance = 50.0 - result["composite_score"]
                         atr_pct = (atr_14 / entry_price) * 100
-                        move_fraction = distance / 35.0
-                        predicted_pct = move_fraction * atr_pct * 0.5
+                        move_fraction = distance / 10.0  # was 35.0
+                        predicted_pct = move_fraction * atr_pct * 1.5  # was 0.5
+                        min_pred = atr_pct * 0.3
+                        if predicted_pct < min_pred:
+                            predicted_pct = min_pred
                         predicted_pct = max(0.1, min(atr_pct * 2.0, predicted_pct))
                         target_price = entry_price * (1 - predicted_pct / 100)
                         risk = stop_loss - entry_price
-                        if entry_price - target_price < risk * 1.5:
-                            target_price = entry_price - risk * 1.5
+                        if entry_price - target_price < risk * 0.5:  # was 1.5
+                            target_price = entry_price - risk * 0.5
 
                     target_data = {
                         "entry_price": round(entry_price, 2),

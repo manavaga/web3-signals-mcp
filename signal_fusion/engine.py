@@ -193,6 +193,16 @@ class SignalFusion:
             else:
                 errors.append("regime: BTC data unavailable")
 
+        # --- Regime-based abstain modifier ---
+        # Backtest v4: ranging regime has 24.3% accuracy. Widen abstain in ranging.
+        regime_abstain_cfg = abstain_cfg.get("regime_modifier", {})
+        if regime_abstain_cfg.get("enabled", False):
+            regime_multiplier = float(regime_abstain_cfg.get(detected_regime, 1.0))
+            if regime_multiplier != 1.0:
+                old_dist = resolved_distance
+                resolved_distance = resolved_distance * regime_multiplier
+                errors.append(f"regime abstain: {detected_regime} → distance {old_dist:.1f} × {regime_multiplier:.1f} = {resolved_distance:.1f}")
+
         # Pre-inject market price changes into derivatives data for OI-price divergence
         _deriv_data = raw.get("derivatives")
         _market_data = raw.get("market")
@@ -392,8 +402,10 @@ class SignalFusion:
             if abstain_cfg.get("enabled", False):
                 asym_cfg = abstain_cfg.get("asymmetric", {})
                 if asym_cfg.get("enabled", False):
-                    bearish_dist = float(asym_cfg.get("bearish_min_distance", resolved_distance))
-                    bullish_dist = float(asym_cfg.get("bullish_min_distance", resolved_distance))
+                    # Apply regime multiplier to asymmetric distances too
+                    _regime_mult = float(regime_abstain_cfg.get(detected_regime, 1.0)) if regime_abstain_cfg.get("enabled", False) else 1.0
+                    bearish_dist = float(asym_cfg.get("bearish_min_distance", resolved_distance)) * _regime_mult
+                    bullish_dist = float(asym_cfg.get("bullish_min_distance", resolved_distance)) * _regime_mult
                     if composite < 50.0 and (50.0 - composite) < bearish_dist:
                         abstain_applied = True
                     elif composite > 50.0 and (composite - 50.0) < bullish_dist:
@@ -493,6 +505,48 @@ class SignalFusion:
                 evaluator.save_for_evaluation(eval_signal, asset)
             except Exception:
                 pass  # non-critical — don't block fusion
+
+        # --- Rank-direction overlay (backtest-validated 2026-08-17, R2) ---
+        # 176d backtest: absolute-level direction produced 99.6% bullish calls at
+        # 31.1% gradient accuracy, while composite RANKING carried real alpha
+        # (IC +0.11). Overlay: top quartile by composite = buy, bottom = sell,
+        # middle = neutral. R2 result: 34.7% gradient / 48.9% binary, balanced
+        # calls, bearish arm 41.5%. Also restarts the learning loop: ~6
+        # directional signals per run -> evaluations -> IC -> weight optimizer.
+        rank_cfg = self.profile.get("rank_direction", {})
+        if rank_cfg.get("enabled", False) and len(signals) >= int(rank_cfg.get("min_assets", 8)):
+            side_fraction = float(rank_cfg.get("side_fraction", 0.25))
+            ranked = sorted(signals.items(), key=lambda kv: kv[1].get("composite_score", 50), reverse=True)
+            n_side = max(1, int(len(ranked) * side_fraction))
+            for i, (r_asset, sig) in enumerate(ranked):
+                if i < n_side:
+                    new_dir, new_label = "buy", "RANK BUY"
+                elif i >= len(ranked) - n_side:
+                    new_dir, new_label = "sell", "RANK SELL"
+                else:
+                    if sig.get("direction") != "neutral":
+                        sig["direction"], sig["label"] = "neutral", "NEUTRAL"
+                    continue
+                promoted = sig.get("direction") != new_dir
+                sig["direction"], sig["label"], sig["abstain"] = new_dir, new_label, False
+                sig["rank_position"] = i + 1
+                # Rank-promoted signals need trading levels too
+                if promoted and not sig.get("entry_price"):
+                    try:
+                        if self._target_calculator is None:
+                            from signal_fusion.target_calculator import TargetCalculator
+                            self._target_calculator = TargetCalculator(self.store, self.profile)
+                        td = self._target_calculator.calculate(
+                            asset=r_asset, direction=new_dir,
+                            composite_score=sig.get("composite_score", 50),
+                            dimension_scores=sig.get("dimensions", {}), agent_data=raw,
+                        )
+                        if td:
+                            sig.update({k: td.get(k) for k in (
+                                "entry_price", "target_price", "stop_loss",
+                                "risk_reward_ratio", "confidence", "timeframe_hours") if td.get(k) is not None})
+                    except Exception as exc:
+                        errors.append(f"rank target calc {r_asset}: {exc}")
 
         # Portfolio summary
         portfolio = self._build_portfolio_summary(signals, raw)
