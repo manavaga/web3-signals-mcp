@@ -2800,6 +2800,59 @@ async def agent_card():
 # ---------------------------------------------------------------------------
 # /.well-known/mcp.json — MCP server auto-discovery (Claude, Cursor, GPT)
 # ---------------------------------------------------------------------------
+# Static MCP server card (SEP-1649) — lets Smithery and other scanners read
+# our identity + tools without a live initialize round-trip.
+_ASSET_PARAM = {
+    "type": "object",
+    "properties": {"asset": {"type": "string", "description": "Ticker, e.g. BTC"}},
+    "required": ["asset"],
+}
+_SERVER_CARD = {
+    "serverInfo": {"name": "Web3 Signals", "version": "0.4.1"},
+    "authentication": {"required": False, "schemes": []},
+    "tools": [
+        {"name": "get_market_briefing",
+         "description": "Top 3 buy and top 3 sell recommendations from 20 cryptocurrencies, plus market regime, risk level, and momentum.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "get_crypto_price",
+         "description": "Latest USD price, 24h change, volume, and market cap for any of 20 major crypto assets.",
+         "inputSchema": _ASSET_PARAM},
+        {"name": "get_all_signals",
+         "description": "Free-tier buy/sell signals for 20 assets: 5-point score band, direction, and label per asset, plus portfolio summary.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "get_asset_signal",
+         "description": "Free 5-point score band, direction, label, and momentum for one asset. Exact scores + 6-dimension breakdown via paid x402 REST.",
+         "inputSchema": _ASSET_PARAM},
+        {"name": "compare_assets",
+         "description": "Rank 2-5 cryptocurrencies side-by-side by signal strength.",
+         "inputSchema": {"type": "object", "properties": {"assets": {"type": "string", "description": "Comma-separated tickers, e.g. 'BTC,ETH,SOL'"}}, "required": ["assets"]}},
+        {"name": "get_health",
+         "description": "Real-time status of the 5 data pipelines and signal fusion engine.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "get_performance",
+         "description": "30-day rolling signal accuracy with a published confidence gate — the score is withheld when the sample is too small or stale.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "get_asset_performance",
+         "description": "Per-asset 30-day accuracy breakdown.",
+         "inputSchema": _ASSET_PARAM},
+        {"name": "get_analytics",
+         "description": "API usage statistics: requests, unique clients, client types, trends.",
+         "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "default": 7}}}},
+        {"name": "get_x402_stats",
+         "description": "x402 micropayment analytics: paid calls (external vs internal), revenue, conversion.",
+         "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "default": 30}}}},
+    ],
+    "resources": [],
+    "prompts": [],
+}
+
+
+@app.get("/.well-known/mcp/server-card.json", tags=["discovery"], include_in_schema=False)
+async def mcp_server_card():
+    """Static MCP server card (SEP-1649) — Smithery reads this instead of scanning."""
+    return _SERVER_CARD
+
+
 @app.get("/.well-known/mcp.json", tags=["discovery"], include_in_schema=False)
 async def mcp_discovery():
     """MCP server discovery — tells AI agents how to connect to our MCP tools."""
@@ -2812,8 +2865,8 @@ async def mcp_discovery():
             "composite scores 0-100, market regime detection, and 30-day accuracy tracking. "
             "Updated every 15 minutes."
         ),
-        "version": "0.3.0",
-        "tools": 9,
+        "version": "0.4.1",
+        "tools": 10,
         "transports": {
             "sse": f"{base_url}/mcp/sse",
             "streamable_http": f"{base_url}/mcp/stream",

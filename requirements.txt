@@ -15,7 +15,7 @@ twikit>=2.3.0
 psycopg2-binary==2.9.10
 
 # MCP server (AI agent discoverability for Claude/Cursor)
-mcp>=1.26.0
+mcp>=1.26.0,<2.0.0  # 2.0 removed mcp.server.fastmcp — pin until we migrate transports
 
 # x402 payment gate (enabled when PAY_TO env var is set)
 x402[fastapi,evm]==2.2.0
