@@ -46,8 +46,8 @@ ENDPOINTS = [
     f"{API_BASE}/signal/LINK",
     f"{API_BASE}/signal/DOT",
     f"{API_BASE}/signal/MATIC",
-    # /performance/reputation — accuracy & track record
-    f"{API_BASE}/performance/reputation",
+    # NOTE: /performance/reputation is FREE as of 2026-08-17 (trust data precedes
+    # payment) — no longer a 402 route, so it has no place in a payment rotation.
 ]
 
 # Wallet private key — NEVER hardcode. Use env var or CLI arg.
