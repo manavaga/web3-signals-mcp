@@ -1514,6 +1514,11 @@ async def root(request: Request):
         "name": "Web3 Signals API",
         "version": "0.4.1",
         "description": _ROOT_DESCRIPTION,
+        "listings": {
+            "smithery": "https://smithery.ai/server/web3signals/web3-signals",
+            "mcp_registry": "io.github.manavaga/web3-signals",
+            "github": "https://github.com/manavaga/web3-signals-mcp",
+        },
         "model_version": "v0.3.0-calibrated",
         "endpoints": {
             "/dashboard": "Live signal intelligence dashboard (open in browser)",
