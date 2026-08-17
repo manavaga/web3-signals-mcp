@@ -2814,14 +2814,25 @@ _JSON_TEXT_OUT = lambda desc, props: {
     "properties": props,
 }
 _BASE_URL_PROD = "https://web3-signals-api-production.up.railway.app"
+_CARD_DESCRIPTION = (
+    "AI crypto buy/sell signals for 20 major assets: whale, technical, derivatives, "
+    "narrative, market and trend data fused into 0-100 scores with honest, "
+    "confidence-gated accuracy reporting. Free score bands via MCP; exact scores "
+    "via x402-paid REST."
+)
 _SERVER_CARD = {
-    "serverInfo": {"name": "Web3 Signals", "title": "Web3 Signals", "version": "0.4.1"},
-    "description": (
-        "AI crypto buy/sell signals for 20 major assets: whale, technical, derivatives, "
-        "narrative, market and trend data fused into 0-100 scores with honest, "
-        "confidence-gated accuracy reporting. Free score bands via MCP; exact scores "
-        "via x402-paid REST."
-    ),
+    # serverInfo follows the TS SDK's Implementation type — description,
+    # websiteUrl and icons live INSIDE serverInfo (Smithery scores these).
+    "serverInfo": {
+        "name": "Web3 Signals",
+        "title": "Web3 Signals",
+        "version": "0.4.1",
+        "description": _CARD_DESCRIPTION,
+        "websiteUrl": _BASE_URL_PROD,
+        "icons": [{"src": f"{_BASE_URL_PROD}/icon.svg", "mimeType": "image/svg+xml", "sizes": ["any"]}],
+    },
+    # Duplicated at top level for scanners that read either shape
+    "description": _CARD_DESCRIPTION,
     "homepage": _BASE_URL_PROD,
     "websiteUrl": _BASE_URL_PROD,
     "iconUrl": f"{_BASE_URL_PROD}/icon.svg",
