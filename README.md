@@ -1,6 +1,6 @@
 # Web3 Signals MCP
 
-[![smithery badge](https://smithery.ai/badge/@web3signals/web3-signals)](https://smithery.ai/server/web3signals/web3-signals)
+[![LightNow capabilities](https://lightnow.ai/badge/io.github.manavaga/web3-signals)](https://lightnow.ai/servers/io.github.manavaga/web3-signals)
 
 > Multi-agent crypto signal intelligence. 20 assets, 5 data dimensions, scored 0–100, refreshed every 15 min.
 
